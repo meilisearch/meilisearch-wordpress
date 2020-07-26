@@ -8,50 +8,66 @@
    Author URI: https://meilisearch.com
    License: MIT
    */
-   
+
    require_once __DIR__ . '/vendor/autoload.php';
 
    use MeiliSearch\Client;
 
    function index_post_after_update($post_ID, $post_after, $post_before){
-	   if ($post_after->post_status !== 'trash') {
-		$post_data =  [
-		   	'id' => $post_ID,
-		   	'title' => $post_after->post_title,
-		   	'content' => strip_tags($post_after->post_content)
-	   	];
-	   	index_post($post_data);
+       if ($post_after->post_status !== 'trash') {
+           $post_data =  [
+               'id' => $post_ID,
+               'title' => $post_after->post_title,
+               'content' => strip_tags($post_after->post_content),
+               'url' => get_the_guid($post_after),
+            ];
+            index_post($post_data);
 	   }
    }
 
    function index_post($post_data){
-	$meilisearch_options = get_option( 'meilisearch_option_name' );
-	$client = new Client($meilisearch_options['meilisearch_url_0'], $meilisearch_options['meilisearch_private_key_1']);
-	$index = $client->getOrCreateIndex('wordpress');
-	$document = [
-		[
-			'id' => $post_data['id'],
-			'title' => $post_data['title'],
-			'content' => strip_tags($post_data['content']),
-		],
-	];
-	$index->addDocuments($document);
+       $meilisearch_options = get_option( 'meilisearch_option_name' );
+       $client = new Client($meilisearch_options['meilisearch_url_0'], $meilisearch_options['meilisearch_private_key_1']);
+       $index = $client->getOrCreateIndex('wordpress');
+       $document = [
+           [
+               'id' => $post_data['id'],
+               'title' => $post_data['title'],
+               'content' => strip_tags($post_data['content']),
+               'url' => $post_data['url'],
+            ],
+        ];
+        $index->addDocuments($document);
    }
 
    function delete_post_from_index($post_id){
-	$meilisearch_options = get_option( 'meilisearch_option_name' );
-	$client = new Client($meilisearch_options['meilisearch_url_0'], $meilisearch_options['meilisearch_private_key_1']);
-        $index = $client->getOrCreateIndex('wordpress');
-        $index->deleteDocument($post_id);
+       $meilisearch_options = get_option( 'meilisearch_option_name' );
+       $client = new Client($meilisearch_options['meilisearch_url_0'], $meilisearch_options['meilisearch_private_key_1']);
+       $index = $client->getOrCreateIndex('wordpress');
+       $index->deleteDocument($post_id);
    }
 
    add_action('post_updated', 'index_post_after_update', 10, 3);
    add_action('wp_trash_post', 'delete_post_from_index');
 
    function meilisearch_wordpress_activate(){
-	   $meilisearch_options = get_option( 'meilisearch_option_name' );
-	   $client = new Client('https://sandbox-pool-gk2nbmi-3bsbgmeayb75w.ovh-fr-2.platformsh.site', 'qOEbuSRkBZPTYXHkwKeL');
-	   $index = $client->getOrCreateIndex('wordpress');
+       index_all_posts();
+   }
+
+   function index_all_posts(){
+       $meilisearch_options = get_option( 'meilisearch_option_name' );
+       $client = new Client('https://sandbox-pool-gk2nbmi-3bsbgmeayb75w.ovh-fr-2.platformsh.site', 'qOEbuSRkBZPTYXHkwKeL');
+       $index = $client->getOrCreateIndex('wordpress');
+       $posts = get_posts(array('numberposts' => -1));
+       foreach ($posts as $post){
+           $post_data =  [
+               'id' => $post->ID,
+               'title' => $post->post_title,
+               'content' => strip_tags($post->post_content),
+               'url' => get_the_guid($post),
+            ];
+            index_post($post_data);
+        }
    }
 
    register_activation_hook( __FILE__, 'meilisearch_wordpress_activate' );
