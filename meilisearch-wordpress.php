@@ -18,7 +18,7 @@
    function get_meilisearch_index(){
        $meilisearch_options = get_option( 'meilisearch_option_name' );
        $client = new Client($meilisearch_options['meilisearch_url_0'], $meilisearch_options['meilisearch_private_key_1']);
-       $index = $client->getOrCreateIndex('wordpress');
+       $index = $client->getOrCreateIndex($meilisearch_options['meilisearch_index_name']);
        return $index;
     }
 

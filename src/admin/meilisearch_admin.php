@@ -125,6 +125,14 @@ class MeiliSearch {
             'meilisearch-admin', // page
             'meilisearch_setting_section' // section
         );
+
+        add_settings_field(
+            'meilisearch_index_name', // id
+            'MeiliSearch Index Name', // title
+            array( $this, 'meilisearch_index_name_callback' ), // callback
+            'meilisearch-admin', // page
+            'meilisearch_setting_section' // section
+        );
     }
 
     public function meilisearch_sanitize($input) {
@@ -143,6 +151,10 @@ class MeiliSearch {
 
         if ( isset( $input['meilisearch_public_key_2'] ) ) {
             $sanitary_values['meilisearch_public_key_2'] = sanitize_text_field( $input['meilisearch_public_key_2'] );
+        }
+
+        if ( isset( $input['meilisearch_index_name'] ) ) {
+            $sanitary_values['meilisearch_index_name'] = sanitize_text_field( $input['meilisearch_index_name'] );
         }
 
         return $sanitary_values;
@@ -177,6 +189,13 @@ class MeiliSearch {
         printf(
             '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_public_key_2]" id="meilisearch_public_key_2" value="%s">',
             isset( $this->meilisearch_options['meilisearch_public_key_2'] ) ? esc_attr( $this->meilisearch_options['meilisearch_public_key_2']) : ''
+        );
+    }
+
+    public function meilisearch_index_name_callback() {
+        printf(
+            '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_index_name]" id="meilisearch_index_name" value="%s">',
+            isset( $this->meilisearch_options['meilisearch_index_name'] ) ? esc_attr( $this->meilisearch_options['meilisearch_index_name']) : ''
         );
     }
 
