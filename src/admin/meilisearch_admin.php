@@ -16,15 +16,20 @@ class MeiliSearch {
             'meilisearch', // menu_slug
             array( $this, 'meilisearch_create_admin_page' ), // function
             'dashicons-admin-generic', // icon_url
-            3 // position
+             // position (int)
+        );
+
+        add_submenu_page(
+            'meilisearch', // parent_slug
+            'MeiliSearch Settings', // page_title
+            'Index content', // menu_title
+            'manage_options', // capability
+            'meilisearch_index_content', // menu_slug
+            array( $this, 'meilisearch_create_admin_page_index_content' ), // function
         );
     }
 
     public function meilisearch_create_admin_page() {
-
-        if ($_GET['indexAll'] == 1) {
-            index_all_posts();
-        }
 
         $this->meilisearch_options = get_option( 'meilisearch_option_name' ); ?>
 
@@ -40,9 +45,35 @@ class MeiliSearch {
                     submit_button();
                 ?>
             </form>
-            <form method="post" name="test-button" action="admin.php?page=meilisearch&indexAll=1">
-                <span id="test-button">
-                    <input id="index-all" type="submit" value="Index site content" class="button" >
+        </div>
+    <?php }
+
+    public function meilisearch_create_admin_page_index_content() {
+
+        if ($_GET['indexAll'] == 1) {
+            index_all_posts($sync=true);
+        }
+        if ($_GET['deleteIndex'] == 1) {
+            delete_index();
+        }
+
+        $this->meilisearch_options = get_option( 'meilisearch_option_name' ); ?>
+
+        <div class="wrap">
+            <h2>Index your existing content to MeiliSearch</h2>
+            <p>In this page you can index all of your currently existing content in your Wordpress site</p>
+            <?php settings_errors(); ?>
+
+            <p>Indexed documents: <?php echo count(get_all_indexed()); ?></p>
+
+            <form method="post" action="admin.php?page=meilisearch_index_content&deleteIndex=1">
+                <span id="index-all-button">
+                    <input id="index-all" type="submit" value="Delete Index" class="button" >
+                </span>
+            </form>
+            <form method="post" action="admin.php?page=meilisearch_index_content&indexAll=1">
+                <span id="delete-index-button">
+                    <input id="delete-index" type="submit" value="Index my site content" class="button" >
                 </span>
             </form>
         </div>

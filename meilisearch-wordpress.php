@@ -11,7 +11,7 @@
 
    require_once __DIR__ . '/vendor/autoload.php';
    require_once __DIR__ . '/src/search_widget.php';
-   require_once __DIR__ . '/src/meilisearch_admin.php';
+   require_once __DIR__ . '/src/admin/meilisearch_admin.php';
 
    use MeiliSearch\Client;
 
@@ -64,12 +64,42 @@
 
     }
 
-    function index_all_posts(){
+    function index_all_posts($sync = false){
         $index = get_meilisearch_index();
+        $documents = [];
         $posts = get_posts(array('numberposts' => -1));
         foreach ($posts as $post){
-            index_post($post);
+            // index_post($post);
+            $categories = [];
+            foreach ($post->post_category as $category){
+                array_push($categories, get_cat_name($category));
+            }
+            $document = [
+                    'id' => $post->ID,
+                    'title' => $post->post_title,
+                    'content' => strip_tags($post->post_content),
+                    'img' => get_the_post_thumbnail_url($post, array(100,100)),
+                    'url' => get_the_permalink($post),
+                    'tags' => $post->tags_input,
+                    'categories' => $categories,
+            ];
+            array_push($documents, $document);
         }
+        $update = $index->addDocuments($documents);
+        if ($sync) {
+            $index->waitForPendingUpdate($update['updateId']);
+        }
+    }
+
+    function delete_index(){
+        $index = get_meilisearch_index();
+        $index->delete();
+    }
+
+    function get_all_indexed(){
+        $index = get_meilisearch_index();
+        $indexed = $index->getDocuments();
+        return $indexed;
     }
 
     add_action('wp_insert_post', 'index_post_after_update', 1000, 3);
