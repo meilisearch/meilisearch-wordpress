@@ -42,7 +42,7 @@
                 'id' => $post->ID,
                 'title' => $post->post_title,
                 'content' => strip_tags($post->post_content),
-                'url' => get_the_guid($post),
+                'url' => get_the_permalink($post),
                 'tags' => $post->tags_input,
                 'categories' => $categories,
             ],
@@ -59,8 +59,9 @@
     add_action('wp_trash_post', 'delete_post_from_index');
 
     function meilisearch_wordpress_activate(){
-        index_all_posts();
+
     }
+
     function index_all_posts(){
         $index = get_meilisearch_index();
         $posts = get_posts(array('numberposts' => -1));
@@ -95,6 +96,11 @@
         }
 
         public function meilisearch_create_admin_page() {
+
+            if ($_GET['indexAll'] == 1) {
+                index_all_posts();
+            }
+
             $this->meilisearch_options = get_option( 'meilisearch_option_name' ); ?>
 
             <div class="wrap">
@@ -109,10 +115,16 @@
                         submit_button();
                     ?>
                 </form>
+                <form method="post" name="test-button" action="admin.php?page=meilisearch&indexAll=1">
+                    <span id="test-button">
+                        <input id="index-all" type="submit" value="Index site content" class="button" >
+                    </span>
+                </form>
             </div>
         <?php }
 
         public function meilisearch_page_init() {
+
             register_setting(
                 'meilisearch_option_group', // option_group
                 'meilisearch_option_name', // option_name
@@ -135,9 +147,25 @@
             );
 
             add_settings_field(
+                'meilisearch_search_url_4', // id
+                'MeiliSearch Search URL (if different)', // title
+                array( $this, 'meilisearch_search_url_4_callback' ), // callback
+                'meilisearch-admin', // page
+                'meilisearch_setting_section' // section
+            );
+
+            add_settings_field(
                 'meilisearch_private_key_1', // id
                 'MeiliSearch Private Key', // title
                 array( $this, 'meilisearch_private_key_1_callback' ), // callback
+                'meilisearch-admin', // page
+                'meilisearch_setting_section' // section
+            );
+
+            add_settings_field(
+                'meilisearch_public_key_2', // id
+                'MeiliSearch Public Key', // title
+                array( $this, 'meilisearch_public_key_2_callback' ), // callback
                 'meilisearch-admin', // page
                 'meilisearch_setting_section' // section
             );
@@ -149,8 +177,16 @@
                 $sanitary_values['meilisearch_url_0'] = sanitize_text_field( $input['meilisearch_url_0'] );
             }
 
+            if ( isset( $input['meilisearch_search_url_4'] ) ) {
+                $sanitary_values['meilisearch_search_url_4'] = sanitize_text_field( $input['meilisearch_search_url_4'] );
+            }
+
             if ( isset( $input['meilisearch_private_key_1'] ) ) {
                 $sanitary_values['meilisearch_private_key_1'] = sanitize_text_field( $input['meilisearch_private_key_1'] );
+            }
+
+            if ( isset( $input['meilisearch_public_key_2'] ) ) {
+                $sanitary_values['meilisearch_public_key_2'] = sanitize_text_field( $input['meilisearch_public_key_2'] );
             }
 
             return $sanitary_values;
@@ -167,10 +203,24 @@
             );
         }
 
+        public function meilisearch_search_url_4_callback() {
+            printf(
+                '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_search_url_4]" id="meilisearch_search_url_4" value="%s">',
+                isset( $this->meilisearch_options['meilisearch_search_url_4'] ) ? esc_attr( $this->meilisearch_options['meilisearch_search_url_4']) : ''
+            );
+        }
+
         public function meilisearch_private_key_1_callback() {
             printf(
                 '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_private_key_1]" id="meilisearch_private_key_1" value="%s">',
                 isset( $this->meilisearch_options['meilisearch_private_key_1'] ) ? esc_attr( $this->meilisearch_options['meilisearch_private_key_1']) : ''
+            );
+        }
+
+        public function meilisearch_public_key_2_callback() {
+            printf(
+                '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_public_key_2]" id="meilisearch_public_key_2" value="%s">',
+                isset( $this->meilisearch_options['meilisearch_public_key_2'] ) ? esc_attr( $this->meilisearch_options['meilisearch_public_key_2']) : ''
             );
         }
 
@@ -250,7 +300,19 @@
 
             // Display text field
             if ( $text ) {
-                echo '<form><input type="text" placeholder="' . $text . '"/></form>';
+                // echo '<form><input type="text" placeholder="' . $text . '"/></form>';
+                echo '<div id="searchbox" class="ais-SearchBox"></div>';
+                echo '<div id="hits" class="ais-SearchBox"></div>';
+                echo '<script src="'.'https://cdn.jsdelivr.net/npm/meilisearch/dist/bundles/meilisearch.browser.js'.'"></script>';
+                echo '<script src="'.'https://cdn.jsdelivr.net/npm/instantsearch.js@4'.'"></script>';
+                echo '<script src="https://cdn.jsdelivr.net/npm/@meilisearch/instant-meilisearch"></script>';
+                echo '<script>';
+                $meilisearch_options = get_option( 'meilisearch_option_name' );
+                echo 'let $meilisearchUrl = "'.$meilisearch_options['meilisearch_url_0'].'";';
+                echo 'let $meilisearchSearchUrl = "'.$meilisearch_options['meilisearch_search_url_4'].'";';
+                echo 'let $meilisearchPublicKey = "'.$meilisearch_options['meilisearch_public_key_2'].'";';
+                echo '</script>';
+                echo '<script src="'.plugin_dir_url( __FILE__ ) . 'src/js/instant-meilisearch.js'.'"></script>';
             }
 
             echo '</div>';
