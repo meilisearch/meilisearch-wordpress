@@ -83,10 +83,10 @@ function delete_index(){
     $index->delete();
 }
 
-function get_all_indexed(){
+function count_indexed(){
     $index = get_meilisearch_index();
-    $indexed = $index->getDocuments();
-    return $indexed;
+    $count = $index->stats();
+    return $count['numberOfDocuments'];
 }
 
 ?>

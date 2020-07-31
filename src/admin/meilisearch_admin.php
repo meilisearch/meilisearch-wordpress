@@ -66,7 +66,7 @@ class MeiliSearch {
             <p>In this page you can index all of your currently existing content in your Wordpress site</p>
             <?php settings_errors(); ?>
 
-            <p>Indexed documents: <?php echo count(get_all_indexed()); ?></p>
+            <p>Indexed documents: <?php echo count_indexed(); ?></p>
 
             <form method="post" action="admin.php?page=meilisearch_index_content&deleteIndex=1">
                 <span id="index-all-button">
