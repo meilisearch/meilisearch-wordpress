@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/utils.php';
+
 class MeiliSearch {
     private $meilisearch_options;
 
@@ -50,10 +52,10 @@ class MeiliSearch {
 
     public function meilisearch_create_admin_page_index_content() {
 
-        if ($_GET['indexAll'] == 1) {
+        if (isset($_GET['indexAll']) && $_GET['indexAll'] == 1) {
             index_all_posts($sync=true);
         }
-        if ($_GET['deleteIndex'] == 1) {
+        if (isset($_GET['deleteIndex']) && $_GET['deleteIndex'] == 1) {
             delete_index();
         }
 
