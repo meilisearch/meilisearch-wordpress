@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/utils.php';
+
 class MeiliSearch {
     private $meilisearch_options;
 
@@ -50,10 +52,10 @@ class MeiliSearch {
 
     public function meilisearch_create_admin_page_index_content() {
 
-        if ($_GET['indexAll'] == 1) {
+        if (isset($_GET['indexAll']) && $_GET['indexAll'] == 1) {
             index_all_posts($sync=true);
         }
-        if ($_GET['deleteIndex'] == 1) {
+        if (isset($_GET['deleteIndex']) && $_GET['deleteIndex'] == 1) {
             delete_index();
         }
 
@@ -64,7 +66,7 @@ class MeiliSearch {
             <p>In this page you can index all of your currently existing content in your Wordpress site</p>
             <?php settings_errors(); ?>
 
-            <p>Indexed documents: <?php echo count(get_all_indexed()); ?></p>
+            <p>Indexed documents: <?php echo count_indexed(); ?></p>
 
             <form method="post" action="admin.php?page=meilisearch_index_content&deleteIndex=1">
                 <span id="index-all-button">
