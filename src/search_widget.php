@@ -70,19 +70,27 @@ class MeiliSearch_Widget extends WP_Widget {
 
             // Display text field
             if ( $text ) {
+                $search_elt_id = 'meilisearchbox';
+                $hits_elt_id = 'meilisearchhits';
+
                 // echo '<form><input type="text" placeholder="' . $text . '"/></form>';
-                echo '<div id="searchbox" class="ais-SearchBox"></div>';
-                echo '<div id="hits" class="ais-SearchBox"></div>';
+                echo '<div id="'.$search_elt_id.'" class="ais-SearchBox"></div>';
+                echo '<div id="'.$hits_elt_id.'" class="ais-SearchBox"></div>';
                 echo '<script src="'.'https://cdn.jsdelivr.net/npm/meilisearch/dist/bundles/meilisearch.browser.js'.'"></script>';
                 echo '<script src="'.'https://cdn.jsdelivr.net/npm/instantsearch.js@4'.'"></script>';
                 echo '<script src="https://cdn.jsdelivr.net/npm/@meilisearch/instant-meilisearch"></script>';
-                echo '<script>';
-                $meilisearch_options = get_option( 'meilisearch_option_name' );
-                echo 'let $meilisearchUrl = "'.$meilisearch_options['meilisearch_url_0'].'";';
-                echo 'let $meilisearchSearchUrl = "'.$meilisearch_options['meilisearch_search_url_4'].'";';
-                echo 'let $meilisearchPublicKey = "'.$meilisearch_options['meilisearch_public_key_2'].'";';
-                echo '</script>';
                 echo '<script src="'.plugin_dir_url( __FILE__ ) . 'js/instant-meilisearch.js'.'"></script>';
+                echo '<script>';
+
+                $meilisearch_options = get_option( 'meilisearch_option_name' );
+                $meilisearch_url = $meilisearch_options['meilisearch_url_0'];
+                $meilisearch_search_url = $meilisearch_options['meilisearch_search_url_4'];
+                $meilisearch_public_key = $meilisearch_options['meilisearch_public_key_2'];
+                $meilisearch_index_name = $meilisearch_options['meilisearch_index_name'];
+                $search_url = $meilisearch_search_url === "" ? $meilisearch_url : $meilisearch_search_url;
+
+                echo 'wpInstantMeilisearch("'.$search_url.'","'.$meilisearchPublicKey.'","'.$meilisearch_index_name.'","#'.$search_elt_id.'","#'.$hits_elt_id.'")';
+                echo '</script>';
             }
 
             echo '</div>';
