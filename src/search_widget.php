@@ -89,7 +89,7 @@ class MeiliSearch_Widget extends WP_Widget {
                 $meilisearch_index_name = $meilisearch_options['meilisearch_index_name'];
                 $search_url = $meilisearch_search_url === "" ? $meilisearch_url : $meilisearch_search_url;
 
-                echo 'wpInstantMeilisearch("'.$search_url.'","'.$meilisearchPublicKey.'","'.$meilisearch_index_name.'","#'.$search_elt_id.'","#'.$hits_elt_id.'")';
+                echo 'wpInstantMeilisearch("'.$search_url.'","'.$meilisearch_public_key.'","'.$meilisearch_index_name.'","#'.$search_elt_id.'","#'.$hits_elt_id.'")';
                 echo '</script>';
             }
 
