@@ -7,7 +7,7 @@ function wpInstantMeilisearch(searchUrl, meilisearchPublicKey, indexName, search
             searchUrl,
             meilisearchPublicKey,
             {
-                limitPerRequest: 5,
+                paginationTotalHits: 5,
             }
         )
     });
