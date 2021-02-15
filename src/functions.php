@@ -20,6 +20,7 @@ use function esc_html__;
 use function esc_url;
 use function load_plugin_textdomain;
 use function plugin_dir_url;
+use function register_widget;
 
 /**
  * @return void
@@ -74,37 +75,21 @@ function printRequirementsNotice()
     );
 }
 
+function registerWidget(): void
+{
+    register_widget(Widget::class);
+}
+
 /**
  * Start!
- *
- * @return void
  */
-function boot()
+function boot(): void
 {
     new Index();
-    add_action('wp_enqueue_scripts', __NAMESPACE__ . '\\enqueueScripts');
-    add_action('widgets_init', 'my_register_custom_widget');
+    add_action('widgets_init', __NAMESPACE__ . '\\registerWidget');
 }
 
-/**
- * @return void
- */
-function bootAdmin()
+function bootAdmin(): void
 {
     new Admin();
-}
-
-/**
- * @return void
- */
-function enqueueScripts()
-{
-    wp_register_style('meilisearch_widget', plugin_dir_url(Config::get('filePath')) . 'assets/css/meilisearch_widget.css');
-    wp_enqueue_style('meilisearch_widget');
-}
-
-// Register the widget
-function my_register_custom_widget()
-{
-    register_widget('MeiliSearch_Widget');
 }

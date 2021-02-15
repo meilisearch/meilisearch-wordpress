@@ -16,6 +16,10 @@ namespace MeiliSearch\WordPress;
 
 use WP_Widget;
 
+use function plugin_dir_url;
+use function wp_enqueue_style;
+use function wp_register_style;
+
 class Widget extends WP_Widget
 {
     public function __construct()
@@ -66,6 +70,17 @@ class Widget extends WP_Widget
         $instance['text'] = isset( $new_instance['text'] ) ? wp_strip_all_tags( $new_instance['text'] ) : '';
 
         return $instance;
+    }
+
+    /**
+     * @hook wp_enqueue_scripts
+     */
+    public function enqueueStyle(): void
+        wp_register_style(
+            'meilisearch_widget',
+            plugin_dir_url(Config::get('filePath')) . 'assets/css/meilisearch_widget.css'
+        );
+        wp_enqueue_style('meilisearch_widget');
     }
 
     /**
