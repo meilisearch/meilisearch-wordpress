@@ -1,16 +1,31 @@
 <?php
 
-require_once __DIR__ . '/utils.php';
+/**
+ * Widget.php
+ *
+ * @package meilisearch/meilisearch-wordpress
+ * @author MeiliSearch <bonjour@meilisearch.com>
+ * @copyright 2021 MeiliSearch
+ * @license https://github.com/meilisearch/MeiliSearch/blob/master/LICENSE MIT
+ * @link https://wordpress.meilisearch.dev
+ */
 
-class MeiliSearch {
-    private $meilisearch_options;
+declare(strict_types=1);
 
-    public function __construct() {
+namespace MeiliSearch\WordPress;
+
+class Admin
+{
+    private $options;
+
+    public function __construct()
+    {
         add_action( 'admin_menu', array( $this, 'meilisearch_add_plugin_page' ) );
         add_action( 'admin_init', array( $this, 'meilisearch_page_init' ) );
     }
 
-    public function meilisearch_add_plugin_page() {
+    public function add_plugin_page()
+    {
         add_menu_page(
             'MeiliSearch', // page_title
             'MeiliSearch', // menu_title
@@ -31,8 +46,8 @@ class MeiliSearch {
         );
     }
 
-    public function meilisearch_create_admin_page() {
-
+    public function create_admin_page()
+    {
         $this->meilisearch_options = get_option( 'meilisearch_option_name' ); ?>
 
         <div class="wrap">
@@ -48,10 +63,11 @@ class MeiliSearch {
                 ?>
             </form>
         </div>
-    <?php }
+        <?php
+    }
 
-    public function meilisearch_create_admin_page_index_content() {
-
+    public function create_admin_page_index_content()
+    {
         if (isset($_GET['indexAll']) && $_GET['indexAll'] == 1) {
             index_all_posts($sync=true);
         }
@@ -79,10 +95,11 @@ class MeiliSearch {
                 </span>
             </form>
         </div>
-    <?php }
+        <?php
+    }
 
-    public function meilisearch_page_init() {
-
+    public function meilisearch_page_init()
+    {
         register_setting(
             'meilisearch_option_group', // option_group
             'meilisearch_option_name', // option_name
@@ -137,7 +154,8 @@ class MeiliSearch {
         );
     }
 
-    public function meilisearch_sanitize($input) {
+    public function meilisearch_sanitize($input)
+    {
         $sanitary_values = array();
         if ( isset( $input['meilisearch_url_0'] ) ) {
             $sanitary_values['meilisearch_url_0'] = sanitize_text_field( $input['meilisearch_url_0'] );
@@ -162,45 +180,48 @@ class MeiliSearch {
         return $sanitary_values;
     }
 
-    public function meilisearch_section_info() {
+    public function section_info()
+    {
 
     }
 
-    public function meilisearch_url_0_callback() {
+    public function meilisearch_url_0_callback()
+    {
         printf(
             '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_url_0]" id="meilisearch_url_0" value="%s">',
             isset( $this->meilisearch_options['meilisearch_url_0'] ) ? esc_attr( $this->meilisearch_options['meilisearch_url_0']) : ''
         );
     }
 
-    public function meilisearch_search_url_4_callback() {
+    public function meilisearch_search_url_4_callback()
+    {
         printf(
             '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_search_url_4]" id="meilisearch_search_url_4" value="%s">',
             isset( $this->meilisearch_options['meilisearch_search_url_4'] ) ? esc_attr( $this->meilisearch_options['meilisearch_search_url_4']) : ''
         );
     }
 
-    public function meilisearch_private_key_1_callback() {
+    public function meilisearch_private_key_1_callback()
+    {
         printf(
             '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_private_key_1]" id="meilisearch_private_key_1" value="%s">',
             isset( $this->meilisearch_options['meilisearch_private_key_1'] ) ? esc_attr( $this->meilisearch_options['meilisearch_private_key_1']) : ''
         );
     }
 
-    public function meilisearch_public_key_2_callback() {
+    public function meilisearch_public_key_2_callback()
+    {
         printf(
             '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_public_key_2]" id="meilisearch_public_key_2" value="%s">',
             isset( $this->meilisearch_options['meilisearch_public_key_2'] ) ? esc_attr( $this->meilisearch_options['meilisearch_public_key_2']) : ''
         );
     }
 
-    public function meilisearch_index_name_callback() {
+    public function meilisearch_index_name_callback()
+    {
         printf(
             '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_index_name]" id="meilisearch_index_name" value="%s">',
             isset( $this->meilisearch_options['meilisearch_index_name'] ) ? esc_attr( $this->meilisearch_options['meilisearch_index_name']) : ''
         );
     }
-
 }
-
-?>
