@@ -35,9 +35,13 @@ final class Index
     /** @var \MeiliSearch\Endpoints\Indexes */
     protected $index;
 
-    public function __construct()
+    /** @var \MeiliSearch\WordPress\ArrayOption */
+    protected $option;
+
+    public function __construct(ArrayOption $option)
     {
-        HookAnnotation::hookMethods();
+        $this->option = $option;
+        $this->hookMethods();
     }
 
     /**
@@ -141,14 +145,8 @@ final class Index
             return $this->index;
         }
 
-        $clientOptions = get_option('meilisearch_option_name');
-        // TODO Write an option handler.
-
-        $client = new Client(
-            $clientOptions['meilisearch_url_0'],
-            $clientOptions['meilisearch_private_key_1']
-        );
-        $this->index = $client->getOrCreateIndex($clientOptions['meilisearch_index_name']);
+        $client = new Client($this->option->get('url_0'), $this->option->get('private_key_1'));
+        $this->index = $client->getOrCreateIndex($this->option->get('index_name'));
 
         return $this->index;
     }

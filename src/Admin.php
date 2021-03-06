@@ -14,16 +14,22 @@ declare(strict_types=1);
 
 namespace MeiliSearch\WordPress;
 
+use MeiliSearch\WordPress\Tools\HookAnnotation;
+
 class Admin
 {
-    private $options;
+    use HookAnnotation;
+
+    protected $options;
 
     public function __construct()
     {
-        add_action( 'admin_menu', array( $this, 'meilisearch_add_plugin_page' ) );
-        add_action( 'admin_init', array( $this, 'meilisearch_page_init' ) );
+        $this->hookMethods();
     }
 
+    /**
+     * @hook admin_menu
+     */
     public function add_plugin_page()
     {
         add_menu_page(
@@ -31,9 +37,8 @@ class Admin
             'MeiliSearch', // menu_title
             'manage_options', // capability
             'meilisearch', // menu_slug
-            array( $this, 'meilisearch_create_admin_page' ), // function
+            [$this, 'create_admin_page'], // function
             'dashicons-admin-generic', // icon_url
-             // position (int)
         );
 
         add_submenu_page(
@@ -42,23 +47,83 @@ class Admin
             'Index content', // menu_title
             'manage_options', // capability
             'meilisearch_index_content', // menu_slug
-            array( $this, 'meilisearch_create_admin_page_index_content' ), // function
+            [$this, 'create_admin_page_index_content'], // function
+        );
+    }
+
+    /**
+     * @hook admin_init
+     */
+    public function page_init()
+    {
+        register_setting(
+            'meilisearch_option_group',
+            ArrayOption::OPTION_NAME,
+            [$this, 'sanitize']
+        );
+
+        add_settings_section(
+            'meilisearch_setting_section', // id
+            'Settings', // title
+            [$this, 'section_info'], // callback
+            'meilisearch-admin-page' // page
+        );
+
+        add_settings_field(
+            'url_0', // id
+            'MeiliSearch URL', // title
+            [$this, 'url_0_callback'], // callback
+            'meilisearch-admin-page', // page
+            'meilisearch_setting_section' // section
+        );
+
+        add_settings_field(
+            'search_url_4', // id
+            'MeiliSearch Search URL (if different)', // title
+            [$this, 'search_url_4_callback'], // callback
+            'meilisearch-admin-page', // page
+            'meilisearch_setting_section' // section
+        );
+
+        add_settings_field(
+            'private_key_1', // id
+            'MeiliSearch Private Key', // title
+            [$this, 'private_key_1_callback'], // callback
+            'meilisearch-admin-page', // page
+            'meilisearch_setting_section' // section
+        );
+
+        add_settings_field(
+            'public_key_2', // id
+            'MeiliSearch Public Key', // title
+            [$this, 'public_key_2_callback'], // callback
+            'meilisearch-admin-page', // page
+            'meilisearch_setting_section' // section
+        );
+
+        add_settings_field(
+            'index_name', // id
+            'MeiliSearch Index Name', // title
+            [$this, 'index_name_callback'], // callback
+            'meilisearch-admin-page', // page
+            'meilisearch_setting_section' // section
         );
     }
 
     public function create_admin_page()
     {
-        $this->meilisearch_options = get_option( 'meilisearch_option_name' ); ?>
+        $this->options = get_option(ArrayOption::OPTION_NAME);
 
+        ?>
         <div class="wrap">
             <h2>MeiliSearch</h2>
-            <p>Set up MeiliSearch for your Wordpress</p>
+            <p>Set up MeiliSearch for your WordPress installation</p>
             <?php settings_errors(); ?>
 
             <form method="post" action="options.php">
                 <?php
                     settings_fields( 'meilisearch_option_group' );
-                    do_settings_sections( 'meilisearch-admin' );
+                    do_settings_sections( 'meilisearch-admin-page' );
                     submit_button();
                 ?>
             </form>
@@ -68,15 +133,17 @@ class Admin
 
     public function create_admin_page_index_content()
     {
-        if (isset($_GET['indexAll']) && $_GET['indexAll'] == 1) {
-            index_all_posts($sync=true);
-        }
-        if (isset($_GET['deleteIndex']) && $_GET['deleteIndex'] == 1) {
+        if (isset($_GET['deleteIndex']) && $_GET['deleteIndex'] === '1') {
             delete_index();
         }
 
-        $this->meilisearch_options = get_option( 'meilisearch_option_name' ); ?>
+        if (isset($_GET['indexAll']) && $_GET['indexAll'] === '1') {
+            index_all_posts($sync = true);
+        }
 
+        $this->options = get_option(ArrayOption::OPTION_NAME);
+
+        ?>
         <div class="wrap">
             <h2>Index your existing content to MeiliSearch</h2>
             <p>In this page you can index all of your currently existing content in your Wordpress site</p>
@@ -98,130 +165,79 @@ class Admin
         <?php
     }
 
-    public function meilisearch_page_init()
-    {
-        register_setting(
-            'meilisearch_option_group', // option_group
-            'meilisearch_option_name', // option_name
-            array( $this, 'meilisearch_sanitize' ) // sanitize_callback
-        );
-
-        add_settings_section(
-            'meilisearch_setting_section', // id
-            'Settings', // title
-            array( $this, 'meilisearch_section_info' ), // callback
-            'meilisearch-admin' // page
-        );
-
-        add_settings_field(
-            'meilisearch_url_0', // id
-            'MeiliSearch URL', // title
-            array( $this, 'meilisearch_url_0_callback' ), // callback
-            'meilisearch-admin', // page
-            'meilisearch_setting_section' // section
-        );
-
-        add_settings_field(
-            'meilisearch_search_url_4', // id
-            'MeiliSearch Search URL (if different)', // title
-            array( $this, 'meilisearch_search_url_4_callback' ), // callback
-            'meilisearch-admin', // page
-            'meilisearch_setting_section' // section
-        );
-
-        add_settings_field(
-            'meilisearch_private_key_1', // id
-            'MeiliSearch Private Key', // title
-            array( $this, 'meilisearch_private_key_1_callback' ), // callback
-            'meilisearch-admin', // page
-            'meilisearch_setting_section' // section
-        );
-
-        add_settings_field(
-            'meilisearch_public_key_2', // id
-            'MeiliSearch Public Key', // title
-            array( $this, 'meilisearch_public_key_2_callback' ), // callback
-            'meilisearch-admin', // page
-            'meilisearch_setting_section' // section
-        );
-
-        add_settings_field(
-            'meilisearch_index_name', // id
-            'MeiliSearch Index Name', // title
-            array( $this, 'meilisearch_index_name_callback' ), // callback
-            'meilisearch-admin', // page
-            'meilisearch_setting_section' // section
-        );
-    }
-
-    public function meilisearch_sanitize($input)
+    public function sanitize(array $input): array
     {
         $sanitary_values = array();
-        if ( isset( $input['meilisearch_url_0'] ) ) {
-            $sanitary_values['meilisearch_url_0'] = sanitize_text_field( $input['meilisearch_url_0'] );
+        if ( isset( $input['url_0'] ) ) {
+            $sanitary_values['url_0'] = sanitize_text_field( $input['url_0'] );
         }
 
-        if ( isset( $input['meilisearch_search_url_4'] ) ) {
-            $sanitary_values['meilisearch_search_url_4'] = sanitize_text_field( $input['meilisearch_search_url_4'] );
+        if ( isset( $input['search_url_4'] ) ) {
+            $sanitary_values['search_url_4'] = sanitize_text_field( $input['search_url_4'] );
         }
 
-        if ( isset( $input['meilisearch_private_key_1'] ) ) {
-            $sanitary_values['meilisearch_private_key_1'] = sanitize_text_field( $input['meilisearch_private_key_1'] );
+        if ( isset( $input['private_key_1'] ) ) {
+            $sanitary_values['private_key_1'] = sanitize_text_field( $input['private_key_1'] );
         }
 
-        if ( isset( $input['meilisearch_public_key_2'] ) ) {
-            $sanitary_values['meilisearch_public_key_2'] = sanitize_text_field( $input['meilisearch_public_key_2'] );
+        if ( isset( $input['public_key_2'] ) ) {
+            $sanitary_values['public_key_2'] = sanitize_text_field( $input['public_key_2'] );
         }
 
-        if ( isset( $input['meilisearch_index_name'] ) ) {
-            $sanitary_values['meilisearch_index_name'] = sanitize_text_field( $input['meilisearch_index_name'] );
+        if ( isset( $input['index_name'] ) ) {
+            $sanitary_values['index_name'] = sanitize_text_field( $input['index_name'] );
         }
 
         return $sanitary_values;
     }
 
-    public function section_info()
+    public function section_info(): void
     {
-
+        echo 'function section_info'; // TODO
     }
 
-    public function meilisearch_url_0_callback()
+    public function url_0_callback()
     {
         printf(
-            '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_url_0]" id="meilisearch_url_0" value="%s">',
-            isset( $this->meilisearch_options['meilisearch_url_0'] ) ? esc_attr( $this->meilisearch_options['meilisearch_url_0']) : ''
+            '<input class="regular-text" type="text" name="%s[url_0]" id="meilisearch_url_0" value="%s">',
+            ArrayOption::OPTION_NAME,
+            isset( $this->options['url_0'] ) ? esc_attr($this->options['url_0']) : ''
         );
     }
 
-    public function meilisearch_search_url_4_callback()
+    public function search_url_4_callback()
     {
         printf(
-            '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_search_url_4]" id="meilisearch_search_url_4" value="%s">',
-            isset( $this->meilisearch_options['meilisearch_search_url_4'] ) ? esc_attr( $this->meilisearch_options['meilisearch_search_url_4']) : ''
+            '<input class="regular-text" type="text" name="%s[search_url_4]" id="meilisearch_search_url_4" value="%s">',
+            ArrayOption::OPTION_NAME,
+            isset( $this->options['search_url_4'] ) ? esc_attr($this->options['search_url_4']) : ''
         );
     }
 
-    public function meilisearch_private_key_1_callback()
+    public function private_key_1_callback()
     {
         printf(
-            '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_private_key_1]" id="meilisearch_private_key_1" value="%s">',
-            isset( $this->meilisearch_options['meilisearch_private_key_1'] ) ? esc_attr( $this->meilisearch_options['meilisearch_private_key_1']) : ''
+            '<input class="regular-text" type="text" name="%s[private_key_1]" id="meilisearch_private_key_1" value="%s">',
+            ArrayOption::OPTION_NAME,
+            isset( $this->options['private_key_1'] ) ? esc_attr( $this->options['private_key_1']) : ''
         );
     }
 
-    public function meilisearch_public_key_2_callback()
+    public function public_key_2_callback()
     {
         printf(
-            '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_public_key_2]" id="meilisearch_public_key_2" value="%s">',
-            isset( $this->meilisearch_options['meilisearch_public_key_2'] ) ? esc_attr( $this->meilisearch_options['meilisearch_public_key_2']) : ''
+            '<input class="regular-text" type="text" name="%s[public_key_2]" id="meilisearch_public_key_2" value="%s">',
+            ArrayOption::OPTION_NAME,
+            isset( $this->options['public_key_2'] ) ? esc_attr( $this->options['public_key_2']) : ''
         );
     }
 
-    public function meilisearch_index_name_callback()
+    public function index_name_callback()
     {
         printf(
-            '<input class="regular-text" type="text" name="meilisearch_option_name[meilisearch_index_name]" id="meilisearch_index_name" value="%s">',
-            isset( $this->meilisearch_options['meilisearch_index_name'] ) ? esc_attr( $this->meilisearch_options['meilisearch_index_name']) : ''
+            '<input class="regular-text" type="text" name="%s[index_name]" id="meilisearch_index_name" value="%s">',
+            ArrayOption::OPTION_NAME,
+            isset( $this->options['index_name'] ) ? esc_attr( $this->options['index_name']) : ''
         );
     }
 }

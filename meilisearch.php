@@ -27,6 +27,8 @@ declare(strict_types=1);
 
 namespace MeiliSearch\WordPress;
 
+use Amp\Injector\Injector;
+
 use function add_action;
 use function current_user_can;
 use function deactivate_plugins;
@@ -54,6 +56,7 @@ Config::init(
         'filePath' => __FILE__,
         'baseName' => plugin_basename(__FILE__),
         'slug' => 'meilisearch',
+        'injector' => new Injector(),
     ]
 );
 
@@ -74,7 +77,6 @@ if (
     register_deactivation_hook(__FILE__, __NAMESPACE__ . '\\deactivate');
     register_uninstall_hook(__FILE__, __NAMESPACE__ . '\\uninstall');
     add_action('plugins_loaded', __NAMESPACE__ . '\\boot', 10, 0);
-    add_action('admin_init', __NAMESPACE__ . '\\bootAdmin', 10, 0);
 } else {
     // Suppress "Plugin activated." notice.
     unset($_GET['activate']); // phpcs:ignore WordPress.Security.NonceVerification.Recommended

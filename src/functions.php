@@ -75,21 +75,28 @@ function printRequirementsNotice()
     );
 }
 
-function registerWidget(): void
-{
-    register_widget(Widget::class);
-}
-
 /**
  * Start!
  */
 function boot(): void
 {
-    new Index();
-    add_action('widgets_init', __NAMESPACE__ . '\\registerWidget');
+    $injector = Config::get('injector');
+    $injector
+        ->share(ArrayOption::class)
+        ->share(Index::class);
+    $injector->make(Index::class);
+
+    add_action('widgets_init', __NAMESPACE__ . '\\registerWidget', 10, 0);
+    add_action('admin_init', __NAMESPACE__ . '\\bootAdmin', 10, 0);
 }
 
 function bootAdmin(): void
 {
-    new Admin();
+    $injector = Config::get('injector');
+    $injector->make(Admin::class);
+}
+
+function registerWidget(): void
+{
+    register_widget(Widget::class);
 }

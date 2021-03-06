@@ -22,8 +22,13 @@ use function wp_register_style;
 
 class Widget extends WP_Widget
 {
-    public function __construct()
+    /** @var \MeiliSearch\WordPress\ArrayOption */
+    protected $option;
+
+    public function __construct(ArrayOption $option)
     {
+        $this->option = $option;
+
         parent::__construct(
             'meilisearch_widget',
             'MeiliSearch Bar',
@@ -92,8 +97,8 @@ class Widget extends WP_Widget
         extract( $args );
 
         // Check the widget options
-        $title    = isset( $instance['title'] ) ? apply_filters( 'widget_title', $instance['title'] ) : '';
-        $text     = isset( $instance['text'] ) ? $instance['text'] : '';
+        $title = isset( $instance['title'] ) ? apply_filters( 'widget_title', $instance['title'] ) : '';
+        $text = isset( $instance['text'] ) ? $instance['text'] : '';
 
         // WordPress core before_widget hook (always include )
         echo $before_widget;
@@ -111,22 +116,21 @@ class Widget extends WP_Widget
             $search_elt_id = 'meilisearchbox';
             $hits_elt_id = 'meilisearchhits';
 
+            $meilisearch_url = $this->option->get('url_0');
+            $meilisearch_search_url = $this->option->get('search_url_4');
+            $meilisearch_public_key = $this->option->get('public_key_2');
+            $meilisearch_index_name = $this->option->get('index_name');
+
+            $search_url = $meilisearch_search_url === '' ? $meilisearch_url : $meilisearch_search_url;
+
             // echo '<form><input type="text" placeholder="' . $text . '"/></form>';
             echo '<div id="'.$search_elt_id.'" class="ais-SearchBox"></div>';
             echo '<div id="'.$hits_elt_id.'" class="ais-SearchBox"></div>';
             echo '<script src="'.'https://cdn.jsdelivr.net/npm/meilisearch/dist/bundles/meilisearch.browser.js'.'"></script>';
             echo '<script src="'.'https://cdn.jsdelivr.net/npm/instantsearch.js@4'.'"></script>';
             echo '<script src="https://cdn.jsdelivr.net/npm/@meilisearch/instant-meilisearch"></script>';
-            echo '<script src="'.plugin_dir_url(Config::get('filePath')) . 'js/instant-meilisearch.js'.'"></script>';
+            echo '<script src="' . esc_url(plugin_dir_url(Config::get('filePath'))) . 'js/instant-meilisearch.js'.'"></script>';
             echo '<script>';
-
-            $meilisearch_options = get_option( 'meilisearch_option_name' );
-            $meilisearch_url = $meilisearch_options['meilisearch_url_0'];
-            $meilisearch_search_url = $meilisearch_options['meilisearch_search_url_4'];
-            $meilisearch_public_key = $meilisearch_options['meilisearch_public_key_2'];
-            $meilisearch_index_name = $meilisearch_options['meilisearch_index_name'];
-            $search_url = $meilisearch_search_url === "" ? $meilisearch_url : $meilisearch_search_url;
-
             echo 'wpInstantMeilisearch("'.$search_url.'","'.$meilisearch_public_key.'","'.$meilisearch_index_name.'","#'.$search_elt_id.'","#'.$hits_elt_id.'")';
             echo '</script>';
         }
