@@ -38,8 +38,11 @@ class Widget extends WP_Widget
 
     /**
      * The widget form for the backend.
+     *
+     * @param array<string, string> $instance
+     * @return string
      */
-    public function form(array $instance): void
+    public function form($instance)
     {
         // Set widget defaults
         $defaults = [
@@ -48,9 +51,10 @@ class Widget extends WP_Widget
         ];
 
         // Parse current settings with defaults
-        extract( wp_parse_args( ( array ) $instance, $defaults ) ); ?>
+        extract( wp_parse_args( (array) $instance, $defaults ) );
 
-        <?php // Widget Title ?>
+        // Widget Title
+        ?>
         <p>
             <label for="<?php echo esc_attr( $this->get_field_id( 'title' ) ); ?>"><?php _e( 'Widget Title', 'text_domain' ); ?></label>
             <input class="widefat" id="<?php echo esc_attr( $this->get_field_id( 'title' ) ); ?>" name="<?php echo esc_attr( $this->get_field_name( 'title' ) ); ?>" type="text" value="<?php echo esc_attr( $title ); ?>" />
@@ -63,6 +67,7 @@ class Widget extends WP_Widget
         </p>
 
         <?php
+        return 'form';
     }
 
     /**
@@ -81,6 +86,7 @@ class Widget extends WP_Widget
      * @hook wp_enqueue_scripts
      */
     public function enqueueStyle(): void
+    {
         wp_register_style(
             'meilisearch_widget',
             plugin_dir_url(Config::get('filePath')) . 'assets/css/meilisearch_widget.css'

@@ -98,5 +98,6 @@ function bootAdmin(): void
 
 function registerWidget(): void
 {
-    register_widget(Widget::class);
+    $injector = Config::get('injector');
+    register_widget($injector->make(Widget::class));
 }

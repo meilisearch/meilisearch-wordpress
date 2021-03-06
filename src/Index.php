@@ -73,13 +73,15 @@ final class Index
      */
     public function deletePostFromIndex(int $postId): void
     {
-        $this->getIndex()->deleteDocument($postId);
+        $this->getIndex()->deleteDocument((string) $postId);
     }
 
     public function indexAllPostsAsync(): array
     {
         $documents = [];
-        foreach (get_posts(['numberposts' => -1]) as $post) {
+        /** @var array<\WP_Post> $allPosts */
+        $allPosts = get_posts(['numberposts' => -1]);
+        foreach ($allPosts as $post) {
             // FIXME index_post($post);
 
             $documents[] = [
