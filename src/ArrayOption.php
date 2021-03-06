@@ -28,8 +28,7 @@ class ArrayOption
 
     public function __construct()
     {
-echo 222;
-        $arrayOption = ['alma'=>rand()]; //get_option(self::OPTION_NAME);
+        $arrayOption = get_option(self::OPTION_NAME);
         $this->option = is_array($arrayOption) ? $arrayOption : [];
     }
 
