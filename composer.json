@@ -40,5 +40,8 @@
         "files": [
             "src/functions.php"
         ]
+    },
+    "require-dev": {
+        "szepeviktor/phpstan-wordpress": "^0.7.4"
     }
 }
