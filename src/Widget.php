@@ -37,43 +37,52 @@ class Widget extends WP_Widget
     }
 
     /**
-     * The widget form for the backend.
+     * The widget form for the back-end.
      *
      * @param array<string, string> $instance
      * @return string
      */
-    public function form($instance)
+    public function form($instance): string
     {
-        // Set widget defaults
+        // Set widget defaults.
         $defaults = [
             'title' => '',
             'text' => '',
         ];
 
-        // Parse current settings with defaults
-        extract( wp_parse_args( (array) $instance, $defaults ) );
+        // Parse current settings with defaults.
+        $settings = wp_parse_args((array) $instance, $defaults);
 
-        // Widget Title
         ?>
         <p>
-            <label for="<?php echo esc_attr( $this->get_field_id( 'title' ) ); ?>"><?php _e( 'Widget Title', 'text_domain' ); ?></label>
-            <input class="widefat" id="<?php echo esc_attr( $this->get_field_id( 'title' ) ); ?>" name="<?php echo esc_attr( $this->get_field_name( 'title' ) ); ?>" type="text" value="<?php echo esc_attr( $title ); ?>" />
+            <label for="<?php echo esc_attr($this->get_field_id('title')); ?>"><?php _e('Widget Title', 'text_domain'); ?></label>
+            <input
+                class="widefat"
+                id="<?php echo esc_attr($this->get_field_id('title')); ?>"
+                name="<?php echo esc_attr($this->get_field_name('title')); ?>"
+                type="text"
+                value="<?php echo esc_attr($settings['title']); ?>"
+            />
         </p>
-
-        <?php // Text Field ?>
         <p>
-            <label for="<?php echo esc_attr( $this->get_field_id( 'text' ) ); ?>"><?php _e( 'Text:', 'text_domain' ); ?></label>
-            <input class="widefat" id="<?php echo esc_attr( $this->get_field_id( 'text' ) ); ?>" name="<?php echo esc_attr( $this->get_field_name( 'text' ) ); ?>" type="text" value="<?php echo esc_attr( $text ); ?>" />
+            <label for="<?php echo esc_attr($this->get_field_id('text')); ?>"><?php _e('Text:', 'text_domain'); ?></label>
+            <input
+                class="widefat"
+                id="<?php echo esc_attr($this->get_field_id('text')); ?>"
+                name="<?php echo esc_attr($this->get_field_name('text')); ?>"
+                type="text"
+                value="<?php echo esc_attr($settings['text']); ?>"
+            />
         </p>
-
         <?php
-        return 'form';
+
+        return 'noform';
     }
 
     /**
      * Update widget settings.
      */
-    public function update(array $new_instance, array $old_instance): array
+    public function update($new_instance, $old_instance): array
     {
         $instance = $old_instance;
         $instance['title'] = isset( $new_instance['title'] ) ? wp_strip_all_tags( $new_instance['title'] ) : '';
@@ -97,28 +106,25 @@ class Widget extends WP_Widget
     /**
      * Display the widget.
      */
-    public function widget(array $args, array $instance): void
+    public function widget($args, $instance): void
     {
-        // FIXME Use WP functions.
-        extract( $args );
+        // Check the widget options.
+        $title = isset($instance['title']) ? apply_filters('widget_title', $instance['title']) : '';
+        $text = isset($instance['text']) ? $instance['text'] : '';
 
-        // Check the widget options
-        $title = isset( $instance['title'] ) ? apply_filters( 'widget_title', $instance['title'] ) : '';
-        $text = isset( $instance['text'] ) ? $instance['text'] : '';
-
-        // WordPress core before_widget hook (always include )
-        echo $before_widget;
+        // WordPress core before_widget hook (always include)
+        echo $args['before_widget'];
 
         // Display the widget
         echo '<div class="widget-text wp_widget_plugin_box">';
 
         // Display widget title if defined
-        if ( $title ) {
-            echo $before_title . $title . $after_title;
+        if ($title) {
+            echo $args['before_title'] . $title . $args['after_title'];
         }
 
         // Display text field
-        if ( $text ) {
+        if ($text) {
             $search_elt_id = 'meilisearchbox';
             $hits_elt_id = 'meilisearchhits';
 
@@ -144,6 +150,6 @@ class Widget extends WP_Widget
         echo '</div>';
 
         // WordPress core after_widget hook (always include)
-        echo $after_widget;
+        echo $args['after_widget'];
     }
 }

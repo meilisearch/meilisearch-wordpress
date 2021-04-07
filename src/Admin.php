@@ -20,17 +20,23 @@ class Admin
 {
     use HookAnnotation;
 
-    protected $options;
+    /** @var \MeiliSearch\WordPress\Index */
+    protected $index;
 
-    public function __construct()
+    /** @var \MeiliSearch\WordPress\ArrayOption */
+    protected $option;
+
+    public function __construct(Index $index, ArrayOption $option)
     {
+        $this->index = $index;
+        $this->option = $option;
         $this->hookMethods();
     }
 
     /**
      * @hook admin_menu
      */
-    public function add_plugin_page()
+    public function add_plugin_page(): void
     {
         add_menu_page(
             'MeiliSearch', // page_title
@@ -54,7 +60,7 @@ class Admin
     /**
      * @hook admin_init
      */
-    public function page_init()
+    public function page_init(): void
     {
         register_setting(
             'meilisearch_option_group',
@@ -110,10 +116,8 @@ class Admin
         );
     }
 
-    public function create_admin_page()
+    public function create_admin_page(): void
     {
-        $this->options = get_option(ArrayOption::OPTION_NAME);
-
         ?>
         <div class="wrap">
             <h2>MeiliSearch</h2>
@@ -131,17 +135,15 @@ class Admin
         <?php
     }
 
-    public function create_admin_page_index_content()
+    public function create_admin_page_index_content(): void
     {
         if (isset($_GET['deleteIndex']) && $_GET['deleteIndex'] === '1') {
-            delete_index();
+            $this->index->deleteIndex();
         }
 
         if (isset($_GET['indexAll']) && $_GET['indexAll'] === '1') {
-            index_all_posts($sync = true);
+            $this->index->indexAllPostsSync();
         }
-
-        $this->options = get_option(ArrayOption::OPTION_NAME);
 
         ?>
         <div class="wrap">
@@ -149,7 +151,7 @@ class Admin
             <p>In this page you can index all of your currently existing content in your Wordpress site</p>
             <?php settings_errors(); ?>
 
-            <p>Indexed documents: <?php echo count_indexed(); ?></p>
+            <p>Indexed documents: <?php echo $this->index->getCount(); ?></p>
 
             <form method="post" action="admin.php?page=meilisearch_index_content&deleteIndex=1">
                 <span id="index-all-button">
@@ -193,51 +195,51 @@ class Admin
 
     public function section_info(): void
     {
-        echo 'function section_info'; // TODO
+        echo 'function section_info'; // @TODO
     }
 
-    public function url_0_callback()
+    public function url_0_callback(): void
     {
         printf(
             '<input class="regular-text" type="text" name="%s[url_0]" id="meilisearch_url_0" value="%s">',
             ArrayOption::OPTION_NAME,
-            isset( $this->options['url_0'] ) ? esc_attr($this->options['url_0']) : ''
+            esc_attr($this->option->get('url_0') ?? '')
         );
     }
 
-    public function search_url_4_callback()
+    public function search_url_4_callback(): void
     {
         printf(
             '<input class="regular-text" type="text" name="%s[search_url_4]" id="meilisearch_search_url_4" value="%s">',
             ArrayOption::OPTION_NAME,
-            isset( $this->options['search_url_4'] ) ? esc_attr($this->options['search_url_4']) : ''
+            esc_attr($this->option->get('search_url_4') ?? '')
         );
     }
 
-    public function private_key_1_callback()
+    public function private_key_1_callback(): void
     {
         printf(
             '<input class="regular-text" type="text" name="%s[private_key_1]" id="meilisearch_private_key_1" value="%s">',
             ArrayOption::OPTION_NAME,
-            isset( $this->options['private_key_1'] ) ? esc_attr( $this->options['private_key_1']) : ''
+            esc_attr($this->option->get('private_key_1') ?? '')
         );
     }
 
-    public function public_key_2_callback()
+    public function public_key_2_callback(): void
     {
         printf(
             '<input class="regular-text" type="text" name="%s[public_key_2]" id="meilisearch_public_key_2" value="%s">',
             ArrayOption::OPTION_NAME,
-            isset( $this->options['public_key_2'] ) ? esc_attr( $this->options['public_key_2']) : ''
+            esc_attr($this->option->get('public_key_2') ?? '')
         );
     }
 
-    public function index_name_callback()
+    public function index_name_callback(): void
     {
         printf(
             '<input class="regular-text" type="text" name="%s[index_name]" id="meilisearch_index_name" value="%s">',
             ArrayOption::OPTION_NAME,
-            isset( $this->options['index_name'] ) ? esc_attr( $this->options['index_name']) : ''
+            esc_attr($this->option->get('index_name') ?? '')
         );
     }
 }

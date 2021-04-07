@@ -3,6 +3,8 @@ includes:
 parameters:
     level: max
     inferPrivatePropertyTypeFromConstructor: true
+    stubFiles:
+        - tests/phpstan/class-wp-post.stub
     paths:
         - meilisearch.php
         - src/
