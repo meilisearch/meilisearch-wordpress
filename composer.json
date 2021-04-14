@@ -1,5 +1,47 @@
 {
+    "name": "meilisearch/meilisearch-wordpress",
+    "type": "wordpress-plugin",
+    "description": "MeiliSearch for WordPress",
+    "keywords": [
+        "meilisearch",
+        "instant",
+        "search",
+        "api",
+        "client",
+        "wordpress",
+        "plugin"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Clementine Urquizar",
+            "email": "clementine@meilisearch.com"
+        },
+        {
+            "name": "Viktor Szépe",
+            "email": "viktor@szepe.net"
+        }
+    ],
     "require": {
-        "meilisearch/meilisearch-php": "^0.12.0"
+        "php": ">=7.2",
+        "meilisearch/meilisearch-php": "^0.12.0",
+        "szepeviktor/injector-php-7": "^1.5"
+    },
+    "config": {
+        "classmap-authoritative": true,
+        "preferred-install": {
+            "*": "dist"
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "MeiliSearch\\WordPress\\": "src/"
+        },
+        "files": [
+            "src/functions.php"
+        ]
+    },
+    "require-dev": {
+        "szepeviktor/phpstan-wordpress": "^0.7.4"
     }
 }
