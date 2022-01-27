@@ -1,6 +1,6 @@
 # Contributing
 
-First of all, thank you for contributing to MeiliSearch! The goal of this document is to provide everything you need to know in order to contribute to MeiliSearch and its different integrations.
+First of all, thank you for contributing to Meilisearch! The goal of this document is to provide everything you need to know in order to contribute to Meilisearch and its different integrations.
 
 <!-- MarkdownTOC autolink="true" style="ordered" indent="   " -->
 
@@ -14,8 +14,8 @@ First of all, thank you for contributing to MeiliSearch! The goal of this docume
 ## Assumptions
 
 1. **You're familiar with [GitHub](https://github.com) and the [Pull Request](https://help.github.com/en/github/collaborating-with-issues-and-pull-requests/about-pull-requests) (PR) workflow.**
-2. **You've read the MeiliSearch [documentation](https://docs.meilisearch.com) and the [README](/README.md).**
-3. **You know about the [MeiliSearch community](https://docs.meilisearch.com/resources/contact.html). Please use this for help.**
+2. **You've read the Meilisearch [documentation](https://docs.meilisearch.com) and the [README](/README.md).**
+3. **You know about the [Meilisearch community](https://docs.meilisearch.com/resources/contact.html). Please use this for help.**
 
 ## How to Contribute
 
@@ -51,7 +51,7 @@ $ vendor/bin/php-cs-fixer fix --verbose --config=.php_cs.dist --dry-run
 
 ### Release Process
 
-MeiliSearch tools follow the [Semantic Versioning Convention](https://semver.org/).
+Meilisearch tools follow the [Semantic Versioning Convention](https://semver.org/).
 
 #### Automated Changelogs
 
@@ -62,7 +62,7 @@ The draft release description is therefore generated and corresponds to all the 
 About this automation:
 - As the draft release description is generated on every push on `master`, don't change it manually until the final release publishment.
 - If you don't want a PR to appear in the release changelogs: add the label `skip-changelog`. We suggest removing PRs updating the README or the CI (except for big changes).
-- If the changes you are doing in the PR are breaking: add the label `breaking-change`. In the release tag, the minor will be increased instead of the patch. The major will never be changed until [MeiliSearch](https://github.com/meilisearch/MeiliSearch) is stable.
+- If the changes you are doing in the PR are breaking: add the label `breaking-change`. In the release tag, the minor will be increased instead of the patch. The major will never be changed until [Meilisearch](https://github.com/meilisearch/meilisearch) is stable.
 - If you did any mistake, for example the PR is already closed but you forgot to add a label or you misnamed your PR, don't panic: change what you want in the closed PR and run the job again.
 
 *More information about the [Release Drafter](https://github.com/release-drafter/release-drafter), used to automate these steps.*

@@ -1,10 +1,10 @@
 <?php
     /*
-    Plugin Name: MeiliSearch Wordpress
+    Plugin Name: Meilisearch Wordpress
     Plugin URI: https://wordpress.meilisearch.dev
-    description: The best search experience in wordpress with MeiliSearch
+    description: The best search experience in wordpress with Meilisearch
     Version: 0.1.0
-    Author: MeiliSearch
+    Author: Meilisearch
     Author URI: https://meilisearch.com
     License: MIT
     */
