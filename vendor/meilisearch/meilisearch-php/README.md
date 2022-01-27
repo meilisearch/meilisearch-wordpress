@@ -5,7 +5,7 @@
 <h1 align="center">Meilisearch PHP</h1>
 
 <h4 align="center">
-  <a href="https://github.com/meilisearch/,eiliSearch">Meilisearch</a> |
+  <a href="https://github.com/meilisearch/meilisearch">Meilisearch</a> |
   <a href="https://www.meilisearch.com">Website</a> |
   <a href="https://blog.meilisearch.com">Blog</a> |
   <a href="https://twitter.com/meilisearch">Twitter</a> |
