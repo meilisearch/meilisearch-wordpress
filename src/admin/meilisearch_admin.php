@@ -36,8 +36,8 @@ class MeiliSearch {
         $this->meilisearch_options = get_option( 'meilisearch_option_name' ); ?>
 
         <div class="wrap">
-            <h2>MeiliSearch</h2>
-            <p>Set up MeiliSearch for your Wordpress</p>
+            <h2>Meilisearch</h2>
+            <p>Set up Meilisearch for your Wordpress</p>
             <?php settings_errors(); ?>
 
             <form method="post" action="options.php">
@@ -62,7 +62,7 @@ class MeiliSearch {
         $this->meilisearch_options = get_option( 'meilisearch_option_name' ); ?>
 
         <div class="wrap">
-            <h2>Index your existing content to MeiliSearch</h2>
+            <h2>Index your existing content to Meilisearch</h2>
             <p>In this page you can index all of your currently existing content in your Wordpress site</p>
             <?php settings_errors(); ?>
 

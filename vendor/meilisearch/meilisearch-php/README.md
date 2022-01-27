@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="https://res.cloudinary.com/meilisearch/image/upload/v1587402338/SDKs/meilisearch_php.svg" alt="MeiliSearch-PHP" width="200" height="200" />
+  <img src="https://res.cloudinary.com/meilisearch/image/upload/v1587402338/SDKs/meilisearch_php.svg" alt="Meilisearch-PHP" width="200" height="200" />
 </p>
 
-<h1 align="center">MeiliSearch PHP</h1>
+<h1 align="center">Meilisearch PHP</h1>
 
 <h4 align="center">
-  <a href="https://github.com/meilisearch/MeiliSearch">MeiliSearch</a> |
+  <a href="https://github.com/meilisearch/,eiliSearch">Meilisearch</a> |
   <a href="https://www.meilisearch.com">Website</a> |
   <a href="https://blog.meilisearch.com">Blog</a> |
   <a href="https://twitter.com/meilisearch">Twitter</a> |
@@ -20,15 +20,15 @@
   <a href="https://slack.meilisearch.com"><img src="https://img.shields.io/badge/slack-MeiliSearch-blue.svg?logo=slack" alt="Slack"></a>
 </p>
 
-<p align="center">⚡ Lightning Fast, Ultra Relevant, and Typo-Tolerant Search Engine MeiliSearch client written in PHP</p>
+<p align="center">⚡ Lightning Fast, Ultra Relevant, and Typo-Tolerant Search Engine Meilisearch client written in PHP</p>
 
-**MeiliSearch PHP** is a client for **MeiliSearch** written in PHP. **MeiliSearch** is a powerful, fast, open-source, easy to use and deploy search engine. Both searching and indexing are highly customizable. Features such as typo-tolerance, filters, and synonyms are provided out-of-the-box.
+**Meilisearch PHP** is a client for **Meilisearch** written in PHP. **Meilisearch** is a powerful, fast, open-source, easy to use and deploy search engine. Both searching and indexing are highly customizable. Features such as typo-tolerance, filters, and synonyms are provided out-of-the-box.
 
 ## Table of Contents <!-- omit in toc -->
 
 - [🔧 Installation](#-installation)
 - [🚀 Getting started](#-getting-started)
-- [🤖 Compatibility with MeiliSearch](#-compatibility-with-meilisearch)
+- [🤖 Compatibility with Meilisearch](#-compatibility-with-meilisearch)
 - [🎬 Examples](#-examples)
   - [Indexes](#indexes)
   - [Documents](#documents)
@@ -45,16 +45,16 @@ With composer:
 $ composer require meilisearch/meilisearch-php
 ```
 
-### Run MeiliSearch <!-- omit in toc -->
+### Run Meilisearch <!-- omit in toc -->
 
-There are many easy ways to [download and run a MeiliSearch instance](https://docs.meilisearch.com/guides/advanced_guides/installation.html#download-and-launch).
+There are many easy ways to [download and run a Meilisearch instance](https://docs.meilisearch.com/guides/advanced_guides/installation.html#download-and-launch).
 
 For example, if you use Docker:
 ```bash
 $ docker run -it --rm -p 7700:7700 getmeili/meilisearch:latest ./meilisearch --master-key=masterKey
 ```
 
-NB: you can also download MeiliSearch from **Homebrew** or **APT**.
+NB: you can also download Meilisearch from **Homebrew** or **APT**.
 
 ## 🚀 Getting started
 
@@ -89,7 +89,7 @@ With the `updateId`, you can check the status (`processed` or `failed`) of your 
 #### Search in index <!-- omit in toc -->
 
 ```php
-// MeiliSearch is typo-tolerant:
+// Meilisearch is typo-tolerant:
 print_r($index->search('harry pottre'));
 ```
 Output:
@@ -113,15 +113,15 @@ Array
 )
 ```
 
-## 🤖 Compatibility with MeiliSearch
+## 🤖 Compatibility with Meilisearch
 
-This package is compatible with the following MeiliSearch versions:
+This package is compatible with the following Meilisearch versions:
 - `v0.12.X`
 - `v0.11.X`
 
 ## 🎬 Examples
 
-All HTTP routes of MeiliSearch are accessible via methods in this SDK.</br>
+All HTTP routes of Meilisearch are accessible via methods in this SDK.</br>
 You can check out [the API documentation](https://docs.meilisearch.com/references/).
 
 ### Indexes
@@ -307,4 +307,4 @@ If you want to know more about the development workflow or want to contribute, p
 
 <hr>
 
-**MeiliSearch** provides and maintains many **SDKs and Integration tools** like this one. We want to provide everyone with an **amazing search experience for any kind of project**. If you want to contribute, make suggestions, or just know what's going on right now, visit us in the [integration-guides](https://github.com/meilisearch/integration-guides) repository.
+**Meilisearch** provides and maintains many **SDKs and Integration tools** like this one. We want to provide everyone with an **amazing search experience for any kind of project**. If you want to contribute, make suggestions, or just know what's going on right now, visit us in the [integration-guides](https://github.com/meilisearch/integration-guides) repository.
