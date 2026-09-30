@@ -51,7 +51,7 @@ Ship the official Meilisearch plugin to wordpress.org (and Packagist) quickly, w
 | Item | Value |
 |---|---|
 | PHP | ≥ 8.1 (Composer `config.platform.php = 8.1.0`; no 8.2+ syntax such as `readonly class`) |
-| WordPress | ≥ 6.5; `Tested up to: 7.1` |
+| WordPress | ≥ 6.9 (bundled Action Scheduler 4.x requires 6.9); `Tested up to: 7.1` |
 | WooCommerce | ≥ 8.5, optional |
 | Meilisearch | ≥ 1.13 (federated multi-search with `page`/`hitsPerPage`, stable hybrid search). Checked via `GET /version` on connect. |
 | Slug / text domain | `meilisearch` (verified available on wordpress.org, 2026-09-30) |
@@ -442,7 +442,7 @@ Connect and reindex from admin; theme search served by Meilisearch; autocomplete
 
 - Lint: PHPCS (WordPress Coding Standards), PHPStan level 6 (`szepeviktor/phpstan-wordpress`, `php-stubs/woocommerce-stubs`), `wp plugin check`.
 - Unit: PHP 8.1 / 8.3 / 8.5.
-- Integration: {WP 6.5, latest} × {Meilisearch 1.13, latest}, plus a WooCommerce-latest job.
+- Integration: {WP 6.9, latest} × {Meilisearch 1.13, latest}, plus a WooCommerce-latest job.
 - E2E: latest WP + WC + Meilisearch.
 - All config files (`phpcs.xml.dist`, `phpstan.neon.dist`, `phpunit.xml.dist` with separate unit/integration bootstraps, `.wp-env.json`, `playwright.config.ts`) are part of the plan, not assumed.
 
@@ -451,7 +451,7 @@ Connect and reindex from admin; theme search served by Meilisearch; autocomplete
 - **Build:** `composer install --no-dev --optimize-autoloader`; minify autocomplete JS; `.distignore` excludes tests, docs, dotfiles, `bin/`, dev configs; `wp dist-archive`.
 - **Version guard:** release job fails unless git tag == `Version:` header == `Stable tag` == `MEILISEARCH_VERSION`.
 - **Deploy on tag:** `10up/action-wordpress-plugin-deploy` to wordpress.org SVN (assets from `.wordpress-org/`: banners 772×250 + 1544×500, icons 128 + 256, screenshots); Packagist auto-update (`type: wordpress-plugin`); GitHub Release with the same zip. Tests must pass before deploy.
-- **readme.txt:** valid headers (`Requires at least: 6.5`, `Tested up to: 7.1`, `Requires PHP: 8.1`, `Stable tag`, `License`), description, installation, FAQ, **External services** section (what is sent, when, to which host; links to Meilisearch terms and privacy policy), changelog.
+- **readme.txt:** valid headers (`Requires at least: 6.9`, `Tested up to: 7.1`, `Requires PHP: 8.1`, `Stable tag`, `License`), description, installation, FAQ, **External services** section (what is sent, when, to which host; links to Meilisearch terms and privacy policy), changelog.
 - **First submission:** upload the 1.0.0 zip for review from an `@meilisearch.com` wordpress.org account; `Contributors:` lists existing wordpress.org usernames.
 - **Docs:** readme + a WordPress integration guide on the Meilisearch documentation site.
 
