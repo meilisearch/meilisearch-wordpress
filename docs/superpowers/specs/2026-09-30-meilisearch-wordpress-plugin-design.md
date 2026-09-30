@@ -289,8 +289,8 @@ Variations are read via `get_children()` + `wc_get_product()` (not `get_availabl
 
 All feed `ChangeCollector` with the **parent** product ID:
 
-- `woocommerce_new_product`, `woocommerce_update_product`, `woocommerce_delete_product`, `woocommerce_trash_product`
-- `woocommerce_new_product_variation`, `woocommerce_update_product_variation`, `woocommerce_delete_product_variation`
+- `woocommerce_new_product`, `woocommerce_update_product` (product trash/delete already arrive through the core `transition_post_status` / `before_delete_post` hooks of § 6.1; WooCommerce 11.x has no dedicated product delete/trash actions)
+- `woocommerce_new_product_variation`, `woocommerce_update_product_variation`, `woocommerce_before_delete_product_variation`, `woocommerce_trash_product_variation`
 - `woocommerce_product_set_stock`, `woocommerce_variation_set_stock`, `woocommerce_product_set_stock_status`, `woocommerce_variation_set_stock_status`
 - `wp_update_comment_count` for products (rating changes)
 
