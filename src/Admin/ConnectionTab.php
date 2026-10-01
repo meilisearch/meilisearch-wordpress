@@ -266,7 +266,7 @@ final class ConnectionTab implements Tab, Registrable {
 				}
 				if ( false === $verified ) {
 					$type     = 'error';
-					$message .= ' ' . __( 'The search key has more permissions than "search" on this site\'s indexes. Replace it with a search-only key: it is visible to visitors.', 'meilisearch' );
+					$message .= ' ' . __( 'The search key is not a search-only key for this site\'s indexes (it is the admin or master key, Meilisearch does not know it, or it allows more than "search"). It is not sent to visitors: replace it with a search-only key.', 'meilisearch' );
 				} elseif ( null === $verified ) {
 					$type     = 'warning';
 					$message .= ' ' . __( 'The search key could not be verified. Make sure it only allows the "search" action.', 'meilisearch' );

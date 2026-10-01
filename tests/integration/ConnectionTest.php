@@ -144,4 +144,73 @@ final class ConnectionTest extends TestCase {
 		$this->assertSame( 'manual', $result['key'] );
 		$this->assertTrue( $this->options()->state( 'search_key_manual', false ) );
 	}
+
+	/**
+	 * Creates a Meilisearch key for the test and remembers it for tear_down().
+	 *
+	 * @param list<string> $actions Actions.
+	 * @return array{key: string, uid: string}
+	 */
+	private function create_key( array $actions ): array {
+		$created      = $this->meili(
+			'POST',
+			'/keys',
+			array(
+				'name'      => 'wp-test ' . implode( ' ', $actions ),
+				'actions'   => $actions,
+				'indexes'   => array( '*' ),
+				'expiresAt' => null,
+			)
+		);
+		$this->keys[] = (string) $created['uid'];
+
+		return array(
+			'key' => (string) $created['key'],
+			'uid' => (string) $created['uid'],
+		);
+	}
+
+	/**
+	 * Runs verify_search_key() with another admin key.
+	 *
+	 * @param string $admin_key Admin key.
+	 * @param string $candidate Candidate search key.
+	 * @return bool|null
+	 */
+	private function verify_with_admin_key( string $admin_key, string $candidate ): ?bool {
+		$original = (string) get_option( Options::ADMIN_KEY, '' );
+		update_option( Options::ADMIN_KEY, $admin_key );
+		try {
+			return $this->manager()->verify_search_key( $candidate );
+		} finally {
+			update_option( Options::ADMIN_KEY, $original );
+		}
+	}
+
+	public function test_master_key_pasted_as_search_key_is_rejected(): void {
+		if ( defined( 'MEILISEARCH_ADMIN_KEY' ) ) {
+			$this->markTestSkipped( 'The admin key is defined as a constant.' );
+		}
+		// An admin key that may read keys gets 404 for the master key.
+		$full = $this->create_key( array( '*' ) );
+		$this->assertFalse( $this->verify_with_admin_key( $full['key'], self::test_key() ) );
+
+		// An admin key without keys.* gets 403; the self-probe on /version then succeeds.
+		$restricted = $this->create_key( array( 'version', 'indexes.*', 'settings.*', 'tasks.*' ) );
+		$this->assertFalse( $this->verify_with_admin_key( $restricted['key'], self::test_key() ) );
+	}
+
+	public function test_admin_key_pasted_as_search_key_is_rejected(): void {
+		$this->assertFalse( $this->manager()->verify_search_key( self::test_key() ) );
+	}
+
+	public function test_search_only_key_unreadable_by_the_admin_key_is_unverifiable(): void {
+		if ( defined( 'MEILISEARCH_ADMIN_KEY' ) ) {
+			$this->markTestSkipped( 'The admin key is defined as a constant.' );
+		}
+		$restricted = $this->create_key( array( 'version', 'indexes.*', 'settings.*', 'tasks.*' ) );
+		$search     = $this->create_key( array( 'search' ) );
+
+		$this->assertNull( $this->verify_with_admin_key( $restricted['key'], $search['key'] ) );
+	}
 }

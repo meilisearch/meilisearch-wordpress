@@ -236,20 +236,67 @@ final class IndexManager {
 	 * Verifies a manually entered search key: only the `search` action, only this site's indexes.
 	 *
 	 * @param string $key Key value.
-	 * @return bool|null True when safe, false when too broad, null when it could not be read.
+	 * @return bool|null True when safe, false when too broad (or unsafe to serve), null when it could not be read.
 	 */
 	public function verify_search_key( string $key ): ?bool {
+		return $this->inspect_search_key( $key )['verified'];
+	}
+
+	/**
+	 * Inspects a browser search key candidate.
+	 *
+	 * The result is false when the key is the admin key, when Meilisearch does not know it as an API
+	 * key (404 or api_key_not_found: the master key, or a deleted key), when its details allow more than
+	 * `search` on this site's indexes, or when the key itself may call GET /version (a search-only key
+	 * gets 401/403 there). It is null when the details cannot be read and the self-probe was refused.
+	 *
+	 * @param string $key Key value.
+	 * @return array{verified: ?bool, details: ?array<string, mixed>, error: string} error is a Meilisearch error code, '' when none.
+	 */
+	public function inspect_search_key( string $key ): array {
+		$result = array(
+			'verified' => false,
+			'details'  => null,
+			'error'    => '',
+		);
+		if ( '' === $key || $key === $this->options->admin_key() ) {
+			return $result;
+		}
+
 		try {
 			$details = $this->clients->client()->get_key( $key );
 		} catch ( ApiError $error ) {
-			return null;
+			$result['error'] = $error->error_code;
+			if ( 404 === $error->http_status || 'api_key_not_found' === $error->error_code ) {
+				return $result;
+			}
+			$details = null;
 		}
-		if ( ! isset( $details['actions'], $details['indexes'] ) || ! is_array( $details['actions'] ) || ! is_array( $details['indexes'] ) ) {
-			return null;
-		}
-		$allowed = array( $this->names->uid( 'content' ), $this->names->uid( 'products' ) );
 
-		return array( 'search' ) === array_values( $details['actions'] )
-			&& array() === array_diff( $details['indexes'], $allowed );
+		if ( null !== $details && isset( $details['actions'], $details['indexes'] ) && is_array( $details['actions'] ) && is_array( $details['indexes'] ) ) {
+			$allowed            = array( $this->names->uid( 'content' ), $this->names->uid( 'products' ) );
+			$result['details']  = $details;
+			$result['verified'] = array( 'search' ) === array_values( $details['actions'] )
+				&& array() === array_diff( $details['indexes'], $allowed );
+			return $result;
+		}
+
+		$result['verified'] = $this->can_call_version( $key ) ? false : null;
+		return $result;
+	}
+
+	/**
+	 * Self-probe: whether the key itself may call GET /version (a search-only key may not).
+	 *
+	 * @param string $key Key value.
+	 * @return bool True on a 2xx answer; false on 401/403 or any other failure.
+	 */
+	private function can_call_version( string $key ): bool {
+		try {
+			$this->clients->client_for_key( $key )->version();
+			return true;
+		} catch ( ApiError $error ) {
+			return false;
+		}
 	}
 }

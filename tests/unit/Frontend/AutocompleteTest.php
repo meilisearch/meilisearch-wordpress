@@ -28,7 +28,7 @@ final class AutocompleteTest extends TestCase {
 	protected function set_up(): void {
 		parent::set_up();
 		$this->calls = array();
-		$this->stub_options( self::OPTIONS );
+		$this->stub_options( self::options() );
 		Functions\when( 'is_admin' )->justReturn( false );
 		Functions\when( 'determine_locale' )->justReturn( 'fr_FR' );
 		Functions\when( 'plugins_url' )->alias(
@@ -44,6 +44,17 @@ final class AutocompleteTest extends TestCase {
 				}
 			);
 		}
+	}
+
+	/**
+	 * OPTIONS with the hash of the stored key recorded as verified (as IndexManager::rotate_search_key() does).
+	 *
+	 * @return array<string, mixed>
+	 */
+	private static function options(): array {
+		$options = self::OPTIONS;
+		$options[ Options::STATE ]['search_key_verified'] = Options::key_fingerprint( 'search-key-value' );
+		return $options;
 	}
 
 	private function autocomplete(): Autocomplete {
@@ -66,7 +77,7 @@ final class AutocompleteTest extends TestCase {
 	 * @dataProvider disabled_cases
 	 */
 	public function test_not_enqueued( array $overrides, bool $admin ): void {
-		$options = self::OPTIONS;
+		$options = self::options();
 		foreach ( $overrides as $name => $value ) {
 			$options[ $name ] = is_array( $value ) ? array_merge( $options[ $name ], $value ) : $value;
 		}
@@ -78,6 +89,38 @@ final class AutocompleteTest extends TestCase {
 
 		self::assertFalse( $autocomplete->should_enqueue() );
 		self::assertSame( array(), $this->calls );
+	}
+
+	/**
+	 * @dataProvider created_mode_states
+	 *
+	 * @param array<string, mixed> $state State option.
+	 */
+	public function test_created_key_is_not_served_without_its_recorded_hash( array $state ): void {
+		$options                   = self::OPTIONS;
+		$options[ Options::STATE ] = $state;
+		$this->stub_options( $options );
+
+		$autocomplete = $this->autocomplete();
+		$autocomplete->enqueue();
+
+		self::assertFalse( $autocomplete->should_enqueue() );
+		self::assertSame( array(), $this->calls );
+	}
+
+	/**
+	 * @return array<string, array{0: array<string, mixed>}>
+	 */
+	public static function created_mode_states(): array {
+		return array(
+			'lost state'      => array( array() ),
+			'mismatched hash' => array(
+				array(
+					'search_key_manual'   => false,
+					'search_key_verified' => Options::key_fingerprint( 'another-key' ),
+				),
+			),
+		);
 	}
 
 	public function test_manual_key_is_served_only_when_its_hash_was_recorded(): void {

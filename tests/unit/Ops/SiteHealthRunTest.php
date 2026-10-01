@@ -86,9 +86,51 @@ final class SiteHealthRunTest extends TestCase {
 		$results = $this->health()->run_all();
 		$by_test = array_column( $results, null, 'test' );
 
-		self::assertSame( 'recommended', $by_test[ SiteHealth::TEST_SEARCH_KEY ]['status'] );
+		// An unknown key (the master key answers 404 too) must never be served: critical.
+		self::assertSame( 'critical', $by_test[ SiteHealth::TEST_SEARCH_KEY ]['status'] );
 		self::assertStringContainsString( 'api_key_not_found', $by_test[ SiteHealth::TEST_SEARCH_KEY ]['description'] );
 		self::assertStringNotContainsString( self::SEARCH_KEY, self::text( $results ) );
+	}
+
+	/**
+	 * Queues the version, stats and settings answers that precede the key lookup.
+	 */
+	private function queue_until_key_lookup(): void {
+		$this->transport->respond( 200, array( 'pkgVersion' => '1.53.1' ) );
+		$this->transport->respond( 200, array( 'numberOfDocuments' => 0 ) );
+		$this->transport->respond( 200, array() );
+	}
+
+	public function test_search_key_equal_to_the_admin_key_is_critical(): void {
+		$this->option_store[ Options::CONNECTION ]['search_key'] = self::ADMIN_KEY;
+		$this->queue_until_key_lookup();
+
+		$by_test = array_column( $this->health()->run_all(), null, 'test' );
+
+		self::assertSame( 'critical', $by_test[ SiteHealth::TEST_SEARCH_KEY ]['status'] );
+		self::assertSame( 0, $this->transport->pending() );
+	}
+
+	public function test_search_key_that_can_call_version_is_critical(): void {
+		$this->queue_until_key_lookup();
+		$this->transport->respond( 403, array( 'code' => 'invalid_api_key' ) );
+		$this->transport->respond( 200, array( 'pkgVersion' => '1.53.1' ) );
+
+		$by_test = array_column( $this->health()->run_all(), null, 'test' );
+
+		self::assertSame( 'critical', $by_test[ SiteHealth::TEST_SEARCH_KEY ]['status'] );
+		self::assertSame( 'Bearer ' . self::SEARCH_KEY, $this->transport->last()['headers']['Authorization'] );
+	}
+
+	public function test_unreadable_search_key_refused_by_version_is_only_recommended(): void {
+		$this->queue_until_key_lookup();
+		$this->transport->respond( 403, array( 'code' => 'invalid_api_key' ) );
+		$this->transport->respond( 403, array( 'code' => 'invalid_api_key' ) );
+
+		$by_test = array_column( $this->health()->run_all(), null, 'test' );
+
+		self::assertSame( 'recommended', $by_test[ SiteHealth::TEST_SEARCH_KEY ]['status'] );
+		self::assertSame( 0, $this->transport->pending() );
 	}
 
 	public function test_unexpected_exceptions_are_redacted_in_not_checked_results(): void {

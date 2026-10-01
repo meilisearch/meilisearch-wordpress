@@ -145,6 +145,13 @@ final class SiteHealthTest extends TestCase {
 		self::assertSame( $expected, SiteHealth::evaluate_search_key( $autocomplete, $key, $details, $allowed, 'forbidden', self::URL )['status'] );
 	}
 
+	public function test_unsafe_search_key_without_details_is_critical(): void {
+		$result = SiteHealth::evaluate_search_key( true, 'k', null, array( 'wp_abc123_content' ), 'api_key_not_found', self::URL, true );
+
+		self::assertSame( 'critical', $result['status'] );
+		self::assertStringContainsString( 'api_key_not_found', $result['description'] );
+	}
+
 	/**
 	 * @return array<string, array{bool, string, array<string, mixed>|null, string}>
 	 */

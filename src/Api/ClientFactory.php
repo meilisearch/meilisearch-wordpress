@@ -73,6 +73,23 @@ final class ClientFactory {
 	}
 
 	/**
+	 * Returns a client for the configured host authenticated with another key (never cached).
+	 *
+	 * Used to probe what a candidate browser search key may do.
+	 *
+	 * @param string $key API key.
+	 * @return Client
+	 * @throws \RuntimeException When the plugin is not configured.
+	 */
+	public function client_for_key( string $key ): Client {
+		if ( ! $this->options->is_configured() ) {
+			throw new \RuntimeException( __( 'Meilisearch is not configured.', 'meilisearch' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
+		}
+
+		return new Client( $this->transport, $this->options->host(), $key, $this->user_agent() );
+	}
+
+	/**
 	 * User-Agent sent to Meilisearch.
 	 *
 	 * @return string

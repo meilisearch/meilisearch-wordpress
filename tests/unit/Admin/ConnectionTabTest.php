@@ -522,13 +522,15 @@ final class ConnectionTabTest extends TestCase {
 	/**
 	 * Runs after_save() in manual mode with a freshly pasted key (the previous key was verified).
 	 *
-	 * @param list<Response> $responses Queued responses after the version probe.
+	 * @param list<Response> $responses     Queued responses after the version probe.
+	 * @param bool           $connect_fails Whether the connection check fails.
+	 * @param string         $pasted        Pasted search key.
 	 */
-	private function manual_after_save( array $responses, bool $connect_fails = false ): void {
+	private function manual_after_save( array $responses, bool $connect_fails = false, string $pasted = 'newly-pasted-key' ): void {
 		$_GET['settings-updated'] = 'true';
 		$_GET['tab']              = 'connection';
 		$this->option_store[ Options::CONNECTION ]['prefix']     = 'wp_unit';
-		$this->option_store[ Options::CONNECTION ]['search_key'] = 'newly-pasted-key';
+		$this->option_store[ Options::CONNECTION ]['search_key'] = $pasted;
 		$this->option_store[ Options::STATE ]                    = array(
 			'fingerprint'         => md5( 'https://stored.example|' . self::SECRET . '|wp_unit' ),
 			'search_key_manual'   => true,
@@ -586,10 +588,48 @@ final class ConnectionTabTest extends TestCase {
 	}
 
 	public function test_changed_manual_key_that_cannot_be_verified_is_served_with_a_warning(): void {
-		$this->manual_after_save( array( new Response( 500, array( 'code' => 'internal' ), '' ) ) );
+		// The admin key may not read keys (403), and the pasted key itself may not call /version (403).
+		$this->manual_after_save(
+			array(
+				new Response( 403, array( 'code' => 'invalid_api_key' ), '' ),
+				new Response( 403, array( 'code' => 'invalid_api_key' ), '' ),
+			)
+		);
 
 		$this->assertSame( 'warning', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
+		$this->assertSame( 0, $this->transport->pending() );
 		$this->assertTrue( $this->autocomplete_enqueues() );
+	}
+
+	/**
+	 * @dataProvider unsafe_manual_keys
+	 *
+	 * @param list<Response> $responses Responses to GET /keys/{key} and the self-probe.
+	 */
+	public function test_changed_manual_key_that_is_unsafe_is_not_served( array $responses, string $pasted ): void {
+		$this->manual_after_save( $responses, false, $pasted );
+
+		$this->assertSame( 'error', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
+		$this->assertNull( ( new Options() )->state( 'search_key_verified' ) );
+		$this->assertSame( 0, $this->transport->pending() );
+		$this->assertFalse( $this->autocomplete_enqueues() );
+	}
+
+	/**
+	 * @return array<string, array{0: list<Response>, 1: string}>
+	 */
+	public static function unsafe_manual_keys(): array {
+		return array(
+			'the admin key pasted'             => array( array(), self::SECRET ),
+			'unknown key (master key, 404)'    => array( array( new Response( 404, array( 'code' => 'api_key_not_found' ), '' ) ), 'newly-pasted-key' ),
+			'unreadable, but /version answers' => array(
+				array(
+					new Response( 403, array( 'code' => 'invalid_api_key' ), '' ),
+					new Response( 200, array( 'pkgVersion' => '1.53.1' ), '' ),
+				),
+				'newly-pasted-key',
+			),
+		);
 	}
 
 	public function test_changed_manual_key_that_is_too_broad_is_not_served(): void {

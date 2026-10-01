@@ -282,9 +282,10 @@ final class SiteHealth implements Registrable {
 	 * @param string[]                  $allowed_uids This site's index UIDs.
 	 * @param string                    $error        Error message of the failed key lookup, '' when none.
 	 * @param string                    $settings_url URL of the Connection tab.
+	 * @param bool                      $unsafe       Whether IndexManager::inspect_search_key() found the key unsafe to serve.
 	 * @return Result
 	 */
-	public static function evaluate_search_key( bool $autocomplete, string $key, ?array $details, array $allowed_uids, string $error, string $settings_url ): array {
+	public static function evaluate_search_key( bool $autocomplete, string $key, ?array $details, array $allowed_uids, string $error, string $settings_url, bool $unsafe = false ): array {
 		if ( '' === $key ) {
 			if ( ! $autocomplete ) {
 				return self::make(
@@ -300,6 +301,20 @@ final class SiteHealth implements Registrable {
 				'recommended',
 				__( 'Autocomplete has no search key', 'meilisearch' ),
 				__( 'Autocomplete is enabled but no search key is stored, so the suggestions stay hidden. Save the Connection tab to create one, or paste a search-only key.', 'meilisearch' ),
+				$settings_url
+			);
+		}
+
+		if ( $unsafe && null === $details ) {
+			return self::make(
+				self::TEST_SEARCH_KEY,
+				'critical',
+				__( 'The browser search key is not a search-only key', 'meilisearch' ),
+				sprintf(
+					/* translators: %s: Meilisearch error code, or "none". */
+					__( 'The stored search key is the admin or master key, is unknown to Meilisearch, or can call more than "search" (Meilisearch answer: %s). It is not sent to visitors. Save the Connection tab or paste a search-only key.', 'meilisearch' ),
+					'' === $error ? __( 'none', 'meilisearch' ) : $error
+				),
 				$settings_url
 			);
 		}
@@ -612,14 +627,16 @@ final class SiteHealth implements Registrable {
 		$key     = $this->options->search_key();
 		$details = null;
 		$error   = '';
+		$unsafe  = false;
 		if ( '' !== $key ) {
-			try {
-				$details = $this->clients->client()->get_key( $key );
-			} catch ( ApiError $e ) {
+			$inspection = $this->indexes->inspect_search_key( $key );
+			$details    = $inspection['details'];
+			$unsafe     = false === $inspection['verified'];
+			if ( '' !== $inspection['error'] ) {
 				$error = sprintf(
 					/* translators: %s: Meilisearch error code. */
 					__( 'Meilisearch refused the key lookup (%s)', 'meilisearch' ),
-					$e->error_code
+					$inspection['error']
 				);
 			}
 		}
@@ -630,7 +647,8 @@ final class SiteHealth implements Registrable {
 			$details,
 			array( $this->names->uid( 'content' ), $this->names->uid( 'products' ) ),
 			$error,
-			$connection_url
+			$connection_url,
+			$unsafe
 		);
 	}
 

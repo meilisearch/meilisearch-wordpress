@@ -70,15 +70,16 @@ final class Autocomplete implements Registrable {
 	}
 
 	/**
-	 * Front end only, enabled in the Search tab, connected, a browser search key exists, and, for a
-	 * manually pasted key, it passed (or could not be checked by) the last successful verification.
+	 * Front end only, enabled in the Search tab, connected, a browser search key exists, and its hash is
+	 * the one recorded as servable: by rotate_search_key() for a plugin-created key, or by the last
+	 * successful verification of a manually pasted key.
 	 */
 	public function should_enqueue(): bool {
 		return ! is_admin()
 			&& $this->options->search()['autocomplete']
 			&& '' !== $this->options->search_key()
 			&& $this->options->is_configured()
-			&& ( ! $this->options->state( 'search_key_manual', false ) || $this->options->search_key_is_verified() );
+			&& $this->options->search_key_is_verified();
 	}
 
 	/**

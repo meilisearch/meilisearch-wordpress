@@ -480,48 +480,78 @@ final class IndexManagerTest extends TestCase {
 	/**
 	 * @dataProvider key_details
 	 *
-	 * @param Response|ApiError $response Response to GET /keys/{key}.
+	 * @param list<Response|ApiError> $responses Responses to GET /keys/{key}, then to the self-probe GET /version.
 	 */
-	public function test_verify_search_key( $response, ?bool $expected ): void {
-		$this->transport->queue( $response );
+	public function test_verify_search_key( array $responses, ?bool $expected ): void {
+		foreach ( $responses as $response ) {
+			$this->transport->queue( $response );
+		}
 
 		$this->assertSame( $expected, $this->manager()->verify_search_key( 'pasted' ) );
+		$this->assertSame( 0, $this->transport->pending() );
 	}
 
 	/**
-	 * @return array<string, array{0: Response|ApiError, 1: ?bool}>
+	 * @return array<string, array{0: list<Response|ApiError>, 1: ?bool}>
 	 */
 	public static function key_details(): array {
 		return array(
-			'search only on our indexes' => array(
-				self::json(
-					array(
-						'actions' => array( 'search' ),
-						'indexes' => array( 'wp_test_content' ),
-					)
+			'search only on our indexes'          => array(
+				array(
+					self::json(
+						array(
+							'actions' => array( 'search' ),
+							'indexes' => array( 'wp_test_content' ),
+						)
+					),
 				),
 				true,
 			),
-			'extra action'               => array(
-				self::json(
-					array(
-						'actions' => array( 'search', 'documents.add' ),
-						'indexes' => array( 'wp_test_content' ),
-					)
+			'extra action'                        => array(
+				array(
+					self::json(
+						array(
+							'actions' => array( 'search', 'documents.add' ),
+							'indexes' => array( 'wp_test_content' ),
+						)
+					),
 				),
 				false,
 			),
-			'all indexes'                => array(
-				self::json(
-					array(
-						'actions' => array( 'search' ),
-						'indexes' => array( '*' ),
-					)
+			'all indexes'                         => array(
+				array(
+					self::json(
+						array(
+							'actions' => array( 'search' ),
+							'indexes' => array( '*' ),
+						)
+					),
 				),
 				false,
 			),
-			'unreadable'                 => array( self::error( 403, 'invalid_api_key' ), null ),
-			'transport error'            => array( ApiError::transport( 'timeout' ), null ),
+			'unknown key (404)'                   => array( array( self::error( 404, 'api_key_not_found' ) ), false ),
+			'api_key_not_found with other status' => array( array( self::error( 400, 'api_key_not_found' ) ), false ),
+			'unreadable, probe answers 2xx'       => array( array( self::error( 403, 'invalid_api_key' ), self::json( array( 'pkgVersion' => '1.53.1' ) ) ), false ),
+			'unreadable, probe refused'           => array( array( self::error( 403, 'invalid_api_key' ), self::error( 403, 'invalid_api_key' ) ), null ),
+			'unreadable, probe unauthorized'      => array( array( self::error( 403, 'invalid_api_key' ), self::error( 401, 'missing_authorization_header' ) ), null ),
+			'transport error'                     => array( array( ApiError::transport( 'timeout' ), ApiError::transport( 'timeout' ) ), null ),
 		);
+	}
+
+	public function test_verify_search_key_rejects_the_admin_key_without_any_request(): void {
+		$this->assertFalse( $this->manager()->verify_search_key( 'admin-key' ) );
+		$this->assertSame( array(), $this->transport->requests() );
+	}
+
+	public function test_verify_search_key_probes_version_with_the_candidate_key(): void {
+		$this->transport
+			->queue( self::error( 403, 'invalid_api_key' ) )
+			->queue( self::error( 403, 'invalid_api_key' ) );
+
+		$this->assertNull( $this->manager()->verify_search_key( 'pasted' ) );
+
+		$this->assertSame( array( 'GET /keys/pasted', 'GET /version' ), $this->calls() );
+		$this->assertSame( 'Bearer admin-key', $this->transport->requests()[0]['headers']['Authorization'] );
+		$this->assertSame( 'Bearer pasted', $this->transport->requests()[1]['headers']['Authorization'] );
 	}
 }

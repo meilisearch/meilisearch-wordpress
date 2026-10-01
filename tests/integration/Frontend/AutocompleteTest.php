@@ -31,7 +31,10 @@ final class AutocompleteTest extends TestCase {
 				'autocomplete'   => true,
 			)
 		);
-		Plugin::instance()->get( 'options' )->save_search_key( 'integration-search-key', 'integration-search-key-uid' );
+		$options = Plugin::instance()->get( 'options' );
+		$options->save_search_key( 'integration-search-key', 'integration-search-key-uid' );
+		// As IndexManager::rotate_search_key() does for a plugin-created key.
+		$options->mark_search_key_verified();
 	}
 
 	public function test_script_and_style_are_enqueued_on_the_front_end_with_config(): void {
