@@ -130,11 +130,16 @@ final class Plugin {
 		$error_log = new Sync\ErrorLog();
 		$this->add( 'error_log', $error_log );
 
-		// Tasks 6-7 (content), Task 20 (products) — indexing model. $builders is consumed from Task 11 on, $product_rule is replaced by Task 20.
+		// Tasks 6-7 (content), Task 20 (products) — indexing model.
 		$content_docs = new Indexing\ContentDocumentBuilder( $options );
 		$schemas      = array( 'content' => new Indexing\ContentSchema( $options ) );
 		$builders     = array( 'content' => $content_docs );
 		$product_rule = null;
+		if ( $options->products_enabled() ) {
+			$product_rule         = new WooCommerce\ProductRule();
+			$schemas['products']  = new WooCommerce\ProductSchema( $options );
+			$builders['products'] = new WooCommerce\ProductDocumentBuilder( $content_docs, new WooCommerce\CategoryHierarchy(), new WooCommerce\AttributeCollector(), $options );
+		}
 		$indexability = new Indexing\Indexability( $options, $product_rule );
 		$settings     = new Indexing\SettingsBuilder( $schemas );
 		$this->add( 'indexability', $indexability );
