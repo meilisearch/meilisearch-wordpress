@@ -203,6 +203,18 @@ final class Client {
 	}
 
 	/**
+	 * POST /indexes/{uid}/documents/delete (delete by filter, Meilisearch 1.2+).
+	 *
+	 * @param string $uid    Index uid.
+	 * @param string $filter Filter expression on filterable attributes.
+	 * @return Task
+	 * @throws ApiError On any failure.
+	 */
+	public function delete_documents_by_filter( string $uid, string $filter ): Task {
+		return $this->task( $this->request( 'POST', '/indexes/' . rawurlencode( $uid ) . '/documents/delete', null, array( 'filter' => $filter ) ) );
+	}
+
+	/**
 	 * DELETE /indexes/{uid}/documents.
 	 *
 	 * @param string $uid Index uid.

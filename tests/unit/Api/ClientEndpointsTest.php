@@ -209,6 +209,15 @@ final class ClientEndpointsTest extends TestCase {
 		$this->assert_request( 'DELETE', '/indexes/wp_abc_content/documents' );
 	}
 
+	public function test_delete_documents_by_filter(): void {
+		$this->enqueued( 12 );
+
+		$task = $this->client->delete_documents_by_filter( 'wp_abc_content', 'post_type IN ["page"]' );
+
+		$this->assertSame( 12, $task->uid );
+		$this->assert_request( 'POST', '/indexes/wp_abc_content/documents/delete', [ 'filter' => 'post_type IN ["page"]' ] );
+	}
+
 	public function test_fetch_documents_returns_the_full_response(): void {
 		$response = [
 			'results' => [ [ 'id' => 3 ], [ 'id' => 9 ] ],

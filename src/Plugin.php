@@ -148,6 +148,7 @@ final class Plugin {
 		// Task 8 — index manager.
 		$indexes = new Indexing\IndexManager( $clients, $names, $settings, $options );
 		$this->add( 'index_manager', $indexes );
+		$this->add( 'settings_sync', new Indexing\SettingsSync( $clients, $indexes, $names, $options, $error_log ) );
 
 		// Tasks 11-13 — sync and reindex.
 		$queue     = new Sync\Queue();

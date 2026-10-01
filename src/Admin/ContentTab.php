@@ -149,7 +149,7 @@ final class ContentTab implements Tab, Registrable {
 
 		echo '<form method="post" action="options.php">';
 		settings_fields( self::GROUP );
-		echo '<p>' . esc_html__( 'Choose what is sent to Meilisearch. Only published, public content is ever indexed. Changes take effect after a full reindex.', 'meilisearch' ) . '</p>';
+		echo '<p>' . esc_html__( 'Choose what is sent to Meilisearch. Only published, public content is ever indexed. Content of unchecked post types is removed from Meilisearch when you save; new post types and fields are indexed by the next full reindex.', 'meilisearch' ) . '</p>';
 
 		foreach ( get_post_types( array( 'public' => true ), 'objects' ) as $post_type ) {
 			if ( in_array( $post_type->name, self::EXCLUDED_TYPES, true ) ) {
