@@ -159,13 +159,26 @@ final class StatusTabTest extends TestCase {
 	public function test_render_survives_meilisearch_errors(): void {
 		$this->transport
 			->queue( new ApiError( 'Index `wp_test_content` not found.', 'index_not_found', 404 ) )
-			->queue( ApiError::transport( 'cURL error 7' ) );
+			->queue( new ApiError( 'Internal error.', 'internal', 500 ) );
 
 		$html = $this->render();
 
 		$this->assertStringContainsString( 'Index not created yet', $html );
 		$this->assertStringContainsString( 'Failed tasks could not be loaded.', $html );
 		$this->assertStringContainsString( 'No errors recorded.', $html );
+	}
+
+	/**
+	 * After a transport failure, the rest of the render makes no remote call (each could time out).
+	 */
+	public function test_unreachable_meilisearch_is_tried_once_per_render(): void {
+		$this->transport->queue( ApiError::transport( 'cURL error 28: Operation timed out' ) );
+
+		$html = $this->render();
+
+		$this->assertCount( 1, $this->transport->requests() );
+		$this->assertStringContainsString( 'Meilisearch unreachable', $html );
+		$this->assertStringNotContainsString( 'Failed tasks could not be loaded.', $html );
 	}
 
 	/**

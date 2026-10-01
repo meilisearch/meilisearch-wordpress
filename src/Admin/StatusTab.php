@@ -29,6 +29,14 @@ final class StatusTab implements Tab, Registrable {
 	public const CLEAR_LOG_ACTION = 'meilisearch_clear_log';
 
 	/**
+	 * Set on the first transport failure of a render: the remaining remote calls are skipped, so an
+	 * unreachable host costs one timeout instead of one per call (mirrors SiteHealth's $usable).
+	 *
+	 * @var bool
+	 */
+	private bool $unreachable = false;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param Options       $options   Options.
@@ -90,7 +98,8 @@ final class StatusTab implements Tab, Registrable {
 	 * Renders the tab body. Remote calls are skipped when the connection is not configured.
 	 */
 	public function render(): void {
-		$client = null;
+		$this->unreachable = false;
+		$client            = null;
 		if ( $this->options->is_configured() ) {
 			try {
 				$client = $this->clients->client();
@@ -198,11 +207,17 @@ final class StatusTab implements Tab, Registrable {
 		if ( null === $client ) {
 			return __( 'Not connected', 'meilisearch' );
 		}
+		if ( $this->unreachable ) {
+			return __( 'Meilisearch unreachable', 'meilisearch' );
+		}
 		try {
 			$stats = $client->index_stats( $uid );
 		} catch ( \RuntimeException $e ) {
 			if ( $e instanceof ApiError && 'index_not_found' === $e->error_code ) {
 				return __( 'Index not created yet', 'meilisearch' );
+			}
+			if ( $this->note_unreachable( $e ) ) {
+				return __( 'Meilisearch unreachable', 'meilisearch' );
 			}
 			return __( 'Unavailable', 'meilisearch' );
 		}
@@ -283,6 +298,10 @@ final class StatusTab implements Tab, Registrable {
 			echo '<p>' . esc_html__( 'Not connected.', 'meilisearch' ) . '</p>';
 			return;
 		}
+		if ( $this->unreachable ) {
+			echo '<p>' . esc_html__( 'Meilisearch unreachable.', 'meilisearch' ) . '</p>';
+			return;
+		}
 
 		$uids = array_map( array( $this->names, 'uid' ), $this->names->active_logicals() );
 		try {
@@ -294,7 +313,7 @@ final class StatusTab implements Tab, Registrable {
 				)
 			);
 		} catch ( \RuntimeException $e ) {
-			echo '<p>' . esc_html__( 'Failed tasks could not be loaded.', 'meilisearch' ) . '</p>';
+			echo '<p>' . esc_html( $this->note_unreachable( $e ) ? __( 'Meilisearch unreachable.', 'meilisearch' ) : __( 'Failed tasks could not be loaded.', 'meilisearch' ) ) . '</p>';
 			return;
 		}
 
@@ -323,6 +342,19 @@ final class StatusTab implements Tab, Registrable {
 			echo '<td>' . esc_html( (string) ( $task['enqueuedAt'] ?? '' ) ) . '</td></tr>';
 		}
 		echo '</tbody></table>';
+	}
+
+	/**
+	 * Records a transport failure (no response from Meilisearch) for the rest of the render.
+	 *
+	 * @param \RuntimeException $error Error of a remote call.
+	 * @return bool Whether it was a transport failure.
+	 */
+	private function note_unreachable( \RuntimeException $error ): bool {
+		if ( $error instanceof ApiError && 'transport_error' === $error->error_code ) {
+			$this->unreachable = true;
+		}
+		return $this->unreachable;
 	}
 
 	/**
