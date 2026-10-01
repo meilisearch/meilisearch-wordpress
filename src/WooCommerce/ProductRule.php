@@ -12,7 +12,7 @@ namespace Meilisearch\WordPress\WooCommerce;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * A product is indexable only when it is a supported parent type, its catalog visibility is
+ * A product is indexable only when it is a parent product (not a variation), its catalog visibility is
  * `visible` or `search`, and — when "Hide out of stock items" is on — it is in stock.
  * Passed to Indexability as its `$product_rule` callable.
  */
@@ -43,18 +43,13 @@ final class ProductRule {
 	}
 
 	/**
-	 * Whether a product gets its own document: simple, variable, grouped or external
-	 * (including subclasses such as subscription types). Variations never do.
+	 * Whether a product gets its own document: every parent product, the four core types (simple,
+	 * variable, grouped, external) and types added by extensions (subscriptions, bookings, bundles…),
+	 * so searchable products never vanish from intercepted searches. Variations never do.
 	 *
 	 * @param \WC_Product $product Product.
 	 */
 	public static function supports( \WC_Product $product ): bool {
-		if ( $product instanceof \WC_Product_Variation ) {
-			return false;
-		}
-		return $product instanceof \WC_Product_Simple
-			|| $product instanceof \WC_Product_Variable
-			|| $product instanceof \WC_Product_Grouped
-			|| $product instanceof \WC_Product_External;
+		return ! $product instanceof \WC_Product_Variation;
 	}
 }

@@ -84,7 +84,38 @@ final class ProductRuleTest extends TestCase {
 		self::assertTrue( ProductRule::supports( new \WC_Product_Grouped() ) );
 		self::assertTrue( ProductRule::supports( new \WC_Product_External() ) );
 		self::assertFalse( ProductRule::supports( new \WC_Product_Variation() ) );
-		self::assertFalse( ProductRule::supports( new \WC_Product() ) );
+	}
+
+	/**
+	 * Product types added by extensions (bookings, bundles, …) keep their searchable products.
+	 */
+	public function test_extension_product_types_are_supported(): void {
+		$custom = new class() extends \WC_Product {
+			public function get_type() {
+				return 'booking';
+			}
+		};
+
+		self::assertTrue( ProductRule::supports( $custom ) );
+		self::assertTrue( ProductRule::supports( new \WC_Product() ) );
+	}
+
+	/**
+	 * Visibility rules still apply to extension product types.
+	 */
+	public function test_extension_product_types_follow_the_visibility_rules(): void {
+		$this->stub_product( new class( array( 'catalog_visibility' => 'search' ) ) extends \WC_Product {} );
+		self::assertTrue( ( new ProductRule() )( $this->product_post() ) );
+
+		$this->stub_product( new class( array( 'catalog_visibility' => 'hidden' ) ) extends \WC_Product {} );
+		self::assertFalse( ( new ProductRule() )( $this->product_post() ) );
+
+		$out_of_stock = array(
+			'catalog_visibility' => 'visible',
+			'stock_status'       => 'outofstock',
+		);
+		$this->stub_product( new class( $out_of_stock ) extends \WC_Product {}, 'yes' );
+		self::assertFalse( ( new ProductRule() )( $this->product_post() ) );
 	}
 
 	public function test_unsupported_type_fails(): void {
