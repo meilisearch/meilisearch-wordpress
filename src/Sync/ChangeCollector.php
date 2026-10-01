@@ -30,9 +30,9 @@ final class ChangeCollector implements Registrable {
 	private const TRANSIENT_PREFIX = 'meilisearch_pending_';
 
 	/**
-	 * Logical index => set of post IDs.
+	 * Blog ID => logical index => set of post IDs.
 	 *
-	 * @var array<string, array<int, true>>
+	 * @var array<int, array<string, array<int, true>>>
 	 */
 	private array $pending = array();
 
@@ -137,7 +137,7 @@ final class ChangeCollector implements Registrable {
 		if ( null === $logical ) {
 			return;
 		}
-		$this->pending[ $logical ][ $post_id ] = true;
+		$this->pending[ get_current_blog_id() ][ $logical ][ $post_id ] = true;
 	}
 
 	/**
@@ -157,24 +157,41 @@ final class ChangeCollector implements Registrable {
 	 * @return array<string, list<int>>
 	 */
 	public function pending(): array {
-		$pending = array();
-		foreach ( $this->pending as $logical => $set ) {
-			$ids = array_keys( $set );
-			sort( $ids );
-			$pending[ $logical ] = $ids;
-		}
-		return $pending;
+		return self::sorted( $this->pending[ get_current_blog_id() ] ?? array() );
 	}
 
 	/**
 	 * Enqueues Queue::SYNC_POSTS jobs in chunks of CHUNK IDs, skipping IDs that already
 	 * have a job waiting (transient meilisearch_pending_{blog_id}_{id}), then empties the set.
+	 * IDs collected on another blog are scheduled while that blog is current, so they land in
+	 * its Action Scheduler tables and use its markers.
 	 */
 	public function flush(): void {
-		$pending       = $this->pending();
+		$all           = $this->pending;
 		$this->pending = array();
-		$blog_id       = get_current_blog_id();
+		$current       = get_current_blog_id();
 
+		foreach ( $all as $blog_id => $sets ) {
+			if ( $blog_id === $current ) {
+				$this->flush_blog( $blog_id, self::sorted( $sets ) );
+				continue;
+			}
+			switch_to_blog( $blog_id );
+			try {
+				$this->flush_blog( $blog_id, self::sorted( $sets ) );
+			} finally {
+				restore_current_blog();
+			}
+		}
+	}
+
+	/**
+	 * Schedules the jobs of one blog, which must be the current one.
+	 *
+	 * @param int                      $blog_id Site ID.
+	 * @param array<string, list<int>> $pending Logical index => sorted post IDs.
+	 */
+	private function flush_blog( int $blog_id, array $pending ): void {
 		foreach ( $pending as $logical => $ids ) {
 			$fresh = array();
 			foreach ( $ids as $post_id ) {
@@ -186,6 +203,22 @@ final class ChangeCollector implements Registrable {
 				$this->enqueue( $logical, $chunk, $blog_id );
 			}
 		}
+	}
+
+	/**
+	 * Sorts the IDs of each logical index.
+	 *
+	 * @param array<string, array<int, true>> $sets Logical index => set of post IDs.
+	 * @return array<string, list<int>>
+	 */
+	private static function sorted( array $sets ): array {
+		$sorted = array();
+		foreach ( $sets as $logical => $set ) {
+			$ids = array_keys( $set );
+			sort( $ids );
+			$sorted[ $logical ] = $ids;
+		}
+		return $sorted;
 	}
 
 	/**

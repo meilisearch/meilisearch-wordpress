@@ -278,4 +278,74 @@ final class ChangeCollectorTest extends TestCase {
 
 		$this->assertSame( array(), $this->transient_store );
 	}
+
+	/**
+	 * IDs collected while another blog was current are scheduled on that blog, with its own markers.
+	 */
+	public function test_flush_schedules_each_blog_while_it_is_current(): void {
+		$current = 1;
+		$stack   = array();
+		$log     = array();
+		Functions\when( 'get_current_blog_id' )->alias(
+			function () use ( &$current ) {
+				return $current;
+			}
+		);
+		Functions\when( 'switch_to_blog' )->alias(
+			function ( $blog_id ) use ( &$current, &$stack ): bool {
+				$stack[] = $current;
+				$current = (int) $blog_id;
+				return true;
+			}
+		);
+		Functions\when( 'restore_current_blog' )->alias(
+			function () use ( &$current, &$stack ): bool {
+				$current = (int) array_pop( $stack );
+				return true;
+			}
+		);
+		Functions\when( 'as_schedule_single_action' )->alias(
+			function ( $timestamp, $hook, $args ) use ( &$current, &$log ): int {
+				$log[] = array( $current, $args[0]['ids'] );
+				return count( $log );
+			}
+		);
+		Functions\when( 'set_transient' )->alias(
+			function ( $name ) use ( &$current ): bool {
+				$this->transient_store[ $name ] = $current;
+				return true;
+			}
+		);
+
+		$this->collector->add( 10 );
+		$current = 2;
+		$this->collector->add( 11 );
+		$current = 1;
+
+		$this->collector->flush();
+
+		$this->assertSame( array( array( 1, array( 10 ) ), array( 2, array( 11 ) ) ), $log );
+		$this->assertSame( 1, $current );
+		$this->assertSame(
+			array(
+				'meilisearch_pending_1_10' => 1,
+				'meilisearch_pending_2_11' => 2,
+			),
+			$this->transient_store
+		);
+	}
+
+	/**
+	 * Single-site flushes never switch blogs.
+	 */
+	public function test_single_site_never_switches_blog(): void {
+		$this->record_schedules();
+		Functions\expect( 'switch_to_blog' )->never();
+		Functions\expect( 'restore_current_blog' )->never();
+		$this->collector->add( 10 );
+
+		$this->collector->flush();
+
+		$this->assertCount( 1, $this->scheduled );
+	}
 }
