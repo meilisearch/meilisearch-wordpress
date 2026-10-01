@@ -86,9 +86,15 @@ final class Cli {
 			$this->fail( sprintf( 'Meilisearch is unreachable: %s', $this->message( $error ) ) );
 		}
 
-		WP_CLI::log( sprintf( 'Meilisearch %1$s, index prefix "%2$s".', (string) ( $version['pkgVersion'] ?? 'unknown' ), $this->names->prefix() ) );
+		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
+		$human  = 'table' === $format;
+		if ( $human ) {
+			WP_CLI::log( sprintf( 'Meilisearch %1$s, index prefix "%2$s".', (string) ( $version['pkgVersion'] ?? 'unknown' ), $this->names->prefix() ) );
+		}
 
-		$rows = array();
+		$pending = $this->queue->count( 'pending' );
+		$failed  = $this->queue->count( 'failed' );
+		$rows    = array();
 		foreach ( $this->names->active_logicals() as $logical ) {
 			$uid = $this->names->uid( $logical );
 			try {
@@ -104,11 +110,23 @@ final class Cli {
 				'documents' => $documents,
 				'indexable' => (string) $this->reindexer->count_indexable( $logical ),
 			) + $this->reindex_columns( $state );
-		}
+			if ( ! $human ) {
+				// Queue counts are group-wide; machine-readable formats carry them in the data, not in extra output lines.
+				$rows[ count( $rows ) - 1 ] += array(
+					'queue_pending' => (string) $pending,
+					'queue_failed'  => (string) $failed,
+				);
+			}
+		}//end foreach
 
-		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
-		\WP_CLI\Utils\format_items( $format, $rows, array( 'index', 'uid', 'documents', 'indexable', 'status', 'phase', 'sent', 'total', 'deleted' ) );
-		WP_CLI::log( sprintf( 'Queue: %1$d pending, %2$d failed actions in group "%3$s".', $this->queue->count( 'pending' ), $this->queue->count( 'failed' ), Queue::GROUP ) );
+		$fields = array( 'index', 'uid', 'documents', 'indexable', 'status', 'phase', 'sent', 'total', 'deleted' );
+		if ( ! $human ) {
+			$fields = array_merge( $fields, array( 'queue_pending', 'queue_failed' ) );
+		}
+		\WP_CLI\Utils\format_items( $format, $rows, $fields );
+		if ( $human ) {
+			WP_CLI::log( sprintf( 'Queue: %1$d pending, %2$d failed actions in group "%3$s".', $pending, $failed, Queue::GROUP ) );
+		}
 	}
 
 	/**
@@ -296,7 +314,7 @@ final class Cli {
 			if ( 'good' === $result['status'] ) {
 				continue;
 			}
-			WP_CLI::log( sprintf( '%1$s: %2$s', $result['test'], trim( wp_strip_all_tags( $result['description'] ) ) ) );
+			WP_CLI::log( sprintf( '%1$s: %2$s', $result['test'], trim( html_entity_decode( wp_strip_all_tags( $result['description'] ), ENT_QUOTES ) ) ) );
 			if ( 'critical' === $result['status'] ) {
 				++$critical;
 			} else {

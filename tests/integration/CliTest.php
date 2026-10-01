@@ -206,18 +206,159 @@ final class CliTest extends TestCase {
 
 	public function test_status_lists_every_active_index(): void {
 		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+		WP_CLI::reset();
 
 		$this->cli()->status( array(), array( 'format' => 'json' ) );
 
 		$names = $this->service( 'names', IndexNames::class );
 		$table = WP_CLI::$items[0];
 		self::assertSame( 'json', $table['format'] );
-		self::assertSame( array( 'index', 'uid', 'documents', 'indexable', 'status', 'phase', 'sent', 'total', 'deleted' ), $table['fields'] );
+		self::assertSame( array( 'index', 'uid', 'documents', 'indexable', 'status', 'phase', 'sent', 'total', 'deleted', 'queue_pending', 'queue_failed' ), $table['fields'] );
 		self::assertContains( $table['items'][0]['status'], array( 'done', 'idle' ) );
 		self::assertSame( $names->active_logicals(), array_column( $table['items'], 'index' ) );
 		self::assertSame( $names->uid( 'content' ), $table['items'][0]['uid'] );
 		self::assertMatchesRegularExpression( '/^\d+$/', $table['items'][0]['documents'] );
+		self::assertSame( array( 'queue_pending', 'queue_failed' ), array_slice( $table['fields'], -2 ) );
+		self::assertMatchesRegularExpression( '/^\d+$/', $table['items'][0]['queue_pending'] );
+		// Machine-readable formats: format_items() output is the only thing on stdout.
+		self::assertSame( array(), WP_CLI::$calls );
+		self::assertNotNull( json_decode( (string) wp_json_encode( $table['items'] ), true ) );
+	}
+
+	public function test_status_table_keeps_the_banner_and_the_queue_line(): void {
+		$this->cli()->status( array(), array() );
+
+		self::assertSame( 'table', WP_CLI::$items[0]['format'] );
+		self::assertCount( 9, WP_CLI::$items[0]['fields'] );
+		self::assertStringStartsWith( 'Meilisearch ', $this->messages( 'log' )[0] ?? '' );
 		self::assertNotEmpty( array_filter( $this->messages( 'log' ), static fn ( string $m ): bool => str_starts_with( $m, 'Queue:' ) ) );
+	}
+
+	/**
+	 * Makes every document request fail with a 400 whose message echoes the admin key.
+	 */
+	private function fail_documents_requests(): \Closure {
+		$filter = function ( $pre, array $args, string $url ) {
+			if ( ! str_contains( $url, '/documents' ) ) {
+				return $pre;
+			}
+
+			return array(
+				'headers'  => array(),
+				'body'     => (string) wp_json_encode(
+					array(
+						'message' => 'API key `' . self::test_key() . '` not found',
+						'code'    => 'invalid_api_key',
+						'type'    => 'auth',
+						'link'    => 'https://docs.meilisearch.com',
+					)
+				),
+				'response' => array(
+					'code'    => 400,
+					'message' => 'Bad Request',
+				),
+				'cookies'  => array(),
+				'filename' => null,
+			);
+		};
+		add_filter( 'pre_http_request', $filter, 10, 3 );
+
+		return fn () => remove_filter( 'pre_http_request', $filter, 10 );
+	}
+
+	private function assert_clean_failure(): void {
+		$errors = $this->messages( 'error' );
+		self::assertCount( 1, $errors );
+		self::assertStringNotContainsString( self::test_key(), implode( "\n", $errors ) );
+		self::assertDoesNotMatchRegularExpression( '/Stack trace|#0 |\.php:\d+/', implode( "\n", $errors ) );
+	}
+
+	public function test_reindex_failure_messages_for_each_branch(): void {
+		$method = new \ReflectionMethod( Cli::class, 'reindex_failure' );
+		$cli    = $this->cli();
+
+		$running  = (string) $method->invoke( $cli, 'idx', new \RuntimeException( 'already_running' ) );
+		$replaced = (string) $method->invoke( $cli, 'idx', new \RuntimeException( 'superseded' ) );
+		$generic  = (string) $method->invoke( $cli, 'idx', new \RuntimeException( 'boom ' . self::test_key() ) );
+
+		self::assertStringContainsString( 'already running', $running );
+		self::assertStringContainsString( 'superseded', $replaced );
+		self::assertStringContainsString( 'boom', $generic );
+		self::assertStringNotContainsString( self::test_key(), $generic );
+	}
+
+	public function test_reindex_exits_1_when_a_run_is_already_active(): void {
+		$this->service( 'options', Options::class )->set_reindex_state(
+			'content',
+			array(
+				'run'        => 'abc',
+				'phase'      => 'upsert',
+				'last_id'    => 0,
+				'sent'       => 0,
+				'deleted'    => 0,
+				'total'      => 1,
+				'task_uids'  => array(),
+				'started_at' => time(),
+				'updated_at' => time(),
+				'status'     => 'running',
+				'error'      => '',
+			)
+		);
+
+		$this->expect_exit( fn () => $this->cli()->reindex( array(), array( 'index' => 'content' ) ), 1 );
+
+		self::assertStringContainsString( 'already running', $this->messages( 'error' )[0] ?? '' );
+		$this->assert_clean_failure();
+	}
+
+	public function test_reindex_exits_1_without_printing_the_key_when_meilisearch_rejects_documents(): void {
+		self::factory()->post->create( array( 'post_status' => 'publish' ) );
+		$restore = $this->fail_documents_requests();
+
+		try {
+			$this->expect_exit( fn () => $this->cli()->reindex( array(), array( 'index' => 'content' ) ), 1 );
+		} finally {
+			$restore();
+		}
+
+		self::assertStringContainsString( 'failed', $this->messages( 'error' )[0] ?? '' );
+		$this->assert_clean_failure();
+	}
+
+	public function test_clear_exits_1_without_printing_the_key_on_an_api_error(): void {
+		$restore = $this->fail_documents_requests();
+
+		try {
+			$this->expect_exit(
+				fn () => $this->cli()->clear(
+					array(),
+					array(
+						'index' => 'content',
+						'yes'   => true,
+					)
+				),
+				1
+			);
+		} finally {
+			$restore();
+		}
+
+		self::assertStringContainsString( 'Could not clear', $this->messages( 'error' )[0] ?? '' );
+		$this->assert_clean_failure();
+	}
+
+	public function test_sync_exits_1_without_printing_the_key_on_an_api_error(): void {
+		$post_id = self::factory()->post->create( array( 'post_status' => 'publish' ) );
+		$restore = $this->fail_documents_requests();
+
+		try {
+			$this->expect_exit( fn () => $this->cli()->sync( array( (string) $post_id ), array() ), 1 );
+		} finally {
+			$restore();
+		}
+
+		self::assertStringContainsString( 'Sync of', $this->messages( 'error' )[0] ?? '' );
+		$this->assert_clean_failure();
 	}
 
 	public function test_check_passes_without_critical_results_on_a_healthy_site(): void {
