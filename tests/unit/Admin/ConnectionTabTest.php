@@ -358,6 +358,37 @@ final class ConnectionTabTest extends TestCase {
 		$this->assertStringContainsString( 'name="meilisearch_connection[search_key]" value="stored-search-key"', $html );
 	}
 
+	/**
+	 * @dataProvider search_key_statuses
+	 */
+	public function test_status_reports_ok_only_for_a_verified_search_key( ?string $verified_for, string $expected, string $absent ): void {
+		$this->option_store[ Options::STATE ] = array( 'last_connect' => array( 'version' => '1.53.1' ) );
+		if ( null !== $verified_for ) {
+			$this->option_store[ Options::STATE ]['search_key_verified'] = Options::key_fingerprint( $verified_for );
+		}
+		Functions\when( 'settings_fields' )->justReturn( null );
+		Functions\when( 'submit_button' )->justReturn( null );
+		Functions\when( 'checked' )->justReturn( '' );
+
+		ob_start();
+		$this->tab()->render();
+		$html = (string) ob_get_clean();
+
+		$this->assertStringContainsString( $expected, $html );
+		$this->assertStringNotContainsString( $absent, $html );
+	}
+
+	/**
+	 * @return array<string, array{?string, string, string}>
+	 */
+	public static function search_key_statuses(): array {
+		return array(
+			'verified'           => array( 'stored-search-key', 'Search key: OK.', 'not verified' ),
+			'never verified'     => array( null, 'Search key: not verified', 'Search key: OK.' ),
+			'verified other key' => array( 'another-key', 'Search key: not verified', 'Search key: OK.' ),
+		);
+	}
+
 	public function test_after_save_does_nothing_without_settings_updated(): void {
 		$_GET['tab'] = 'connection';
 

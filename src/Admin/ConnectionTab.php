@@ -362,10 +362,17 @@ final class ConnectionTab implements Tab, Registrable {
 					(string) $last['version']
 				)
 			);
-			echo ' ' . esc_html( '' !== $this->options->search_key() ? __( 'Search key: OK.', 'meilisearch' ) : __( 'Search key: missing.', 'meilisearch' ) );
+			if ( '' === $this->options->search_key() ) {
+				$key_status = __( 'Search key: missing.', 'meilisearch' );
+			} elseif ( $this->options->search_key_is_verified() ) {
+				$key_status = __( 'Search key: OK.', 'meilisearch' );
+			} else {
+				$key_status = __( 'Search key: not verified, so autocomplete stays off. Save to verify it.', 'meilisearch' );
+			}
+			echo ' ' . esc_html( $key_status );
 		} else {
 			echo esc_html__( 'Saved but not verified yet. Save to test the connection.', 'meilisearch' );
-		}
+		}//end if
 		echo '</p></td></tr>';
 
 		echo '</tbody></table>';
