@@ -35,6 +35,11 @@ abstract class TestCase extends WP_UnitTestCase {
 		$this->prefix          = 'test_' . strtolower( wp_generate_password( 6, false, false ) );
 		$this->action_failures = [];
 
+		// Safety net for crashed runs: drop actions a previous run committed for real.
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( '', [], 'meilisearch' );
+		}
+
 		// Option names and keys from the catalog (Settings\Options arrives in Task 5).
 		update_option(
 			'meilisearch_connection',
@@ -73,7 +78,28 @@ abstract class TestCase extends WP_UnitTestCase {
 				}
 			}
 		}
+		$this->discard_collector_shutdown_flush();
 		parent::tear_down();
+	}
+
+	/**
+	 * Detaches every ChangeCollector `shutdown` flush (Plugin::reset() leaves older instances hooked).
+	 * Otherwise IDs still pending after the last test are scheduled at shutdown, after the test
+	 * transaction has rolled back, and leak committed actions into the next run.
+	 */
+	private function discard_collector_shutdown_flush(): void {
+		global $wp_filter;
+		if ( ! isset( $wp_filter['shutdown'] ) ) {
+			return;
+		}
+		foreach ( $wp_filter['shutdown']->callbacks as $priority => $callbacks ) {
+			foreach ( $callbacks as $callback ) {
+				$function = $callback['function'];
+				if ( is_array( $function ) && $function[0] instanceof \Meilisearch\WordPress\Sync\ChangeCollector ) {
+					remove_action( 'shutdown', $function, $priority );
+				}
+			}
+		}
 	}
 
 	protected static function test_host(): string {
