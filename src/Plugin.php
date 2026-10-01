@@ -155,6 +155,12 @@ final class Plugin {
 		$this->add( 'sync_job', $sync_job );
 		$this->add( 'term_job', new Sync\TermJob( $collector, $queue, $options ) );
 
+		// Tasks 15-18, Task 22 — search.
+		// Task 22 replaces the null with the WooCommerce product query translator when products are indexed.
+		$product_translator = null;
+		$translator         = new Search\QueryTranslator( $options, $indexability, $product_translator );
+		$this->add( 'translator', $translator );
+
 		// Tasks 9-10, 14, 21 — admin.
 		$tabs = array(
 			new Admin\ConnectionTab( $options, $indexes, $names ),
