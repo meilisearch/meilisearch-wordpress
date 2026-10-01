@@ -10,20 +10,35 @@
 			"homepage": "https://www.meilisearch.com"
 		}
 	],
+	"repositories": [
+		{
+			"type": "composer",
+			"url": "https://wpackagist.org",
+			"only": [
+				"wpackagist-plugin/*",
+				"wpackagist-theme/*"
+			]
+		}
+	],
 	"require": {
 		"php": ">=8.1",
 		"woocommerce/action-scheduler": "^4.2"
 	},
 	"require-dev": {
 		"brain/monkey": "^2.6",
+		"composer/installers": "^2.3",
 		"dealerdirect/phpcodesniffer-composer-installer": "^1.0",
 		"mockery/mockery": "^1.6",
 		"php-stubs/woocommerce-stubs": "^11.1",
 		"phpcompatibility/phpcompatibility-wp": "^2.1",
 		"phpstan/phpstan": "^2.0",
 		"phpunit/phpunit": "^9.6",
+		"roots/wordpress-core-installer": "^4.0",
+		"roots/wordpress-no-content": "^6.9 || ^7.0",
 		"szepeviktor/phpstan-wordpress": "^2.0",
 		"wp-coding-standards/wpcs": "^3.1",
+		"wp-phpunit/wp-phpunit": "^6.9 || ^7.0",
+		"wpackagist-plugin/woocommerce": ">=8.5",
 		"yoast/phpunit-polyfills": "^4.0"
 	},
 	"autoload": {
@@ -37,6 +52,17 @@
 			"Meilisearch\\WordPress\\Tests\\Integration\\": "tests/integration/"
 		}
 	},
+	"extra": {
+		"installer-paths": {
+			"vendor/woocommerce/action-scheduler/": [
+				"woocommerce/action-scheduler"
+			],
+			"tests/integration/plugins/{$name}/": [
+				"type:wordpress-plugin"
+			]
+		},
+		"wordpress-install-dir": "wordpress"
+	},
 	"config": {
 		"platform": {
 			"php": "8.1.0"
@@ -44,11 +70,18 @@
 		"sort-packages": true,
 		"process-timeout": 0,
 		"allow-plugins": {
-			"dealerdirect/phpcodesniffer-composer-installer": true
+			"composer/installers": true,
+			"dealerdirect/phpcodesniffer-composer-installer": true,
+			"roots/wordpress-core-installer": true
 		}
 	},
 	"scripts": {
 		"test:unit": "phpunit -c phpunit.xml.dist",
+		"test:integration": "phpunit -c phpunit-integration.xml.dist",
+		"test:integration:wc": [
+			"@putenv MEILISEARCH_TEST_WC=1",
+			"phpunit -c phpunit-integration.xml.dist"
+		],
 		"lint": "phpcs",
 		"lint:fix": "phpcbf",
 		"analyse": "phpstan analyse --memory-limit=1G --no-progress"
