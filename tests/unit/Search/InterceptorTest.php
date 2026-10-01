@@ -323,4 +323,16 @@ final class InterceptorTest extends TestCase {
 		self::assertNull( $interceptor->on_posts_pre_query( null ) );
 		self::assertSame( array(), $this->transport->requests() );
 	}
+
+	/**
+	 * The main search is not flagged while the content index is unpopulated.
+	 */
+	public function test_unpopulated_index_is_not_flagged(): void {
+		$this->option_store[ Options::STATE ]['populated'] = array();
+		$query = $this->main_search();
+
+		$this->interceptor()->on_pre_get_posts( $query );
+
+		self::assertNotTrue( $query->get( Interceptor::QUERY_FLAG ) );
+	}
 }

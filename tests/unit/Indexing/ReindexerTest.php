@@ -424,6 +424,7 @@ final class ReindexerTest extends TestCase {
 		$this->assertSame( 'done', $this->state()['status'] );
 		$this->assertTrue( $this->options->needs_reindex( 'content' ), 'A flag raised mid-run must survive finalization.' );
 		$this->assertTrue( (bool) $this->options->state( 'first_reindex_done' ) );
+		$this->assertTrue( $this->options->is_populated( 'content' ), 'A done run populates the index.' );
 	}
 
 	/**

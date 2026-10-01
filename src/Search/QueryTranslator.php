@@ -245,6 +245,13 @@ final class QueryTranslator {
 			return null;
 		}
 
+		// An index that no full reindex has filled yet would answer with zero results: MySQL answers.
+		foreach ( $logicals as $logical ) {
+			if ( ! $this->options->is_populated( $logical ) ) {
+				return null;
+			}
+		}
+
 		list( $page, $hits_per_page ) = $this->pagination( $query );
 
 		$search = $this->options->search();

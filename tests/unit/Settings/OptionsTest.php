@@ -354,4 +354,24 @@ final class OptionsTest extends TestCase {
 		$this->assertNull( $options->reindex_state( 'content' ) );
 		$this->assertSame( [], $options->state( 'reindex' ) );
 	}
+
+	public function test_populated_indexes(): void {
+		$options = $this->options();
+
+		$this->assertFalse( $options->is_populated( 'content' ), 'Fresh installs start unpopulated.' );
+
+		$options->set_populated( 'content', true );
+		$options->set_populated( 'content', true );
+		$options->set_populated( 'products', true );
+		$this->assertTrue( $options->is_populated( 'content' ) );
+		$this->assertSame( [ 'content', 'products' ], $options->state( 'populated' ) );
+
+		$options->set_populated( 'products', false );
+		$this->assertFalse( $options->is_populated( 'products' ) );
+		$this->assertSame( [ 'content' ], $options->state( 'populated' ) );
+
+		$options->clear_populated();
+		$this->assertFalse( $options->is_populated( 'content' ) );
+		$this->assertSame( [], $options->state( 'populated' ) );
+	}
 }

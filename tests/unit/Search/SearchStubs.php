@@ -80,7 +80,10 @@ trait SearchStubs {
 				'semantic_ratio' => 0.0,
 				'autocomplete'   => false,
 			),
-			Options::STATE       => array( 'first_reindex_done' => true ),
+			Options::STATE       => array(
+				'first_reindex_done' => true,
+				'populated'          => array( 'content', 'products' ),
+			),
 			Options::LOG         => array(),
 			'posts_per_page'     => '10',
 		);

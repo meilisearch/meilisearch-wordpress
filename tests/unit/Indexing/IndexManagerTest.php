@@ -436,10 +436,12 @@ final class IndexManagerTest extends TestCase {
 			->queue( self::json( array( 'pkgVersion' => '1.53.1' ) ) )
 			->queue( self::json( array( 'uid' => 'existing-uid' ) ) );
 		$this->queue_index_up_to_date();
+		$this->options->set_populated( 'content', true );
 
 		$result = $this->manager()->connect();
 
 		$this->assertSame( 'kept', $result['key'] );
+		$this->assertTrue( $this->options->is_populated( 'content' ) );
 		$this->assertContains( 'GET /keys/existing-uid', $this->calls() );
 		$this->assertNotContains( 'POST /keys', $this->calls() );
 		$this->assertFalse( $this->options->needs_reindex( 'content' ) );
@@ -515,9 +517,14 @@ final class IndexManagerTest extends TestCase {
 			->queue( self::json( array(), 204 ) );
 		$this->queue_index_up_to_date();
 
+		$this->options->set_populated( 'content', true );
+		$this->options->set_populated( 'products', true );
+
 		$this->assertSame( 'created', $this->manager()->connect()['key'] );
 		$this->assertContains( 'DELETE /keys/existing-uid', $this->calls() );
 		$this->assertTrue( $this->options->needs_reindex( 'content' ) );
+		$this->assertFalse( $this->options->is_populated( 'content' ), 'A new fingerprint points at indexes this site has not filled.' );
+		$this->assertFalse( $this->options->is_populated( 'products' ) );
 	}
 
 	public function test_connect_failure_does_not_store_fingerprint(): void {

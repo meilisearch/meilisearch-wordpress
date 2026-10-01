@@ -42,6 +42,8 @@ trait CreatesProducts {
 		);
 		$this->reboot_plugin();
 		Plugin::instance()->get( 'index_manager' )->ensure_index( 'products' );
+		// Tests fill the products index through sync instead of a full reindex (which populates it).
+		Plugin::instance()->get( 'options' )->set_populated( 'products', true );
 	}
 
 	/**

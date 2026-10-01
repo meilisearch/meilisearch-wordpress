@@ -30,7 +30,8 @@ use Meilisearch\WordPress\Sync\Queue;
  * 3. Phase "sweep": page through the index's document IDs (documents/fetch, id > last, sorted by id)
  *    and delete those whose post is missing or no longer indexable (orphans, missed unpublishes).
  * 4. Phase "finalizing": wait until no recorded task is enqueued/processing; a failed or canceled
- *    task fails the run, otherwise the run is done and the "needs reindex" flag is cleared.
+ *    task fails the run, otherwise the run is done and the index is marked populated (search is
+ *    intercepted only for populated indexes).
  *
  * Recorded task UIDs are pruned once TASK_PRUNE_AT accumulate: finished ones are checked for failure
  * and dropped, so the stored state stays small. Real-time sync keeps writing to the same index;
@@ -454,6 +455,7 @@ final class Reindexer implements Registrable {
 		$state['error']  = '';
 		$state           = $this->save( $logical, $state );
 		$this->options->set_state( 'first_reindex_done', true );
+		$this->options->set_populated( $logical, true );
 		return $state;
 	}
 

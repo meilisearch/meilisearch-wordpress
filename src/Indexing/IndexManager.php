@@ -81,6 +81,10 @@ final class IndexManager {
 		$version     = $this->check_connection();
 		$fingerprint = md5( $this->options->host() . '|' . $this->options->admin_key() . '|' . $this->names->prefix() );
 		$changed     = $fingerprint !== (string) $this->options->state( 'fingerprint', '' );
+		if ( $changed ) {
+			// The indexes behind the new host, key or prefix are not known to hold this site's content.
+			$this->options->clear_populated();
+		}
 
 		$key = 'kept';
 		if ( $changed || '' === $this->options->search_key() || $this->plugin_key_was_deleted() ) {

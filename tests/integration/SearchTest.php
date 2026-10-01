@@ -169,6 +169,22 @@ final class SearchTest extends TestCase {
 	}
 
 	/**
+	 * The content index is marked populated by the reindex in set_up(); until then (a new connection
+	 * clears it), searches fall back to MySQL instead of returning zero results.
+	 */
+	public function test_unpopulated_index_falls_back_to_mysql(): void {
+		$options = Plugin::instance()->get( 'options' );
+		self::assertTrue( $options->is_populated( 'content' ) );
+		$options->clear_populated();
+
+		$this->go_to( home_url( '/?s=nebula' ) );
+
+		self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 0, $this->search_requests );
+		self::assertNotEmpty( $this->result_ids(), 'MySQL answers the search.' );
+	}
+
+	/**
 	 * Theme search results come from Meilisearch, in its ranking order.
 	 */
 	public function test_results_come_from_meilisearch_in_ranking_order(): void {

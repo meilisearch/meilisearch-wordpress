@@ -1317,4 +1317,22 @@ final class QueryTranslatorTest extends TestCase {
 
 		self::assertTrue( $this->translate( $this->make_query( array( 's' => 'x' ) ) )->highlight );
 	}
+
+	/**
+	 * An index that was never fully reindexed (empty) is not queried: MySQL answers instead.
+	 */
+	public function test_unpopulated_index_is_not_intercepted(): void {
+		$this->option_store[ Options::STATE ]['populated'] = array( 'products' );
+
+		self::assertNull(
+			$this->translator()->translate(
+				$this->make_query(
+					array(
+						's'         => 'hello',
+						'post_type' => 'post',
+					)
+				)
+			)
+		);
+	}
 }

@@ -99,6 +99,7 @@ final class Options {
 				'needs_reindex'      => array(),
 				'reindex'            => array(),
 				'first_reindex_done' => false,
+				'populated'          => array(),
 			),
 			self::LOG         => array(),
 		);
@@ -466,6 +467,43 @@ final class Options {
 				return $state;
 			}
 		);
+	}
+
+	/**
+	 * Whether a logical index has been filled by a completed full reindex since the connection
+	 * (host, admin key or prefix) last changed. Search is not intercepted for an unpopulated index.
+	 *
+	 * @param string $logical 'content' | 'products'.
+	 * @return bool
+	 */
+	public function is_populated( string $logical ): bool {
+		return in_array( $logical, self::to_string_list( $this->state( 'populated', array() ) ), true );
+	}
+
+	/**
+	 * Marks a logical index as populated (a full reindex completed) or not.
+	 *
+	 * @param string $logical 'content' | 'products'.
+	 * @param bool   $flag    New value.
+	 */
+	public function set_populated( string $logical, bool $flag ): void {
+		$this->mutate_state(
+			static function ( array $state ) use ( $logical, $flag ): array {
+				$populated = array_values( array_diff( self::to_string_list( $state['populated'] ?? array() ), array( $logical ) ) );
+				if ( $flag ) {
+					$populated[] = $logical;
+				}
+				$state['populated'] = $populated;
+				return $state;
+			}
+		);
+	}
+
+	/**
+	 * Marks every logical index as unpopulated.
+	 */
+	public function clear_populated(): void {
+		$this->set_state( 'populated', array() );
 	}
 
 	/**

@@ -465,4 +465,40 @@ final class QueryTranslatorProductsTest extends TestCase {
 			)
 		);
 	}
+
+	/**
+	 * A mixed search is not intercepted while the products index is unpopulated (e.g. just enabled).
+	 */
+	public function test_unpopulated_products_index_blocks_product_and_mixed_searches(): void {
+		$this->option_store[ Options::STATE ]['populated'] = array( 'content' );
+		$translator                                        = $this->translator(
+			$this->products(
+				array(
+					'filters' => array(),
+					'sort'    => array(),
+				)
+			)
+		);
+
+		self::assertNull( $translator->translate( $this->make_query( array( 's' => 'nebula' ) ) ) );
+		self::assertNull(
+			$translator->translate(
+				$this->make_query(
+					array(
+						's'         => 'shoe',
+						'post_type' => 'product',
+					)
+				)
+			)
+		);
+		$content_only = $translator->translate(
+			$this->make_query(
+				array(
+					's'         => 'nebula',
+					'post_type' => 'post',
+				)
+			)
+		);
+		self::assertNotNull( $content_only );
+	}
 }
