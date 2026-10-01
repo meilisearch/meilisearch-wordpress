@@ -853,4 +853,51 @@ final class ReindexerTest extends TestCase {
 		$this->seed_run( array( 'updated_at' => time() ) );
 		$this->assertFalse( $this->reindexer()->is_stalled( 'content' ) );
 	}
+
+	/**
+	 * WP-CLI runs flush the runtime object cache after every step, so memory stays flat on large sites.
+	 */
+	public function test_run_sync_flushes_the_runtime_cache_after_each_step(): void {
+		$flushes = 0;
+		Functions\when( 'wp_cache_flush_runtime' )->alias(
+			static function () use ( &$flushes ): bool {
+				++$flushes;
+				return true;
+			}
+		);
+		Functions\when( 'wp_cache_supports' )->alias( static fn ( string $feature ): bool => 'flush_runtime' === $feature );
+		Functions\when( 'wp_generate_password' )->justReturn( 'abcd' );
+		$this->install_wpdb( array( array() ), '0' );
+		$this->transport
+			->respond(
+				404,
+				array(
+					'code'    => 'index_not_found',
+					'message' => 'missing',
+				)
+			)
+			->queue( self::task_response( 1 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 1,
+					'status' => 'succeeded',
+				)
+			)
+			->queue( self::task_response( 2 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 2,
+					'status' => 'succeeded',
+				)
+			)
+			->respond( 200, array( 'results' => array() ) );
+
+		$this->reindexer()->run_sync( 'content', 100, static function (): void {} );
+
+		$this->assertSame( 'done', $this->state()['status'] );
+		// Upsert, sweep, finalize.
+		$this->assertSame( 3, $flushes );
+	}
 }

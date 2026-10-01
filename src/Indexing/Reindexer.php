@@ -165,12 +165,17 @@ final class Reindexer implements Registrable {
 				}
 				$was_upsert = 'upsert' === $state['phase'];
 				$state      = $this->step( $logical, $state, $batch_size );
+				// One long process: drop the posts, meta and terms cached by this step (when the object
+				// cache supports it; otherwise WordPress reports _doing_it_wrong on every call).
+				if ( wp_cache_supports( 'flush_runtime' ) ) {
+					wp_cache_flush_runtime();
+				}
 				if ( $was_upsert ) {
 					$progress( (int) $state['sent'], (int) $state['total'] );
 				} elseif ( self::is_active( $state ) && 'finalizing' === $state['phase'] ) {
 					usleep( 500000 );
 				}
-			}
+			}//end while
 		} catch ( \Throwable $e ) {
 			$current = $this->status( $logical );
 			if ( null !== $current && ( $current['run'] ?? '' ) === $run && 'failed' !== ( $current['status'] ?? '' ) ) {
