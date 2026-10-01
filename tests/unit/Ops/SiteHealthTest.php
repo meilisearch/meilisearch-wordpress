@@ -228,6 +228,14 @@ final class SiteHealthTest extends TestCase {
 		self::assertStringContainsString( 'task 42 failed', $failed['description'] );
 	}
 
+	public function test_stalled_run_has_its_own_wording(): void {
+		$result = SiteHealth::evaluate_reindex( array( 'content' => false ), array(), self::URL, array( 'content' ) );
+
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertStringContainsString( 'stopped making progress', $result['description'] );
+		self::assertStringNotContainsString( 'failed', $result['description'] );
+	}
+
 	public function test_not_checked_is_recommended(): void {
 		$result = SiteHealth::not_checked( SiteHealth::TEST_DOCUMENTS, 'Meilisearch is unreachable.' );
 

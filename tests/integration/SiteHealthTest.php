@@ -126,4 +126,43 @@ final class SiteHealthTest extends TestCase {
 		$result = call_user_func( $tests['direct'][ SiteHealth::TEST_CONNECTION ]['test'] );
 		self::assertSame( array( 'label', 'status', 'badge', 'description', 'actions', 'test' ), array_keys( $result ) );
 	}
+
+	/**
+	 * @param int $age Seconds since the run last made progress.
+	 */
+	private function seed_running_reindex( int $age ): void {
+		$this->service( 'options', Options::class )->set_reindex_state(
+			'content',
+			array(
+				'run'        => 'x',
+				'phase'      => 'upsert',
+				'last_id'    => 0,
+				'sent'       => 0,
+				'deleted'    => 0,
+				'total'      => 2,
+				'task_uids'  => array(),
+				'started_at' => time() - $age,
+				'updated_at' => time() - $age,
+				'status'     => 'running',
+				'error'      => '',
+			)
+		);
+	}
+
+	public function test_abandoned_reindex_run_is_reported_as_stalled(): void {
+		$this->seed_running_reindex( Reindexer::STALE_AFTER + 1 );
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_REINDEX ];
+
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertStringContainsString( 'stopped making progress', $result['description'] );
+	}
+
+	public function test_recent_reindex_run_is_not_reported(): void {
+		$this->seed_running_reindex( 10 );
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_REINDEX ];
+
+		self::assertStringNotContainsString( 'stopped making progress', $result['description'] );
+	}
 }

@@ -111,7 +111,7 @@ final class SiteHealth implements Registrable {
 				$info    = $this->clients->client()->version();
 				$version = (string) ( $info['pkgVersion'] ?? '' );
 			} catch ( \Throwable $e ) {
-				$error = $e->getMessage();
+				$error = $this->redact( $e->getMessage() );
 			}
 		}
 
@@ -125,7 +125,7 @@ final class SiteHealth implements Registrable {
 		}
 
 		$results[] = self::evaluate_queue( $this->queue->count( 'pending' ), $this->queue->count( 'failed' ), $status_url );
-		$results[] = self::evaluate_reindex( $this->reindex_flags(), $this->failed_reindexes(), $status_url );
+		$results[] = self::evaluate_reindex( $this->reindex_flags(), $this->failed_reindexes(), $status_url, $this->stalled_reindexes() );
 
 		$this->results = $results;
 
@@ -187,7 +187,7 @@ final class SiteHealth implements Registrable {
 			sprintf(
 				/* translators: %s: Meilisearch version. */
 				__( 'Connected to Meilisearch %s', 'meilisearch' ),
-				$version
+				esc_html( $version )
 			),
 			__( 'The plugin can reach your Meilisearch instance with the configured admin key.', 'meilisearch' )
 		);
@@ -402,9 +402,10 @@ final class SiteHealth implements Registrable {
 	 * @param array<string, bool>   $flags      Logical index => needs a reindex.
 	 * @param array<string, string> $failed     Logical index => error of the last failed or abandoned reindex run.
 	 * @param string                $status_url URL of the Status tab.
+	 * @param string[]              $stalled    Logical indexes whose run stopped making progress.
 	 * @return Result
 	 */
-	public static function evaluate_reindex( array $flags, array $failed, string $status_url ): array {
+	public static function evaluate_reindex( array $flags, array $failed, string $status_url, array $stalled = array() ): array {
 		$problems = array();
 		foreach ( $flags as $logical => $flag ) {
 			if ( $flag ) {
@@ -421,6 +422,14 @@ final class SiteHealth implements Registrable {
 				__( 'The last reindex of the %1$s index failed: %2$s', 'meilisearch' ),
 				$logical,
 				$message
+			);
+		}
+
+		foreach ( $stalled as $logical ) {
+			$problems[] = sprintf(
+				/* translators: %s: index name (content or products). */
+				__( 'The reindex of the %s index stopped making progress. Start it again from the Status tab.', 'meilisearch' ),
+				$logical
 			);
 		}
 
@@ -537,7 +546,7 @@ final class SiteHealth implements Registrable {
 		try {
 			return $check();
 		} catch ( \Throwable $e ) {
-			return self::not_checked( $test, $e->getMessage() );
+			return self::not_checked( $test, $this->redact( $e->getMessage() ) );
 		}
 	}
 
@@ -607,7 +616,11 @@ final class SiteHealth implements Registrable {
 			try {
 				$details = $this->clients->client()->get_key( $key );
 			} catch ( ApiError $e ) {
-				$error = $e->getMessage();
+				$error = sprintf(
+					/* translators: %s: Meilisearch error code. */
+					__( 'Meilisearch refused the key lookup (%s)', 'meilisearch' ),
+					$e->error_code
+				);
 			}
 		}
 
@@ -645,13 +658,39 @@ final class SiteHealth implements Registrable {
 		foreach ( $this->names->active_logicals() as $logical ) {
 			$state = $this->reindexer->status( $logical );
 			if ( is_array( $state ) && 'failed' === ( $state['status'] ?? '' ) ) {
-				$failed[ $logical ] = (string) ( $state['error'] ?? '' );
-			} elseif ( $this->reindexer->is_stalled( $logical ) ) {
-				$failed[ $logical ] = __( 'the run stopped making progress and was abandoned. Start a new reindex from the Status tab.', 'meilisearch' );
+				$failed[ $logical ] = $this->redact( (string) ( $state['error'] ?? '' ) );
 			}
 		}
 
 		return $failed;
+	}
+
+	/**
+	 * Logical indexes whose run is marked running but abandoned.
+	 *
+	 * @return string[]
+	 */
+	private function stalled_reindexes(): array {
+		$stalled = array();
+		foreach ( $this->names->active_logicals() as $logical ) {
+			if ( $this->reindexer->is_stalled( $logical ) ) {
+				$stalled[] = $logical;
+			}
+		}
+
+		return $stalled;
+	}
+
+	/**
+	 * Removes the configured admin and search keys from a message before it is displayed.
+	 *
+	 * @param string $message Message that may come from the server.
+	 * @return string
+	 */
+	private function redact( string $message ): string {
+		$keys = array_filter( array( $this->options->admin_key(), $this->options->search_key() ), static fn ( string $key ): bool => '' !== $key );
+
+		return array() === $keys ? $message : str_replace( $keys, '…', $message );
 	}
 
 	/**
