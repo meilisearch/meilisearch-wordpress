@@ -43,11 +43,21 @@ final class Highlighter implements Registrable {
 	/**
 	 * Returns the highlighted crop for posts of an intercepted result, the excerpt otherwise.
 	 *
-	 * @param string   $excerpt Excerpt.
-	 * @param \WP_Post $post    Post.
-	 * @return string
+	 * Other code may apply get_the_excerpt with one argument or unexpected values: anything but a
+	 * string excerpt and a resolvable post comes back unchanged.
+	 *
+	 * @param mixed $excerpt Excerpt.
+	 * @param mixed $post    Post, post ID or null for the global post.
+	 * @return mixed
 	 */
-	public function filter_excerpt( string $excerpt, \WP_Post $post ): string {
+	public function filter_excerpt( mixed $excerpt, mixed $post = null ): mixed {
+		if ( ! is_string( $excerpt ) ) {
+			return $excerpt;
+		}
+		$post = $post instanceof \WP_Post ? $post : get_post( $post );
+		if ( ! $post instanceof \WP_Post ) {
+			return $excerpt;
+		}
 		$formatted = $this->mapper->formatted( (int) $post->ID );
 		if ( null === $formatted || ! isset( $formatted['content'] ) || ! is_string( $formatted['content'] ) || '' === trim( $formatted['content'] ) ) {
 			return $excerpt;

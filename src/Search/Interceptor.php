@@ -55,9 +55,12 @@ final class Interceptor implements Registrable {
 	/**
 	 * Flags queries that will be answered by Meilisearch.
 	 *
-	 * @param \WP_Query $query Query.
+	 * @param mixed $query Query.
 	 */
-	public function on_pre_get_posts( \WP_Query $query ): void {
+	public function on_pre_get_posts( mixed $query ): void {
+		if ( ! $query instanceof \WP_Query ) {
+			return;
+		}
 		if ( $query->is_main_query() ) {
 			$this->mapper->reset();
 		}
@@ -72,12 +75,13 @@ final class Interceptor implements Registrable {
 	/**
 	 * Answers flagged queries.
 	 *
-	 * @param array<int, mixed>|null $posts Posts from an earlier filter, null to let WordPress query.
-	 * @param \WP_Query              $query Query.
-	 * @return array<int, mixed>|null
+	 * @param mixed $posts Posts from an earlier filter, null to let WordPress query. Anything but null
+	 *                     (an array or an unexpected value from another plugin) comes back unchanged.
+	 * @param mixed $query Query.
+	 * @return mixed
 	 */
-	public function on_posts_pre_query( ?array $posts, \WP_Query $query ): ?array {
-		if ( null !== $posts || true !== $query->get( self::QUERY_FLAG ) || $this->breaker->is_open() ) {
+	public function on_posts_pre_query( mixed $posts, mixed $query = null ): mixed {
+		if ( null !== $posts || ! $query instanceof \WP_Query || true !== $query->get( self::QUERY_FLAG ) || $this->breaker->is_open() ) {
 			return $posts;
 		}
 		$request = $this->translator->translate( $query );

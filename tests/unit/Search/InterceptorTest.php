@@ -307,4 +307,20 @@ final class InterceptorTest extends TestCase {
 
 		self::assertNull( $this->mapper->formatted( 5 ) );
 	}
+
+	/**
+	 * Values other than null or an array, or a missing query, come back unchanged.
+	 */
+	public function test_posts_pre_query_returns_unexpected_values_unchanged(): void {
+		$query = $this->main_search();
+		$query->set( Interceptor::QUERY_FLAG, true );
+		$interceptor = $this->interceptor();
+
+		self::assertSame( 'oops', $interceptor->on_posts_pre_query( 'oops', $query ) );
+		self::assertSame( 0, $interceptor->on_posts_pre_query( 0, $query ) );
+		self::assertSame( array( 1 ), $interceptor->on_posts_pre_query( array( 1 ), $query ) );
+		self::assertNull( $interceptor->on_posts_pre_query( null, 'not a query' ) );
+		self::assertNull( $interceptor->on_posts_pre_query( null ) );
+		self::assertSame( array(), $this->transport->requests() );
+	}
 }

@@ -85,4 +85,32 @@ final class HighlighterTest extends TestCase {
 		self::assertSame( 'Original', $highlighter->filter_excerpt( 'Original', new \WP_Post( array( 'ID' => 5 ) ) ) );
 		self::assertSame( 'Other', $highlighter->filter_excerpt( 'Other', new \WP_Post( array( 'ID' => 6 ) ) ) );
 	}
+
+	/**
+	 * One-argument calls resolve the post with get_post().
+	 */
+	public function test_one_argument_call_resolves_the_global_post(): void {
+		$mapper = new ResultMapper();
+		$mapper->apply( new \WP_Query( array() ), new SearchResult( array(), 1, 1, array( 5 => array( 'content' => 'a <mark>hit</mark>' ) ) ) );
+		Functions\when( 'get_post' )->justReturn( new \WP_Post( array( 'ID' => 5 ) ) );
+
+		self::assertSame( 'a <mark>hit</mark>', ( new Highlighter( $mapper, new Options() ) )->filter_excerpt( 'Original' ) );
+	}
+
+	/**
+	 * Without a post, or with a non-string excerpt, the input comes back unchanged.
+	 */
+	public function test_unusable_arguments_return_the_excerpt_unchanged(): void {
+		$mapper = new ResultMapper();
+		$mapper->apply( new \WP_Query( array() ), new SearchResult( array(), 1, 1, array( 5 => array( 'content' => 'a <mark>hit</mark>' ) ) ) );
+		$highlighter = new Highlighter( $mapper, new Options() );
+
+		Functions\when( 'get_post' )->justReturn( null );
+		self::assertSame( 'Original', $highlighter->filter_excerpt( 'Original' ) );
+		self::assertSame( 'Original', $highlighter->filter_excerpt( 'Original', 'not a post' ) );
+
+		Functions\when( 'get_post' )->justReturn( new \WP_Post( array( 'ID' => 5 ) ) );
+		self::assertNull( $highlighter->filter_excerpt( null, 5 ) );
+		self::assertSame( array( 'x' ), $highlighter->filter_excerpt( array( 'x' ), 5 ) );
+	}
 }
