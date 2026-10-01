@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Tests\Integration\WooCommerce;
 
+use Meilisearch\WordPress\Search\Interceptor;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Tests\Integration\TestCase;
 
@@ -21,10 +22,6 @@ final class ProductSearchTest extends TestCase {
 	public function set_up(): void {
 		parent::set_up();
 		$this->skip_without_woocommerce();
-
-		// A plain ?s=&post_type=product search is not a product archive for WooCommerce 11.1, so it does not run
-		// product_query() itself. Shop contexts that do (product taxonomy archives, the shop page) are simulated.
-		add_action( 'pre_get_posts', array( $this, 'run_product_query' ), 10 );
 
 		$color = $this->create_attribute( 'color', array( 'Red', 'Blue' ) );
 		$this->enable_products();
@@ -51,23 +48,11 @@ final class ProductSearchTest extends TestCase {
 	}
 
 	public function tear_down(): void {
-		remove_action( 'pre_get_posts', array( $this, 'run_product_query' ), 10 );
 		if ( class_exists( 'WooCommerce' ) ) {
 			$this->remove_attributes();
 			\WC_Query::reset_chosen_attributes();
 		}
 		parent::tear_down();
-	}
-
-	/**
-	 * Applies WooCommerce's product query (catalog ordering, visibility, layered nav) to the main query.
-	 *
-	 * @param \WP_Query $query Query.
-	 */
-	public function run_product_query( \WP_Query $query ): void {
-		if ( $query->is_main_query() ) {
-			WC()->query->product_query( $query );
-		}
 	}
 
 	/**
@@ -133,5 +118,21 @@ final class ProductSearchTest extends TestCase {
 	public function test_hidden_product_never_appears(): void {
 		$this->assertNotContains( $this->ids['hidden'], $this->search( array() ) );
 		$this->assertNotContains( $this->ids['hidden'], $this->search( array( 's' => 'meili shirtt hidden' ) ) );
+	}
+
+	public function test_search_without_a_woocommerce_product_query_falls_back_to_mysql(): void {
+		$query = new \WP_Query(
+			array(
+				's'           => 'Meili Shirt',
+				'post_type'   => 'product',
+				'orderby'     => 'price',
+				'order'       => 'ASC',
+				'meilisearch' => true,
+			)
+		);
+
+		$this->assertNotTrue( $query->get( Interceptor::QUERY_FLAG ) );
+		$this->assertSame( '', (string) $query->get( 'wc_query' ) );
+		$this->assertEqualsCanonicalizing( array_values( $this->ids ), array_map( 'intval', wp_list_pluck( $query->posts, 'ID' ) ) );
 	}
 }

@@ -48,6 +48,13 @@ final class SearchTest extends TestCase {
 	private int $search_requests = 0;
 
 	/**
+	 * Path suffix (/search or /multi-search) of the last search request.
+	 *
+	 * @var string
+	 */
+	private string $last_search_path = '';
+
+	/**
 	 * 25 matching posts + 1 other, indexed; search replacement on; breaker closed.
 	 */
 	public function set_up(): void {
@@ -123,6 +130,7 @@ final class SearchTest extends TestCase {
 	public function count_search_requests( $pre, $args, $url ) {
 		if ( str_ends_with( (string) $url, '/search' ) || str_ends_with( (string) $url, '/multi-search' ) ) {
 			++$this->search_requests;
+			$this->last_search_path = str_ends_with( (string) $url, '/multi-search' ) ? '/multi-search' : '/search';
 		}
 		return $pre;
 	}
@@ -168,6 +176,8 @@ final class SearchTest extends TestCase {
 
 		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
 		self::assertSame( 1, $this->search_requests );
+		// Content + products federate through /multi-search once products are indexed.
+		self::assertSame( '1' === getenv( 'MEILISEARCH_TEST_WC' ) ? '/multi-search' : '/search', $this->last_search_path );
 		$results = $this->result_ids();
 
 		$plugin   = Plugin::instance();

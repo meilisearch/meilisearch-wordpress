@@ -27,6 +27,7 @@ trait CreatesProducts {
 	 * and creates the products index (after attributes exist, so attr_* are filterable).
 	 */
 	protected function enable_products( array $woocommerce = array() ): void {
+		\WC_Install::create_terms(); // product_visibility terms: deterministic whatever ran before.
 		update_option(
 			Options::WOOCOMMERCE,
 			array_merge(

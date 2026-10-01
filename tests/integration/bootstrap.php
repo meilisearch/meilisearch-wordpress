@@ -26,7 +26,7 @@ tests_add_filter(
 			require_once WP_PLUGIN_DIR . '/woocommerce/woocommerce.php';
 			if ( ! class_exists( 'WC_Unit_Tests_Bootstrap' ) ) {
 				// Marker WooCommerce's own suite defines: wc_get_product_visibility_term_ids() then skips its static cache,
-				// which would otherwise keep term IDs read before WC_Install::install() created the terms.
+				// which _delete_all_data() (tear_down_after_class deletes all terms) would leave holding stale term IDs.
 				class WC_Unit_Tests_Bootstrap {}
 			}
 		}
@@ -39,6 +39,10 @@ tests_add_filter(
 	'setup_theme',
 	static function (): void {
 		if ( class_exists( 'WC_Install' ) ) {
+			// The test install has no theme; like Storefront or block themes, declare WooCommerce support before
+			// WC_Install::install() registers the product post type (it then has an archive, so WooCommerce runs
+			// its real product query for product searches).
+			add_theme_support( 'woocommerce' );
 			WC_Install::install();
 			$GLOBALS['wp_roles'] = null;
 			wp_roles();
