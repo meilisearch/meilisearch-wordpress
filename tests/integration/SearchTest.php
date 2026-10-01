@@ -13,6 +13,9 @@ use Meilisearch\WordPress\Plugin;
 use Meilisearch\WordPress\Search\CircuitBreaker;
 use Meilisearch\WordPress\Search\Interceptor;
 use Meilisearch\WordPress\Settings\Options;
+use Meilisearch\WordPress\Tests\Integration\WooCommerce\CreatesProducts;
+
+require_once __DIR__ . '/WooCommerce/CreatesProducts.php';
 
 /**
  * Real WP_Query searches answered by the test Meilisearch (spec § 12.2 SearchTest).
@@ -20,6 +23,8 @@ use Meilisearch\WordPress\Settings\Options;
  * @group search
  */
 final class SearchTest extends TestCase {
+
+	use CreatesProducts;
 
 	/**
 	 * IDs of the 25 "Nebula report" posts, oldest first.
@@ -48,7 +53,8 @@ final class SearchTest extends TestCase {
 	public function set_up(): void {
 		parent::set_up();
 		if ( '1' === getenv( 'MEILISEARCH_TEST_WC' ) ) {
-			$this->markTestSkipped( 'Product search lands in Task 22; SearchTest under WooCommerce is re-enabled there.' );
+			// Default searches include `product` (spec § 9.1); products must be indexed for them to be intercepted.
+			$this->enable_products();
 		}
 		update_option( 'posts_per_page', 10 );
 		update_option(

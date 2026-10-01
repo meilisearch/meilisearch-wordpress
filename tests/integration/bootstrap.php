@@ -24,6 +24,11 @@ tests_add_filter(
 	static function () use ( $meilisearch_root ): void {
 		if ( '1' === getenv( 'MEILISEARCH_TEST_WC' ) ) {
 			require_once WP_PLUGIN_DIR . '/woocommerce/woocommerce.php';
+			if ( ! class_exists( 'WC_Unit_Tests_Bootstrap' ) ) {
+				// Marker WooCommerce's own suite defines: wc_get_product_visibility_term_ids() then skips its static cache,
+				// which would otherwise keep term IDs read before WC_Install::install() created the terms.
+				class WC_Unit_Tests_Bootstrap {}
+			}
 		}
 		require_once $meilisearch_root . '/meilisearch.php';
 	}

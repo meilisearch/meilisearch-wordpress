@@ -161,8 +161,7 @@ final class Plugin {
 		$this->add( 'term_job', new Sync\TermJob( $collector, $queue, $options ) );
 
 		// Tasks 15-18, Task 22 — search.
-		// Task 22 replaces the null with the WooCommerce product query translator when products are indexed.
-		$product_translator = null;
+		$product_translator = $options->products_enabled() ? new WooCommerce\ProductQueryTranslator( $options ) : null;
 		$translator         = new Search\QueryTranslator( $options, $indexability, $product_translator );
 		$searcher           = new Search\Searcher( $clients, $names );
 		$mapper             = new Search\ResultMapper();
