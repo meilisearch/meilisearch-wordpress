@@ -432,15 +432,69 @@ final class IndexManagerTest extends TestCase {
 		$this->option_store[ Options::CONNECTION ]['search_key']     = 'existing';
 		$this->option_store[ Options::CONNECTION ]['search_key_uid'] = 'existing-uid';
 		$this->options->set_state( 'fingerprint', md5( self::HOST . '|admin-key|wp_test' ) );
-		$this->transport->queue( self::json( array( 'pkgVersion' => '1.53.1' ) ) );
+		$this->transport
+			->queue( self::json( array( 'pkgVersion' => '1.53.1' ) ) )
+			->queue( self::json( array( 'uid' => 'existing-uid' ) ) );
 		$this->queue_index_up_to_date();
 
 		$result = $this->manager()->connect();
 
 		$this->assertSame( 'kept', $result['key'] );
+		$this->assertContains( 'GET /keys/existing-uid', $this->calls() );
 		$this->assertNotContains( 'POST /keys', $this->calls() );
 		$this->assertFalse( $this->options->needs_reindex( 'content' ) );
 		$this->assertSame( 'existing', $this->options->search_key() );
+	}
+
+	public function test_connect_recreates_a_plugin_key_deleted_in_meilisearch(): void {
+		$this->option_store[ Options::CONNECTION ]['search_key']     = 'existing';
+		$this->option_store[ Options::CONNECTION ]['search_key_uid'] = 'existing-uid';
+		$this->options->set_state( 'fingerprint', md5( self::HOST . '|admin-key|wp_test' ) );
+		$this->transport
+			->queue( self::json( array( 'pkgVersion' => '1.53.1' ) ) )
+			->queue( self::error( 404, 'api_key_not_found' ) )
+			->queue(
+				self::json(
+					array(
+						'key' => 'recreated',
+						'uid' => 'recreated-uid',
+					),
+					201
+				)
+			)
+			->queue( self::error( 404, 'api_key_not_found' ) );
+		$this->queue_index_up_to_date();
+
+		$this->assertSame( 'created', $this->manager()->connect()['key'] );
+		$this->assertSame( 'GET /keys/existing-uid', $this->calls()[1] );
+		$this->assertSame( 'recreated', $this->options->search_key() );
+		$this->assertTrue( $this->options->search_key_is_verified() );
+	}
+
+	public function test_connect_keeps_the_key_when_the_uid_lookup_fails_otherwise(): void {
+		$this->option_store[ Options::CONNECTION ]['search_key']     = 'existing';
+		$this->option_store[ Options::CONNECTION ]['search_key_uid'] = 'existing-uid';
+		$this->options->set_state( 'fingerprint', md5( self::HOST . '|admin-key|wp_test' ) );
+		$this->transport
+			->queue( self::json( array( 'pkgVersion' => '1.53.1' ) ) )
+			->queue( self::error( 500, 'internal' ) );
+		$this->queue_index_up_to_date();
+
+		$this->assertSame( 'kept', $this->manager()->connect()['key'] );
+		$this->assertNotContains( 'POST /keys', $this->calls() );
+		$this->assertSame( 'existing', $this->options->search_key() );
+	}
+
+	public function test_connect_does_not_look_up_a_manual_key(): void {
+		$this->option_store[ Options::CONNECTION ]['search_key']     = 'pasted';
+		$this->option_store[ Options::CONNECTION ]['search_key_uid'] = 'some-uid';
+		$this->options->set_state( 'fingerprint', md5( self::HOST . '|admin-key|wp_test' ) );
+		$this->options->set_state( 'search_key_manual', true );
+		$this->transport->queue( self::json( array( 'pkgVersion' => '1.53.1' ) ) );
+		$this->queue_index_up_to_date();
+
+		$this->assertSame( 'kept', $this->manager()->connect()['key'] );
+		$this->assertSame( array( 'GET /version', 'GET /indexes/wp_test_content', 'GET /indexes/wp_test_content/settings' ), $this->calls() );
 	}
 
 	public function test_connect_rotates_when_prefix_changes(): void {

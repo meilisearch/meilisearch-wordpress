@@ -117,6 +117,18 @@ final class ConnectionTest extends TestCase {
 		$this->assertSame( $uid, $this->meili( 'GET', '/keys/' . $uid, null )['uid'] );
 	}
 
+	public function test_reconnect_recreates_a_plugin_key_deleted_in_meilisearch(): void {
+		$this->manager()->connect();
+		$deleted = $this->options()->search_key_uid();
+		$this->meili( 'DELETE', '/keys/' . $deleted, null );
+
+		$second = $this->manager()->connect();
+
+		$this->assertSame( 'created', $second['key'] );
+		$this->assertNotSame( $deleted, $this->options()->search_key_uid() );
+		$this->assertSame( array( 'search' ), $this->meili( 'GET', '/keys/' . $this->options()->search_key_uid(), null )['actions'] );
+	}
+
 	public function test_admin_key_without_key_permissions_falls_back_to_manual(): void {
 		if ( defined( 'MEILISEARCH_ADMIN_KEY' ) ) {
 			$this->markTestSkipped( 'The admin key is defined as a constant.' );

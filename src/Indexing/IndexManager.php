@@ -83,7 +83,7 @@ final class IndexManager {
 		$changed     = $fingerprint !== (string) $this->options->state( 'fingerprint', '' );
 
 		$key = 'kept';
-		if ( $changed || '' === $this->options->search_key() ) {
+		if ( $changed || '' === $this->options->search_key() || $this->plugin_key_was_deleted() ) {
 			$key = $this->rotate_search_key();
 		}
 
@@ -100,6 +100,27 @@ final class IndexManager {
 			'version' => $version,
 			'key'     => $key,
 		);
+	}
+
+	/**
+	 * Whether the plugin-created search key no longer exists in Meilisearch (404 or api_key_not_found
+	 * on GET /keys/{uid}). Manual keys are never looked up; any other error keeps the key.
+	 *
+	 * @return bool
+	 */
+	private function plugin_key_was_deleted(): bool {
+		$uid = $this->options->search_key_uid();
+		if ( '' === $uid || $this->options->state( 'search_key_manual', false ) ) {
+			return false;
+		}
+
+		try {
+			$this->clients->client()->get_key( $uid );
+		} catch ( ApiError $error ) {
+			return 404 === $error->http_status || 'api_key_not_found' === $error->error_code;
+		}
+
+		return false;
 	}
 
 	/**
