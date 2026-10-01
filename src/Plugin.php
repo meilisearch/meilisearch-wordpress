@@ -126,6 +126,10 @@ final class Plugin {
 		$clients = new Api\ClientFactory( $options, new Api\WpTransport() );
 		$this->add( 'clients', $clients );
 
+		// Task 9 — error log (used by admin notices, sync and search).
+		$error_log = new Sync\ErrorLog();
+		$this->add( 'error_log', $error_log );
+
 		// Tasks 6-7 (content), Task 20 (products) — indexing model. $builders is consumed from Task 11 on, $product_rule is replaced by Task 20.
 		$content_docs = new Indexing\ContentDocumentBuilder( $options );
 		$schemas      = array( 'content' => new Indexing\ContentSchema( $options ) );
@@ -139,5 +143,12 @@ final class Plugin {
 		// Task 8 — index manager.
 		$indexes = new Indexing\IndexManager( $clients, $names, $settings, $options );
 		$this->add( 'index_manager', $indexes );
+
+		// Tasks 9-10, 14, 21 — admin.
+		$tabs = array(
+			new Admin\ConnectionTab( $options, $indexes, $names ),
+		);
+		$this->add( 'admin_menu', new Admin\Menu( $tabs ) );
+		$this->add( 'admin_notices', new Admin\Notices( $options, $error_log ) );
 	}
 }
