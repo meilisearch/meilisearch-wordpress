@@ -11,8 +11,10 @@ namespace Meilisearch\WordPress\Lifecycle;
 
 defined( 'ABSPATH' ) || exit;
 
+use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\Client;
 use Meilisearch\WordPress\Api\WpTransport;
+use Meilisearch\WordPress\Search\CircuitBreaker;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 
@@ -34,26 +36,62 @@ final class Uninstaller {
 	private const LOGICALS = array( 'content', 'products' );
 
 	/**
-	 * Cleans every site, then the network-level options.
+	 * Cleans every site locally first (one pass, so a killed request leaves little behind), then the network-level
+	 * options, then the remote data of the sites that opted in.
 	 */
 	public static function run(): void {
-		Sites::for_each( array( self::class, 'clean_current_site' ) );
+		$plans = array();
+		Sites::for_each(
+			static function () use ( &$plans ): void {
+				$plan = self::clean_site();
+				if ( null !== $plan ) {
+					$plans[] = $plan;
+				}
+			}
+		);
 		if ( is_multisite() ) {
 			self::clean_networks();
+		}
+		self::delete_remote_data( $plans );
+	}
+
+	/**
+	 * Removes the queued actions, options and transients of the current site, then its remote data (opt-in).
+	 */
+	public static function clean_current_site(): void {
+		$plan = self::clean_site();
+		if ( null !== $plan ) {
+			self::delete_remote_data( array( $plan ) );
 		}
 	}
 
 	/**
-	 * Removes the remote data (opt-in), the options, the transients and the queued actions of the current site.
+	 * Cleans the current site locally.
+	 *
+	 * @return array{host: string, key: string, uids: list<string>, key_uid: string}|null What the remote cleanup
+	 *         needs, captured before the options are gone; null when the site did not opt in.
 	 */
-	public static function clean_current_site(): void {
+	private static function clean_site(): ?array {
 		global $wpdb;
 
-		self::delete_remote_data( new Options() );
+		$options = new Options();
+		$plan    = null;
+		if ( $options->delete_on_uninstall() && $options->is_configured() ) {
+			$names = new IndexNames( $options );
+			$plan  = array(
+				'host'    => $options->host(),
+				'key'     => $options->admin_key(),
+				'uids'    => array_map( array( $names, 'uid' ), self::LOGICALS ),
+				'key_uid' => (bool) $options->state( 'search_key_manual', false ) ? '' : $options->search_key_uid(),
+			);
+		}
+
+		Sites::unschedule_actions();
 
 		foreach ( self::OPTION_NAMES as $name ) {
 			delete_option( $name );
 		}
+		delete_transient( CircuitBreaker::TRANSIENT );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- one-off uninstall sweep.
 		$names = $wpdb->get_col(
@@ -68,7 +106,7 @@ final class Uninstaller {
 			delete_option( (string) $name );
 		}
 
-		Sites::unschedule_actions();
+		return $plan;
 	}
 
 	/**
@@ -92,37 +130,39 @@ final class Uninstaller {
 	}
 
 	/**
-	 * Opt-in: delete this site's indexes and the plugin-created search key. Errors are never reported:
-	 * they may echo a key, and the host may be gone.
+	 * Deletes the indexes and plugin-created search keys of the sites that opted in. Only this site's own index
+	 * uids and the stored key uid are used. After a transport failure (timeout, refused connection) every further
+	 * call to that host is skipped. Errors are never reported: they may echo a key, and the host may be gone.
 	 *
-	 * @param Options $options Site options.
+	 * @param list<array{host: string, key: string, uids: list<string>, key_uid: string}> $plans Captured per site.
 	 */
-	private static function delete_remote_data( Options $options ): void {
-		if ( ! $options->delete_on_uninstall() || ! $options->is_configured() ) {
-			return;
-		}
+	private static function delete_remote_data( array $plans ): void {
+		$unreachable = array();
+		$user_agent  = 'Meilisearch-WordPress/uninstall WordPress/' . get_bloginfo( 'version' );
 
-		$client = new Client( new WpTransport(), $options->host(), $options->admin_key(), 'Meilisearch-WordPress/uninstall WordPress/' . get_bloginfo( 'version' ) );
-		$names  = new IndexNames( $options );
-
-		foreach ( self::LOGICALS as $logical ) {
-			$uid = $names->uid( $logical );
-			try {
-				$client->delete_index( $uid );
-			} catch ( \Throwable $error ) {
-				// Best effort: the host may be gone (spec § 11.5).
-				unset( $error );
+		foreach ( $plans as $plan ) {
+			$client = new Client( new WpTransport(), $plan['host'], $plan['key'], $user_agent );
+			$calls  = array();
+			foreach ( $plan['uids'] as $uid ) {
+				$calls[] = static fn() => $client->delete_index( $uid );
 			}
-		}
-
-		$key_uid = $options->search_key_uid();
-		if ( '' !== $key_uid && ! (bool) $options->state( 'search_key_manual', false ) ) {
-			try {
-				$client->delete_key( $key_uid );
-			} catch ( \Throwable $error ) {
-				// Best effort.
-				unset( $error );
+			if ( '' !== $plan['key_uid'] ) {
+				$calls[] = static fn() => $client->delete_key( $plan['key_uid'] );
 			}
-		}
+
+			foreach ( $calls as $call ) {
+				if ( isset( $unreachable[ $plan['host'] ] ) ) {
+					break;
+				}
+				try {
+					$call();
+				} catch ( ApiError $error ) {
+					// Best effort (spec § 11.5).
+					if ( 'transport_error' === $error->error_code ) {
+						$unreachable[ $plan['host'] ] = true;
+					}
+				}
+			}
+		}//end foreach
 	}
 }

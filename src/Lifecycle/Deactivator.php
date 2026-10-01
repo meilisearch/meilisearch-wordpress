@@ -23,7 +23,7 @@ final class Deactivator {
 	 */
 	public static function deactivate( bool $network_wide = false ): void {
 		if ( $network_wide && is_multisite() ) {
-			Sites::for_each( array( Sites::class, 'unschedule_actions' ) );
+			Sites::for_each( array( Sites::class, 'unschedule_actions' ), get_current_network_id() );
 			return;
 		}
 		Sites::unschedule_actions();

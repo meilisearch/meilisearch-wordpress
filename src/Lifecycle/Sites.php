@@ -23,9 +23,13 @@ final class Sites {
 	/**
 	 * Runs $callback once for every site (all networks), switched to that site. Single site: runs it once.
 	 *
-	 * @param callable $callback Called with no argument while switched to each site.
+	 * The runtime object cache is flushed after every batch: each switch_to_blog() plus get_option() loads that
+	 * site's options into it, which would otherwise grow with the number of sites.
+	 *
+	 * @param callable $callback   Called with no argument while switched to each site.
+	 * @param int|null $network_id Only visit the sites of this network; null visits every network.
 	 */
-	public static function for_each( callable $callback ): void {
+	public static function for_each( callable $callback, ?int $network_id = null ): void {
 		if ( ! is_multisite() ) {
 			$callback();
 			return;
@@ -34,16 +38,18 @@ final class Sites {
 		$offset = 0;
 		$count  = 0;
 		do {
-			$ids = get_sites(
-				array(
-					'fields'                 => 'ids',
-					'number'                 => self::BATCH,
-					'offset'                 => $offset,
-					'orderby'                => 'id',
-					'order'                  => 'ASC',
-					'update_site_meta_cache' => false,
-				)
+			$query = array(
+				'fields'                 => 'ids',
+				'number'                 => self::BATCH,
+				'offset'                 => $offset,
+				'orderby'                => 'id',
+				'order'                  => 'ASC',
+				'update_site_meta_cache' => false,
 			);
+			if ( null !== $network_id ) {
+				$query['network_id'] = $network_id;
+			}
+			$ids = get_sites( $query );
 			foreach ( $ids as $id ) {
 				switch_to_blog( (int) $id );
 				try {
@@ -52,9 +58,21 @@ final class Sites {
 					restore_current_blog();
 				}
 			}
+			self::flush_runtime_cache();
 			$offset += self::BATCH;
 			$count   = count( $ids );
 		} while ( self::BATCH === $count );
+	}
+
+	/**
+	 * Frees the per-site data accumulated in the object cache.
+	 */
+	private static function flush_runtime_cache(): void {
+		if ( function_exists( 'wp_cache_flush_runtime' ) ) {
+			wp_cache_flush_runtime();
+			return;
+		}
+		wp_cache_flush();
 	}
 
 	/**

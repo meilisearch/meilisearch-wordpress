@@ -203,4 +203,29 @@ final class UninstallTest extends TestCase {
 		$this->restore_options();
 		$data['client']->delete_key( $data['key_uid'] );
 	}
+
+	public function test_transport_failure_stops_remote_calls_and_local_data_is_already_gone(): void {
+		$this->install_data( true );
+		$attempts    = 0;
+		$local_gone  = true;
+		$host_filter = function ( $pre, $args, $url ) use ( &$attempts, &$local_gone ) {
+			unset( $args );
+			if ( str_starts_with( (string) $url, self::test_host() ) ) {
+				++$attempts;
+				$local_gone = $local_gone && false === get_option( Options::CONNECTION, false ) && false === get_option( Options::STATE, false );
+				return new \WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' );
+			}
+			return $pre;
+		};
+		add_filter( 'pre_http_request', $host_filter, 10, 3 );
+		try {
+			Uninstaller::run();
+		} finally {
+			remove_filter( 'pre_http_request', $host_filter, 10 );
+		}
+
+		self::assertSame( 1, $attempts, 'Only the first call may reach an unreachable host.' );
+		self::assertTrue( $local_gone, 'Local options must be removed before any remote call.' );
+		$this->assert_local_data_removed();
+	}
 }

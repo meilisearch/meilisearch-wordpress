@@ -6,6 +6,9 @@ namespace Meilisearch\WordPress\Tests\Integration;
 use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Api\WpTransport;
 use Meilisearch\WordPress\Indexing\ContentDocumentBuilder;
+use Meilisearch\WordPress\Lifecycle\Deactivator;
+use Meilisearch\WordPress\Lifecycle\Sites;
+use Meilisearch\WordPress\Lifecycle\Uninstaller;
 use Meilisearch\WordPress\Indexing\ContentSchema;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\IndexManager;
@@ -178,5 +181,71 @@ final class MultisiteTest extends TestCase {
 		}
 		self::assertContains( get_main_site_id(), $visited );
 		self::assertSame( get_main_site_id(), get_current_blog_id() );
+	}
+
+	public function test_for_each_flushes_the_runtime_cache_after_each_batch(): void {
+		wp_cache_set( 'probe', 'x', 'meilisearch_test' );
+
+		Sites::for_each( static function (): void {} );
+
+		self::assertFalse( wp_cache_get( 'probe', 'meilisearch_test' ) );
+	}
+
+	public function test_network_deactivation_queries_only_the_current_network(): void {
+		$seen   = array();
+		$filter = static function ( $pre, $query ) use ( &$seen ) {
+			$seen[] = $query->query_vars['network_id'] ?? null;
+			return $pre;
+		};
+		add_filter( 'sites_pre_query', $filter, 10, 2 );
+		try {
+			Deactivator::deactivate( true );
+		} finally {
+			remove_filter( 'sites_pre_query', $filter, 10 );
+		}
+
+		self::assertNotSame( array(), $seen );
+		self::assertSame( array( get_current_network_id() ), array_unique( $seen ) );
+	}
+
+	public function test_uninstall_contacts_an_unreachable_host_only_once_across_sites(): void {
+		$site_id  = self::factory()->blog->create();
+		$host     = self::test_host();
+		$saved    = array();
+		$settings = array_merge( (array) get_option( Options::CONNECTION, array() ), array( 'delete_on_uninstall' => true ) );
+		foreach ( array( Options::CONNECTION, Options::ADMIN_KEY, Options::CONTENT ) as $name ) {
+			$saved[ $name ] = get_option( $name );
+		}
+		update_option( Options::CONNECTION, $settings );
+		switch_to_blog( $site_id );
+		try {
+			update_option( Options::CONNECTION, array_merge( $settings, array( 'prefix' => $settings['prefix'] . '_two' ) ) );
+			update_option( Options::ADMIN_KEY, self::test_key() );
+		} finally {
+			restore_current_blog();
+		}
+
+		$attempts = 0;
+		$filter   = static function ( $pre, $args, $url ) use ( &$attempts, $host ) {
+			unset( $args );
+			if ( str_starts_with( (string) $url, $host ) ) {
+				++$attempts;
+				return new \WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' );
+			}
+			return $pre;
+		};
+		add_filter( 'pre_http_request', $filter, 10, 3 );
+		try {
+			Uninstaller::run();
+		} finally {
+			remove_filter( 'pre_http_request', $filter, 10 );
+			foreach ( $saved as $name => $value ) {
+				if ( false !== $value ) {
+					update_option( $name, $value );
+				}
+			}
+		}
+
+		self::assertSame( 1, $attempts );
 	}
 }

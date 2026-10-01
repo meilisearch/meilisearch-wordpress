@@ -30,10 +30,10 @@ final class SiteSeeder implements Registrable {
 	/**
 	 * Seeds a freshly created site when the plugin is network-active.
 	 *
-	 * @param \WP_Site $site New site.
+	 * @param mixed $site New site (a WP_Site).
 	 */
-	public function seed_new_site( \WP_Site $site ): void {
-		if ( ! self::is_network_active() ) {
+	public function seed_new_site( mixed $site ): void {
+		if ( ! $site instanceof \WP_Site || ! self::is_network_active() ) {
 			return;
 		}
 		switch_to_blog( (int) $site->blog_id );
