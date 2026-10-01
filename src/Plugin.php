@@ -128,9 +128,12 @@ final class Plugin {
 
 		// Tasks 6-7 (content), Task 20 (products) — indexing model. $builders is consumed from Task 11 on, $product_rule is replaced by Task 20.
 		$content_docs = new Indexing\ContentDocumentBuilder( $options );
+		$schemas      = array( 'content' => new Indexing\ContentSchema( $options ) );
 		$builders     = array( 'content' => $content_docs );
 		$product_rule = null;
 		$indexability = new Indexing\Indexability( $options, $product_rule );
+		$settings     = new Indexing\SettingsBuilder( $schemas );
 		$this->add( 'indexability', $indexability );
+		$this->add( 'settings_builder', $settings );
 	}
 }

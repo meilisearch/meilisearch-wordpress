@@ -11,6 +11,7 @@ namespace Meilisearch\WordPress\Tests\Unit;
 
 use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Indexing\Indexability;
+use Meilisearch\WordPress\Indexing\SettingsBuilder;
 use Meilisearch\WordPress\Plugin;
 use Meilisearch\WordPress\Registrable;
 use Meilisearch\WordPress\Settings\IndexNames;
@@ -74,6 +75,15 @@ final class PluginTest extends TestCase {
 		Plugin::boot();
 
 		$this->assertInstanceOf( Indexability::class, Plugin::instance()->get( 'indexability' ) );
+	}
+
+	public function test_settings_builder_service_is_built_with_the_content_schema(): void {
+		Plugin::boot();
+
+		$builder = Plugin::instance()->get( 'settings_builder' );
+		$this->assertInstanceOf( SettingsBuilder::class, $builder );
+		$this->assertTrue( $builder->has( 'content' ) );
+		$this->assertFalse( $builder->has( 'products' ) );
 	}
 
 	public function test_registrable_services_are_registered_once(): void {
