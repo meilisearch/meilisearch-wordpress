@@ -138,10 +138,11 @@ final class ProductQueryTranslatorTest extends TestCase {
 	/**
 	 * @dataProvider orderings
 	 */
-	public function test_catalog_ordering_maps_to_sort( $orderby, string $order, array $sort ): void {
+	public function test_catalog_ordering_maps_to_sort( $orderby, string $order, $sort, string $wc_query = '' ): void {
 		$vars   = array(
-			'orderby' => $orderby,
-			'order'   => $order,
+			'orderby'  => $orderby,
+			'order'    => $order,
+			'wc_query' => $wc_query,
 		);
 		$result = $this->translator()->constraints( $this->query( $vars ) );
 
@@ -149,22 +150,27 @@ final class ProductQueryTranslatorTest extends TestCase {
 	}
 
 	public function orderings(): array {
+		$wc = 'product_query';
 		return array(
-			'default'        => array( '', '', array() ),
-			'relevance'      => array( 'relevance', 'DESC', array() ),
-			'menu order'     => array( 'menu_order title', 'ASC', array() ),
-			'empty array'    => array( array(), '', array() ),
-			'price asc'      => array( 'price', 'ASC', array( 'price:asc' ) ),
-			'price desc'     => array( 'price', 'DESC', array( 'price:desc' ) ),
-			'raw price-desc' => array( 'price-desc', '', array( 'price:desc' ) ),
-			'popularity'     => array( 'popularity', 'DESC', array( 'total_sales:desc' ) ),
-			'rating'         => array( 'rating', 'ASC', array( 'rating_average:desc' ) ),
-			'date (WC)'      => array( 'date ID', 'DESC', array( 'date:desc' ) ),
-			'date asc'       => array( 'date', 'ASC', array( 'date:asc' ) ),
-			'title'          => array( 'title', 'ASC', array( 'title:asc' ) ),
-			'title desc'     => array( 'title', 'DESC', array( 'title:desc' ) ),
-			'title WP order' => array( 'title', '', array( 'title:desc' ) ),
-			'date WP order'  => array( 'date', '', array( 'date:desc' ) ),
+			'default'          => array( '', '', array() ),
+			'relevance'        => array( 'relevance', 'DESC', array() ),
+			'menu order'       => array( 'menu_order title', 'ASC', array(), $wc ),
+			'empty array'      => array( array(), '', array() ),
+			'price asc'        => array( 'price', 'ASC', array( 'price:asc' ), $wc ),
+			'price desc'       => array( 'price', 'DESC', array( 'price:desc' ), $wc ),
+			'popularity'       => array( 'popularity', 'DESC', array( 'total_sales:desc' ), $wc ),
+			'rating'           => array( 'rating', 'ASC', array( 'rating_average:desc' ), $wc ),
+			'date (WC)'        => array( 'date ID', 'DESC', array( 'date:desc' ), $wc ),
+			'date asc'         => array( 'date', 'ASC', array( 'date:asc' ) ),
+			'title'            => array( 'title', 'ASC', array( 'title:asc' ) ),
+			'title desc'       => array( 'title', 'DESC', array( 'title:desc' ) ),
+			'title WP order'   => array( 'title', '', array( 'title:desc' ) ),
+			'date WP order'    => array( 'date', '', array( 'date:desc' ) ),
+			'no wc price'      => array( 'price', 'ASC', 'null' ),
+			'no wc price-desc' => array( 'price-desc', '', 'null' ),
+			'no wc popularity' => array( 'popularity', 'DESC', 'null' ),
+			'no wc rating'     => array( 'rating', 'DESC', 'null' ),
+			'no wc menu'       => array( 'menu_order title', 'ASC', 'null' ),
 		);
 	}
 

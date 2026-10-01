@@ -109,25 +109,24 @@ final class ProductQueryTranslator implements ProductTranslator {
 		$orderby = strtolower( trim( (string) $orderby ) );
 		$order   = strtoupper( trim( (string) $query->get( 'order' ) ) );
 
-		// Raw request form (`price-desc`) when WooCommerce did not normalize the query.
-		if ( 1 === preg_match( '/^(price|date|title)-(asc|desc)$/', $orderby, $matches ) ) {
-			$orderby = $matches[1];
-			$order   = strtoupper( $matches[2] );
-		}
+		// Catalog orderings (price, popularity, rating, menu_order) exist only inside WooCommerce's product query;
+		// anywhere else WP_Query cannot parse them and MySQL orders by date, which only a fallback reproduces.
+		$wc = 'product_query' === $query->get( 'wc_query' );
 
 		switch ( $orderby ) {
 			case '':
 			case 'relevance':
 			case 'none':
+				return array();
 			case 'menu_order':
 			case 'menu_order title':
-				return array();
+				return $wc ? array() : null;
 			case 'price':
-				return array( 'DESC' === $order ? 'price:desc' : 'price:asc' );
+				return $wc ? array( 'DESC' === $order ? 'price:desc' : 'price:asc' ) : null;
 			case 'popularity':
-				return array( 'total_sales:desc' );
+				return $wc ? array( 'total_sales:desc' ) : null;
 			case 'rating':
-				return array( 'rating_average:desc' );
+				return $wc ? array( 'rating_average:desc' ) : null;
 			case 'date':
 			case 'date id':
 				return array( 'ASC' === $order ? 'date:asc' : 'date:desc' );
