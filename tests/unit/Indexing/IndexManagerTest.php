@@ -333,6 +333,7 @@ final class IndexManagerTest extends TestCase {
 		$this->assertSame( 'new-key', $this->options->search_key() );
 		$this->assertSame( 'new-uid', $this->options->search_key_uid() );
 		$this->assertFalse( $this->options->state( 'search_key_manual', false ) );
+		$this->assertTrue( $this->options->search_key_is_verified(), 'A plugin-created key is recorded as servable.' );
 	}
 
 	public function test_rotate_search_key_ignores_missing_previous_key(): void {

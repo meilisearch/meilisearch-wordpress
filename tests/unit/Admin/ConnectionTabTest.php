@@ -5,6 +5,7 @@ namespace Meilisearch\WordPress\Tests\Unit\Admin;
 
 use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Admin\ConnectionTab;
+use Meilisearch\WordPress\Frontend\Autocomplete;
 use Meilisearch\WordPress\Admin\Menu;
 use Meilisearch\WordPress\Admin\Notices;
 use Meilisearch\WordPress\Api\ClientFactory;
@@ -235,16 +236,53 @@ final class ConnectionTabTest extends TestCase {
 		$this->assertSame( '', $out['search_key_uid'], 'A pasted key was not created by the plugin and must never be deleted by it.' );
 	}
 
-	public function test_sanitize_connection_keeps_programmatic_search_key_writes(): void {
-		$full = array(
-			'host'                => 'https://stored.example',
-			'prefix'              => '',
-			'search_key'          => 'rotated-key',
-			'search_key_uid'      => 'rotated-uid',
-			'delete_on_uninstall' => true,
+	public function test_sanitize_connection_ignores_crafted_search_key_uid_input_in_created_key_mode(): void {
+		$out = $this->tab()->sanitize_connection(
+			array(
+				'search_key'     => self::SECRET,
+				'search_key_uid' => 'crafted-uid',
+			)
 		);
 
-		$this->assertSame( $full, $this->tab()->sanitize_connection( $full ) );
+		$this->assertSame( 'stored-search-key', $out['search_key'] );
+		$this->assertSame( 'stored-uid', $out['search_key_uid'] );
+	}
+
+	public function test_crafted_input_cannot_change_the_key_even_in_manual_mode_with_a_uid(): void {
+		$this->option_store[ Options::STATE ] = array( 'search_key_manual' => true );
+
+		$out = $this->tab()->sanitize_connection(
+			array(
+				'search_key'     => 'pasted',
+				'search_key_uid' => 'crafted-uid',
+			)
+		);
+
+		$this->assertSame( 'pasted', $out['search_key'] );
+		$this->assertSame( '', $out['search_key_uid'], 'The uid only changes through save_search_key().' );
+	}
+
+	public function test_save_search_key_still_writes_both_fields(): void {
+		$tab = $this->tab();
+		Functions\when( 'update_option' )->alias(
+			function ( string $name, $value ) use ( $tab ) {
+				$this->option_store[ $name ] = $tab->sanitize_connection( $value );
+				return true;
+			}
+		);
+
+		( new Options() )->save_search_key( 'rotated-key', 'rotated-uid' );
+
+		$this->assertSame( 'rotated-key', $this->option_store[ Options::CONNECTION ]['search_key'] );
+		$this->assertSame( 'rotated-uid', $this->option_store[ Options::CONNECTION ]['search_key_uid'] );
+		$this->assertFalse( Options::is_internal_key_write(), 'The internal write flag is reset.' );
+		$out = $tab->sanitize_connection(
+			array(
+				'search_key'     => 'x',
+				'search_key_uid' => 'y',
+			)
+		);
+		$this->assertSame( 'rotated-key', $out['search_key'] );
 	}
 
 	public function test_sanitize_connection_non_array_returns_stored_value(): void {
@@ -471,6 +509,106 @@ final class ConnectionTabTest extends TestCase {
 
 		$this->assertSame( 'error', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
 		$this->assertSame( 'GET /keys/stored-search-key', 'GET ' . substr( $this->transport->requests()[3]['url'], strlen( 'https://stored.example' ) ) );
+	}
+
+	private function autocomplete_enqueues(): bool {
+		$this->option_store[ Options::SEARCH ] = array( 'autocomplete' => true );
+		Functions\when( 'is_admin' )->justReturn( false );
+		$options = new Options();
+
+		return ( new Autocomplete( $options, new IndexNames( $options ) ) )->should_enqueue();
+	}
+
+	/**
+	 * Runs after_save() in manual mode with a freshly pasted key (the previous key was verified).
+	 *
+	 * @param list<Response> $responses Queued responses after the version probe.
+	 */
+	private function manual_after_save( array $responses, bool $connect_fails = false ): void {
+		$_GET['settings-updated'] = 'true';
+		$_GET['tab']              = 'connection';
+		$this->option_store[ Options::CONNECTION ]['prefix']     = 'wp_unit';
+		$this->option_store[ Options::CONNECTION ]['search_key'] = 'newly-pasted-key';
+		$this->option_store[ Options::STATE ]                    = array(
+			'fingerprint'         => md5( 'https://stored.example|' . self::SECRET . '|wp_unit' ),
+			'search_key_manual'   => true,
+			'search_key_verified' => Options::key_fingerprint( 'previous-key' ),
+		);
+		if ( $connect_fails ) {
+			$this->transport->queue( new Response( 500, array( 'code' => 'internal' ), '' ) );
+		} else {
+			$this->transport
+				->queue( new Response( 200, array( 'pkgVersion' => '1.53.1' ), '' ) )
+				->queue( new Response( 200, array( 'uid' => 'wp_unit_content' ), '' ) )
+				->queue(
+					new Response(
+						200,
+						array(
+							'searchableAttributes' => array( '*' ),
+							'filterableAttributes' => array( 'id', 'post_type', 'author_id', 'date', 'modified' ),
+							'sortableAttributes'   => array( 'id', 'date', 'modified', 'title' ),
+						),
+						''
+					)
+				);
+		}
+		foreach ( $responses as $response ) {
+			$this->transport->queue( $response );
+		}
+
+		$this->tab()->after_save();
+	}
+
+	public function test_changed_manual_key_is_not_served_when_connect_fails(): void {
+		$this->manual_after_save( array(), true );
+
+		$this->assertSame( 'error', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
+		$this->assertFalse( $this->autocomplete_enqueues() );
+	}
+
+	public function test_changed_manual_key_is_served_once_verified(): void {
+		$this->manual_after_save(
+			array(
+				new Response(
+					200,
+					array(
+						'actions' => array( 'search' ),
+						'indexes' => array( 'wp_unit_content' ),
+					),
+					''
+				),
+			)
+		);
+
+		$this->assertSame( 'success', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
+		$this->assertSame( Options::key_fingerprint( 'newly-pasted-key' ), ( new Options() )->state( 'search_key_verified' ) );
+		$this->assertTrue( $this->autocomplete_enqueues() );
+	}
+
+	public function test_changed_manual_key_that_cannot_be_verified_is_served_with_a_warning(): void {
+		$this->manual_after_save( array( new Response( 500, array( 'code' => 'internal' ), '' ) ) );
+
+		$this->assertSame( 'warning', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
+		$this->assertTrue( $this->autocomplete_enqueues() );
+	}
+
+	public function test_changed_manual_key_that_is_too_broad_is_not_served(): void {
+		$this->manual_after_save(
+			array(
+				new Response(
+					200,
+					array(
+						'actions' => array( '*' ),
+						'indexes' => array( '*' ),
+					),
+					''
+				),
+			)
+		);
+
+		$this->assertSame( 'error', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
+		$this->assertNull( ( new Options() )->state( 'search_key_verified' ) );
+		$this->assertFalse( $this->autocomplete_enqueues() );
 	}
 
 	/**

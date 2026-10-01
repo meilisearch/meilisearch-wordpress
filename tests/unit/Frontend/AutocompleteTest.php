@@ -80,12 +80,19 @@ final class AutocompleteTest extends TestCase {
 		self::assertSame( array(), $this->calls );
 	}
 
-	public function test_not_enqueued_when_a_manual_search_key_was_found_too_broad(): void {
+	public function test_manual_key_is_served_only_when_its_hash_was_recorded(): void {
 		$options                   = self::OPTIONS;
-		$options[ Options::STATE ] = array( 'search_key_unsafe' => true );
+		$options[ Options::STATE ] = array( 'search_key_manual' => true );
 		$this->stub_options( $options );
+		self::assertFalse( $this->autocomplete()->should_enqueue(), 'No verification recorded.' );
 
-		self::assertFalse( $this->autocomplete()->should_enqueue() );
+		$options[ Options::STATE ]['search_key_verified'] = Options::key_fingerprint( 'another-key' );
+		$this->stub_options( $options );
+		self::assertFalse( $this->autocomplete()->should_enqueue(), 'Recorded for a different key.' );
+
+		$options[ Options::STATE ]['search_key_verified'] = Options::key_fingerprint( 'search-key-value' );
+		$this->stub_options( $options );
+		self::assertTrue( $this->autocomplete()->should_enqueue() );
 	}
 
 	public function disabled_cases(): array {

@@ -213,6 +213,8 @@ final class IndexManager {
 
 		$previous = $this->options->search_key_uid();
 		$this->options->save_search_key( $new_key, $new_uid );
+		$this->options->mark_search_key_verified();
+		// Created by the plugin with the `search` action only.
 		$this->options->set_state( 'search_key_manual', false );
 
 		if ( '' !== $previous && $new_uid !== $previous ) {

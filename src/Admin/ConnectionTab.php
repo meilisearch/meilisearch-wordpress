@@ -126,9 +126,9 @@ final class ConnectionTab implements Tab, Registrable {
 	 *
 	 * A key missing from the input keeps its stored value, except the
 	 * delete_on_uninstall checkbox (missing = unchecked). `search_key` is taken
-	 * from the form only in manual mode; a full programmatic write
-	 * (Options::save_search_key(), recognizable by its `search_key_uid` key)
-	 * keeps both key fields. Idempotent.
+	 * from the form only in manual mode (and then needs a successful verification
+	 * before it is served); both key fields are taken from the input only during
+	 * Options::save_search_key(). Idempotent.
 	 *
 	 * @param mixed $input Submitted value.
 	 * @return array{host: string, prefix: string, search_key: string, search_key_uid: string, delete_on_uninstall: bool}
@@ -163,9 +163,9 @@ final class ConnectionTab implements Tab, Registrable {
 
 		$out['delete_on_uninstall'] = ! empty( $input['delete_on_uninstall'] );
 
-		if ( array_key_exists( 'search_key_uid', $input ) ) {
+		if ( Options::is_internal_key_write() ) {
 			$out['search_key']     = is_scalar( $input['search_key'] ?? '' ) ? sanitize_text_field( (string) ( $input['search_key'] ?? '' ) ) : '';
-			$out['search_key_uid'] = is_scalar( $input['search_key_uid'] ) ? sanitize_text_field( (string) $input['search_key_uid'] ) : '';
+			$out['search_key_uid'] = is_scalar( $input['search_key_uid'] ?? '' ) ? sanitize_text_field( (string) ( $input['search_key_uid'] ?? '' ) ) : '';
 		} elseif ( array_key_exists( 'search_key', $input ) && is_scalar( $input['search_key'] ) && $this->options->state( 'search_key_manual', false ) ) {
 			$key = sanitize_text_field( (string) $input['search_key'] );
 			if ( $key !== $out['search_key'] ) {
@@ -246,8 +246,6 @@ final class ConnectionTab implements Tab, Registrable {
 			)
 		);
 
-		$this->options->set_state( 'search_key_unsafe', false );
-
 		/* translators: %s: Meilisearch version. */
 		$message = sprintf( __( 'Connected to Meilisearch %s. Indexes are ready.', 'meilisearch' ), $result['version'] );
 		$type    = 'success';
@@ -260,7 +258,12 @@ final class ConnectionTab implements Tab, Registrable {
 				$message .= ' ' . __( 'Your admin key cannot create API keys: paste a search-only key below to enable autocomplete.', 'meilisearch' );
 			} else {
 				$verified = $this->indexes->verify_search_key( $search_key );
-				$this->options->set_state( 'search_key_unsafe', false === $verified );
+				if ( false === $verified ) {
+					$this->options->clear_search_key_verified();
+				} else {
+					$this->options->mark_search_key_verified();
+					// True, or null (unverifiable: served with the warning below).
+				}
 				if ( false === $verified ) {
 					$type     = 'error';
 					$message .= ' ' . __( 'The search key has more permissions than "search" on this site\'s indexes. Replace it with a search-only key: it is visible to visitors.', 'meilisearch' );
@@ -269,7 +272,7 @@ final class ConnectionTab implements Tab, Registrable {
 					$message .= ' ' . __( 'The search key could not be verified. Make sure it only allows the "search" action.', 'meilisearch' );
 				}
 			}
-		}
+		}//end if
 
 		$this->store_result( $type, $message );
 	}

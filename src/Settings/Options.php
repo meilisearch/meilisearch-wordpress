@@ -237,6 +237,23 @@ final class Options {
 	}
 
 	/**
+	 * Set while save_search_key() writes, so the connection sanitizer can tell a programmatic write
+	 * from a form submission.
+	 *
+	 * @var bool
+	 */
+	private static bool $internal_key_write = false;
+
+	/**
+	 * Whether a save_search_key() write is in progress.
+	 *
+	 * @return bool
+	 */
+	public static function is_internal_key_write(): bool {
+		return self::$internal_key_write;
+	}
+
+	/**
 	 * Stores the browser search key.
 	 *
 	 * @param string $key Key value.
@@ -246,7 +263,46 @@ final class Options {
 		$connection                   = $this->group( self::CONNECTION );
 		$connection['search_key']     = $key;
 		$connection['search_key_uid'] = $uid;
-		update_option( self::CONNECTION, $connection, false );
+		self::$internal_key_write     = true;
+		try {
+			update_option( self::CONNECTION, $connection, false );
+		} finally {
+			self::$internal_key_write = false;
+		}
+	}
+
+	/**
+	 * Hash recorded in the `search_key_verified` state for a key that may be served to browsers.
+	 *
+	 * @param string $key Key value.
+	 * @return string
+	 */
+	public static function key_fingerprint( string $key ): string {
+		return hash( 'sha256', $key );
+	}
+
+	/**
+	 * Records that the current search key may be served to browsers (created search-only, or verified).
+	 */
+	public function mark_search_key_verified(): void {
+		$this->set_state( 'search_key_verified', self::key_fingerprint( $this->search_key() ) );
+	}
+
+	/**
+	 * Forgets any verification (the key was found too broad).
+	 */
+	public function clear_search_key_verified(): void {
+		$this->set_state( 'search_key_verified', null );
+	}
+
+	/**
+	 * Whether the current search key is the one last recorded as servable.
+	 *
+	 * @return bool
+	 */
+	public function search_key_is_verified(): bool {
+		$verified = $this->state( 'search_key_verified' );
+		return is_string( $verified ) && '' !== $verified && hash_equals( $verified, self::key_fingerprint( $this->search_key() ) );
 	}
 
 	/**
