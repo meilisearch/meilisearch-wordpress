@@ -54,7 +54,7 @@ For large sites, use WP-CLI instead (see below).
 
 After the first reindex, an admin notice offers to **replace site search**; you can also enable it on **Meilisearch > Search**. From then on, every search results page of your theme is answered by Meilisearch, with the same templates and pagination.
 
-The WordPress database answers instead of Meilisearch when the query cannot be translated, when the current user can read private posts (the index only holds public content), and when the circuit breaker is open: if Meilisearch is slow or unavailable, search falls back within 2 seconds and keeps using the database for 60 seconds.
+The WordPress database answers instead of Meilisearch when the query cannot be translated, when it includes a post type that is not indexed (the Search tab and Site Health list them), when the current user can read private posts (the index only holds public content), until a first full reindex has filled the index (after connecting, or after changing the host, admin key or index prefix), and when the circuit breaker is open: if Meilisearch is slow or unavailable, search falls back within 2 seconds and keeps using the database for 60 seconds.
 
 <Warning>
 Only one plugin can answer the search query. Disable search replacement in Relevanssi, SearchWP, ElasticPress or Jetpack Search before enabling it here.
@@ -96,10 +96,10 @@ Each site has its own connection settings and index prefix. On multisite, only s
 
 ## Troubleshooting
 
-- **Tools > Site Health** reports the connection and version, document count drift, missing index settings, the sync queue backlog and failed jobs, the scope of the browser search key, and pending reindexes. `wp meilisearch check` prints the same checks.
+- **Tools > Site Health** reports the connection and version, document count drift, missing index settings, the sync queue backlog and failed jobs, the scope of the browser search key, post types that site searches include but no index holds, and pending reindexes. `wp meilisearch check` prints the same checks.
 - **Changes do not appear in search**: sync jobs run through Action Scheduler, which relies on WP-Cron. Make sure WP-Cron runs (or call `wp-cron.php` from a server cron), and check **Tools > Scheduled Actions**, group `meilisearch`.
 - **Search results come from the database**: check that **Replace site search** is enabled, and look for a connection error in Site Health; after an error the plugin waits 60 seconds before using Meilisearch again.
-- **Autocomplete does not show**: it needs a search key. Save the Connection tab again, or paste a search-only key if your admin key cannot create keys.
+- **Autocomplete does not show**: it needs a verified search key. Save the Connection tab again, or paste a search-only key if your admin key cannot create keys. A pasted key is never served when it is the admin key, a key Meilisearch does not know (such as the master key) or a key that can do more than search.
 
 ## Developer hooks
 
