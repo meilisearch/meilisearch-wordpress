@@ -11,6 +11,7 @@ dist="$build/meilisearch"
 
 rm -rf "$build"
 mkdir -p "$stage"
+trap 'rm -rf "$stage"' EXIT
 
 # Tracked files plus new files that are not git-ignored (working-tree content). Ignored paths such as
 # vendor/, node_modules/ and build/ are never copied; CI and release checkouts contain no stray files.
