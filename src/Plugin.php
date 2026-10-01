@@ -116,6 +116,14 @@ final class Plugin {
 	 * Constructs every service.
 	 */
 	private function build(): void {
-		// Services are added here task by task; see "Final composition root" in the plan.
+		// Task 5 — settings.
+		$options = new Settings\Options();
+		$names   = new Settings\IndexNames( $options );
+		$this->add( 'options', $options );
+		$this->add( 'names', $names );
+
+		// Task 5 — API client factory (needs Options).
+		$clients = new Api\ClientFactory( $options, new Api\WpTransport() );
+		$this->add( 'clients', $clients );
 	}
 }

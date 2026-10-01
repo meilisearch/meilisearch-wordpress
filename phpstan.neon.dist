@@ -13,8 +13,3 @@ parameters:
 	scanDirectories:
 		- vendor/woocommerce/action-scheduler/classes
 	treatPhpDocTypesAsCertain: false
-	ignoreErrors:
-		# Plugin::add() gets its first caller in Task 5, which removes this entry.
-		-
-			identifier: method.unused
-			path: src/Plugin.php

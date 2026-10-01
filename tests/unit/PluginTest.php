@@ -9,8 +9,11 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Tests\Unit;
 
+use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Plugin;
 use Meilisearch\WordPress\Registrable;
+use Meilisearch\WordPress\Settings\IndexNames;
+use Meilisearch\WordPress\Settings\Options;
 use ReflectionClass;
 use ReflectionMethod;
 
@@ -57,6 +60,15 @@ final class PluginTest extends TestCase {
 		Plugin::instance()->get( 'nope' );
 	}
 
+	public function test_settings_and_api_services_are_built(): void {
+		Plugin::boot();
+		$plugin = Plugin::instance();
+
+		$this->assertInstanceOf( Options::class, $plugin->get( 'options' ) );
+		$this->assertInstanceOf( IndexNames::class, $plugin->get( 'names' ) );
+		$this->assertInstanceOf( ClientFactory::class, $plugin->get( 'clients' ) );
+	}
+
 	public function test_registrable_services_are_registered_once(): void {
 		$spy    = new class() implements Registrable {
 			public int $calls = 0;
@@ -81,6 +93,26 @@ final class PluginTest extends TestCase {
 			],
 			$plugin->services()
 		);
+	}
+
+	public function test_second_boot_does_not_register_services_again(): void {
+		$spy = new class() implements Registrable {
+			public int $calls = 0;
+
+			public function register(): void {
+				++$this->calls;
+			}
+		};
+
+		Plugin::boot();
+		$plugin = Plugin::instance();
+		$this->call_private( $plugin, 'add', 'spy', $spy );
+
+		Plugin::boot();
+
+		$this->assertSame( $plugin, Plugin::instance() );
+		$this->assertSame( 0, $spy->calls );
+		$this->assertSame( $spy, $plugin->get( 'spy' ) );
 	}
 
 	public function test_duplicate_service_id_throws(): void {
