@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Meilisearch\WordPress\Tests\Unit;
 
 use Meilisearch\WordPress\Api\ClientFactory;
+use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Plugin;
 use Meilisearch\WordPress\Registrable;
 use Meilisearch\WordPress\Settings\IndexNames;
@@ -67,6 +68,12 @@ final class PluginTest extends TestCase {
 		$this->assertInstanceOf( Options::class, $plugin->get( 'options' ) );
 		$this->assertInstanceOf( IndexNames::class, $plugin->get( 'names' ) );
 		$this->assertInstanceOf( ClientFactory::class, $plugin->get( 'clients' ) );
+	}
+
+	public function test_indexability_service_is_built(): void {
+		Plugin::boot();
+
+		$this->assertInstanceOf( Indexability::class, Plugin::instance()->get( 'indexability' ) );
 	}
 
 	public function test_registrable_services_are_registered_once(): void {

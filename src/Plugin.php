@@ -125,5 +125,12 @@ final class Plugin {
 		// Task 5 — API client factory (needs Options).
 		$clients = new Api\ClientFactory( $options, new Api\WpTransport() );
 		$this->add( 'clients', $clients );
+
+		// Tasks 6-7 (content), Task 20 (products) — indexing model. $builders is consumed from Task 11 on, $product_rule is replaced by Task 20.
+		$content_docs = new Indexing\ContentDocumentBuilder( $options );
+		$builders     = array( 'content' => $content_docs );
+		$product_rule = null;
+		$indexability = new Indexing\Indexability( $options, $product_rule );
+		$this->add( 'indexability', $indexability );
 	}
 }
