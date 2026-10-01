@@ -116,7 +116,7 @@ final class SyncJob implements Registrable {
 
 	// phpcs:disable Squiz.Commenting.FunctionCommentThrowTag.WrongNumber -- ApiError comes from the client calls.
 	/**
-	 * Upserts indexable posts and deletes the rest, in the live index.
+	 * Deletes the posts that are not indexable, then upserts the rest, in the live index.
 	 * Meilisearch and transport errors propagate as ApiError.
 	 *
 	 * @param string $logical 'content' or 'products'.
@@ -163,11 +163,13 @@ final class SyncJob implements Registrable {
 
 		$client = $this->clients->client();
 		$uid    = $this->names->uid( $logical );
-		if ( array() !== $upserts ) {
-			$client->add_documents( $uid, $upserts );
-		}
+		// Deletes first: an upsert that keeps failing (e.g. a rejected payload) must not keep
+		// unpublished or private content reachable in the index.
 		if ( array() !== $deletes ) {
 			$client->delete_documents( $uid, $deletes );
+		}
+		if ( array() !== $upserts ) {
+			$client->add_documents( $uid, $upserts );
 		}
 
 		return array(

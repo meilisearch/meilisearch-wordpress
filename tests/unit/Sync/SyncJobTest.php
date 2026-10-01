@@ -125,8 +125,11 @@ final class SyncJobTest extends TestCase {
 		);
 		$requests = $this->transport->requests();
 		$this->assertCount( 2, $requests );
-		$this->assertSame( 'POST', $requests[0]['method'] );
-		$this->assertStringContainsString( '/indexes/wp_test_content/documents', $requests[0]['url'] );
+		// Deletes go first, so a persistently failing upsert never holds back a delete.
+		$this->assertStringContainsString( '/indexes/wp_test_content/documents/delete-batch', $requests[0]['url'] );
+		$this->assertSame( array( 99 ), $requests[0]['body'] );
+		$this->assertSame( 'POST', $requests[1]['method'] );
+		$this->assertStringEndsWith( '/indexes/wp_test_content/documents?primaryKey=id', $requests[1]['url'] );
 		$this->assertSame(
 			array(
 				array(
@@ -134,10 +137,37 @@ final class SyncJobTest extends TestCase {
 					'title' => 'Post 10',
 				),
 			),
-			$requests[0]['body']
+			$requests[1]['body']
 		);
-		$this->assertStringContainsString( '/indexes/wp_test_content/documents/delete-batch', $requests[1]['url'] );
-		$this->assertSame( array( 99 ), $requests[1]['body'] );
+	}
+
+	/**
+	 * When the upsert fails on every attempt, the delete was still sent (first) each time.
+	 */
+	public function test_delete_is_sent_before_a_persistently_failing_upsert(): void {
+		$this->transport
+			->queue( self::task_response( 1 ) )
+			->queue( new ApiError( 'Payload too large', 'payload_too_large', 413 ) );
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		try {
+			$this->job()->handle(
+				array(
+					'index'   => 'content',
+					'ids'     => array( 10, 99 ),
+					'attempt' => SyncJob::MAX_ATTEMPTS,
+				)
+			);
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( 'payload_too_large', $e->error_code );
+		}
+
+		$requests = $this->transport->requests();
+		$this->assertCount( 2, $requests );
+		$this->assertStringContainsString( '/documents/delete-batch', $requests[0]['url'] );
+		$this->assertSame( array( 99 ), $requests[0]['body'] );
+		$this->assertStringEndsWith( '/documents?primaryKey=id', $requests[1]['url'] );
 	}
 
 	/**
@@ -226,8 +256,8 @@ final class SyncJobTest extends TestCase {
 			$result
 		);
 		$requests = $this->transport->requests();
-		$this->assertSame( array( 10, 11 ), array_column( $requests[0]['body'], 'id' ) );
-		$this->assertSame( array( 12 ), $requests[1]['body'] );
+		$this->assertSame( array( 12 ), $requests[0]['body'] );
+		$this->assertSame( array( 10, 11 ), array_column( $requests[1]['body'], 'id' ) );
 		$entries = $this->log->all();
 		$this->assertCount( 1, $entries );
 		$this->assertSame( 'sync', $entries[0]['context'] );
@@ -245,7 +275,7 @@ final class SyncJobTest extends TestCase {
 		$result = $this->job()->reconcile( 'content', array( 10, 11 ) );
 
 		$this->assertSame( 1, $result['skipped'] );
-		$this->assertSame( array( 11 ), $this->transport->requests()[1]['body'] );
+		$this->assertSame( array( 11 ), $this->transport->requests()[0]['body'] );
 		$this->assertStringContainsString( 'Post 11', $this->log->all()[0]['message'] );
 	}
 
