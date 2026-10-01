@@ -305,9 +305,9 @@ To keep checkout bursts from flooding the queue, the collector skips product IDs
 
 Handled by `Search\Interceptor` when the main query is a search with `post_type=product`:
 
-- `product_visibility` tax clauses added by `WC_Query` are dropped (hidden products are not indexed), except the `featured` term → `featured = true`.
+- Top-level `product_visibility` clauses added by `WC_Query`: `exclude-from-search` `NOT IN` is dropped (such products are never indexed); `featured` → `featured = true|false`; `outofstock` `NOT IN` → `in_stock = true`; `rated-N` (rating filter) → `rating_average` ranges; `exclude-from-catalog` or anything else → do not intercept. `product_cat` / `product_tag` clauses use the generic taxonomy translation of § 9.2.
 - `orderby`: `price` → `price:asc`, `price-desc` → `price:desc`, `popularity` → `total_sales:desc`, `rating` → `rating_average:desc`, `date` → `date:desc`, `relevance`/default → relevance.
-- Layered nav: `filter_{attr}` (comma-separated term slugs → resolved to term names) with `query_type_{attr}` = `and`/`or`; `min_price` / `max_price` → `price` range. Read from the query's vars / request.
+- Layered nav: `filter_{attr}` (comma-separated term slugs → resolved to term names) with `query_type_{attr}` = `and`/`or`; `min_price` / `max_price` → `price` range (for variable products `price` is the minimum price, so a product matches when its minimum price is in range). Read from the query's vars / request.
 - Any other unrecognised product-query constraint → do not intercept.
 
 Shop and category archives without `s` are not intercepted in v1.
@@ -379,7 +379,7 @@ When enabled, intercepted searches add `attributesToCrop: ["content:30"]`, `attr
 - Attaches to `form[role=search] input[name=s]` and `input[name=s]` (selector filterable via `meilisearch_autocomplete_selector`).
 - On input (debounced 150 ms, ≥ 2 chars): one `POST /multi-search` (non-federated) with two queries — content (`limit` 5) and products (`limit` 5, if enabled) — `attributesToRetrieve` limited to display fields (`id,title,permalink,post_type,thumbnail_url` + `price` for products), `attributesToHighlight: ["title"]` with pre/post tags `\u0002`/`\u0003`.
 - Renders grouped results ("Products", "Posts") as links; DOM built with `createElement`/`textContent`; highlight markers split in JS into `<mark>` elements — no index HTML is ever inserted.
-- Enter submits the original form (theme results page is canonical).
+- Enter with an active option navigates to that result; Enter without one submits the original form (theme results page is canonical).
 - Accessibility: WAI-ARIA combobox pattern (`role=combobox`, `aria-expanded`, `aria-controls`, `aria-activedescendant`), arrow/Escape/Enter keys, `aria-live=polite` result count, visible focus styles, respects `prefers-reduced-motion`. Minimal CSS using `currentColor` so it inherits the theme.
 - Config via `wp_localize_script`: host, scoped key, index UIDs, limits, translated strings.
 - Network failure → dropdown hidden silently; the form keeps working.
