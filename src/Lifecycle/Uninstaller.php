@@ -11,6 +11,7 @@ namespace Meilisearch\WordPress\Lifecycle;
 
 defined( 'ABSPATH' ) || exit;
 
+use Meilisearch\WordPress\Admin\Notices;
 use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\Client;
 use Meilisearch\WordPress\Api\WpTransport;
@@ -52,6 +53,8 @@ final class Uninstaller {
 		if ( is_multisite() ) {
 			self::clean_networks();
 		}
+		// Notice dismissals are per user, shared by every site.
+		delete_metadata( 'user', 0, Notices::DISMISSED_META, '', true );
 		self::delete_remote_data( $plans );
 	}
 

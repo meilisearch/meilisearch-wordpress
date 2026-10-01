@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Tests\Integration;
 
+use Meilisearch\WordPress\Admin\Notices;
 use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\Client;
 use Meilisearch\WordPress\Api\ClientFactory;
@@ -90,6 +91,7 @@ final class UninstallTest extends TestCase {
 		update_option( Options::CONNECTION, array_merge( (array) get_option( Options::CONNECTION, array() ), array( 'delete_on_uninstall' => $delete_on_uninstall ) ) );
 		set_transient( 'meilisearch_uninstall_probe', 'x', 600 );
 		add_option( 'meilisearch_legacy_flag', 'x' );
+		update_user_meta( self::factory()->user->create(), Notices::DISMISSED_META, array( 'conflict' ) );
 		as_schedule_single_action(
 			time() + HOUR_IN_SECONDS,
 			Queue::SYNC_POSTS,
@@ -122,6 +124,7 @@ final class UninstallTest extends TestCase {
 		}
 		self::assertFalse( get_transient( 'meilisearch_uninstall_probe' ) );
 		self::assertFalse( as_has_scheduled_action( Queue::SYNC_POSTS, null, Queue::GROUP ) );
+		self::assertSame( array(), get_users( array( 'meta_key' => Notices::DISMISSED_META ) ), 'Notice dismissals are removed.' ); // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- Test assertion.
 	}
 
 	public function test_uninstall_with_opt_in_removes_local_and_remote_data(): void {

@@ -36,6 +36,21 @@ final class Notices implements Registrable {
 	public const RECENT_WINDOW = 86400;
 
 	/**
+	 * The admin-post action dismissing a notice for the current user.
+	 */
+	public const DISMISS_ACTION = 'meilisearch_dismiss_notice';
+
+	/**
+	 * User meta holding the ids of the notices a user dismissed.
+	 */
+	public const DISMISSED_META = 'meilisearch_dismissed_notices';
+
+	/**
+	 * Notices a user may dismiss. Errors and the reindex notices stay until their cause is fixed.
+	 */
+	public const DISMISSIBLE = array( 'enable_search', 'conflict' );
+
+	/**
 	 * Constructor.
 	 *
 	 * @param Options  $options Plugin options.
@@ -52,6 +67,7 @@ final class Notices implements Registrable {
 		add_action( 'admin_notices', array( $this, 'render' ) );
 		add_action( 'admin_notices', array( $this, 'render_search_notices' ) );
 		add_action( 'admin_post_meilisearch_enable_search', array( $this, 'handle_enable_search' ) );
+		add_action( 'admin_post_' . self::DISMISS_ACTION, array( $this, 'handle_dismiss' ) );
 	}
 
 	/**
@@ -116,21 +132,22 @@ final class Notices implements Registrable {
 		$reindexed = (bool) $this->options->state( 'first_reindex_done', false );
 		$conflict  = $this->conflicting_plugin();
 		if ( null !== $conflict ) {
-			if ( $search['replace'] || $reindexed ) {
+			if ( ( $search['replace'] || $reindexed ) && ! $this->is_dismissed( 'conflict' ) ) {
 				printf(
-					'<div class="notice notice-warning"><p>%s</p></div>',
+					'<div class="notice notice-warning"><p>%1$s</p>%2$s</div>',
 					esc_html(
 						sprintf(
 							/* translators: %s: plugin file of the other search plugin, e.g. relevanssi/relevanssi.php. */
 							__( 'Another search plugin is active (%s). Two plugins replacing the site search at the same time give unpredictable results: deactivate one of them before using Meilisearch search.', 'meilisearch' ),
 							$conflict
 						)
-					)
+					),
+					$this->dismiss_link( 'conflict' ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Escaped in dismiss_link().
 				);
 			}
 			return;
 		}
-		if ( $search['replace'] || ! $reindexed ) {
+		if ( $search['replace'] || ! $reindexed || $this->is_dismissed( 'enable_search' ) ) {
 			return;
 		}
 		echo '<div class="notice notice-info"><p>' . esc_html__( 'Your content is indexed in Meilisearch. Use Meilisearch to answer your site search?', 'meilisearch' ) . '</p>';
@@ -138,7 +155,87 @@ final class Notices implements Registrable {
 		echo '<input type="hidden" name="action" value="meilisearch_enable_search" />';
 		wp_nonce_field( 'meilisearch_enable_search' );
 		echo '<button type="submit" class="button button-primary">' . esc_html__( 'Enable Meilisearch search', 'meilisearch' ) . '</button>';
-		echo '</p></form></div>';
+		echo '</p></form>';
+		echo $this->dismiss_link( 'enable_search' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Escaped in dismiss_link().
+		echo '</div>';
+	}
+
+	/**
+	 * Handles a dismiss link (admin-post.php?action=meilisearch_dismiss_notice&notice=…).
+	 */
+	public function handle_dismiss(): void {
+		wp_safe_redirect( $this->process_dismiss() );
+		exit;
+	}
+
+	/**
+	 * Checks capability and nonce, records the dismissal for the current user and returns the redirect URL.
+	 *
+	 * @return string
+	 */
+	public function process_dismiss(): string {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Sorry, you are not allowed to change the Meilisearch settings.', 'meilisearch' ), '', array( 'response' => 403 ) );
+		}
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- The nonce action depends on the notice id; checked right below.
+		$notice = isset( $_GET['notice'] ) ? sanitize_key( wp_unslash( $_GET['notice'] ) ) : '';
+		if ( ! in_array( $notice, self::DISMISSIBLE, true ) ) {
+			wp_die( esc_html__( 'Unknown notice.', 'meilisearch' ), '', array( 'response' => 400 ) );
+		}
+		check_admin_referer( self::DISMISS_ACTION . '_' . $notice );
+
+		$user_id   = get_current_user_id();
+		$dismissed = $this->dismissed( $user_id );
+		if ( ! in_array( $notice, $dismissed, true ) ) {
+			$dismissed[] = $notice;
+			update_user_meta( $user_id, self::DISMISSED_META, $dismissed );
+		}
+
+		$referer = wp_get_referer();
+		return false !== $referer ? $referer : Menu::url( 'status' );
+	}
+
+	/**
+	 * Whether the current user dismissed a notice.
+	 *
+	 * @param string $notice Notice id.
+	 * @return bool
+	 */
+	private function is_dismissed( string $notice ): bool {
+		return in_array( $notice, $this->dismissed( get_current_user_id() ), true );
+	}
+
+	/**
+	 * Ids of the notices a user dismissed.
+	 *
+	 * @param int $user_id User ID.
+	 * @return list<string>
+	 */
+	private function dismissed( int $user_id ): array {
+		$stored = get_user_meta( $user_id, self::DISMISSED_META, true );
+
+		return is_array( $stored ) ? array_values( array_intersect( self::DISMISSIBLE, $stored ) ) : array();
+	}
+
+	/**
+	 * Escaped "Dismiss" link of a notice.
+	 *
+	 * @param string $notice Notice id.
+	 * @return string
+	 */
+	private function dismiss_link( string $notice ): string {
+		$url = wp_nonce_url(
+			add_query_arg(
+				array(
+					'action' => self::DISMISS_ACTION,
+					'notice' => $notice,
+				),
+				admin_url( 'admin-post.php' )
+			),
+			self::DISMISS_ACTION . '_' . $notice
+		);
+
+		return sprintf( '<p><a href="%1$s">%2$s</a></p>', esc_url( $url ), esc_html__( 'Dismiss this notice', 'meilisearch' ) );
 	}
 
 	/**
