@@ -1231,6 +1231,65 @@ final class QueryTranslatorTest extends TestCase {
 	}
 
 	/**
+	 * A user who can read private posts of a requested type gets them from MySQL: not intercepted.
+	 */
+	public function test_user_who_can_read_private_posts_is_not_intercepted(): void {
+		$this->private_caps = array( 'post' => 'read_private_posts' );
+		$this->user_caps    = array( 'read_private_posts' );
+
+		self::assertNull( $this->translator()->translate( $this->make_query( array( 's' => 'x' ) ) ) );
+	}
+
+	/**
+	 * The type's own capability is checked, with the generic name as fallback.
+	 */
+	public function test_private_posts_check_uses_the_type_capability(): void {
+		$this->private_caps = array( 'page' => 'read_private_pages' );
+		$this->user_caps    = array( 'read_private_pages' );
+
+		self::assertNull( $this->translator()->translate( $this->make_query( array( 's' => 'x' ) ) ) );
+		self::assertNotNull(
+			$this->translator()->translate(
+				$this->make_query(
+					array(
+						's'         => 'x',
+						'post_type' => 'post',
+					)
+				)
+			)
+		);
+	}
+
+	/**
+	 * A logged-in user without the capability is translated normally.
+	 */
+	public function test_user_without_private_capability_is_translated(): void {
+		$this->user_caps = array( 'edit_posts' );
+
+		self::assertNotNull( $this->translator()->translate( $this->make_query( array( 's' => 'x' ) ) ) );
+	}
+
+	/**
+	 * An explicit publish status is translated even for a privileged user.
+	 */
+	public function test_explicit_publish_status_with_privileged_user_is_translated(): void {
+		$this->user_caps = array( 'read_private_posts' );
+
+		foreach ( array( 'publish', array( 'publish' ) ) as $status ) {
+			self::assertNotNull(
+				$this->translator()->translate(
+					$this->make_query(
+						array(
+							's'           => 'x',
+							'post_status' => $status,
+						)
+					)
+				)
+			);
+		}
+	}
+
+	/**
 	 * The highlight flag follows the Search tab option.
 	 */
 	public function test_highlight_from_options(): void {

@@ -27,6 +27,20 @@ trait SearchStubs {
 	protected array $transients = array();
 
 	/**
+	 * Capabilities the current user holds (current_user_can()).
+	 *
+	 * @var string[]
+	 */
+	protected array $user_caps = array();
+
+	/**
+	 * Post type => read_private_posts capability name (get_post_type_object()); others have no object.
+	 *
+	 * @var array<string, string>
+	 */
+	protected array $private_caps = array();
+
+	/**
 	 * Installs the stubs. Array overrides are merged (one level) over the default of that option and
 	 * handed to TestCase::stub_options(), which backs get_option() and friends.
 	 *
@@ -77,7 +91,22 @@ trait SearchStubs {
 			$defaults[ $name ] = $value;
 		}
 		$this->stub_options( $defaults );
-		$this->transients = array();
+		$this->transients   = array();
+		$this->user_caps    = array();
+		$this->private_caps = array();
+		Functions\when( 'current_user_can' )->alias(
+			function ( $cap ) {
+				return in_array( $cap, $this->user_caps, true );
+			}
+		);
+		Functions\when( 'get_post_type_object' )->alias(
+			function ( $type ) {
+				if ( ! isset( $this->private_caps[ $type ] ) ) {
+					return null;
+				}
+				return (object) array( 'cap' => (object) array( 'read_private_posts' => $this->private_caps[ $type ] ) );
+			}
+		);
 
 		$GLOBALS['wp_version'] = '7.1.2'; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Unit tests run without WordPress.
 

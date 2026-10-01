@@ -446,4 +446,23 @@ final class QueryTranslatorProductsTest extends TestCase {
 			);
 		}
 	}
+
+	/**
+	 * Products follow the same private-posts rule.
+	 */
+	public function test_product_search_by_user_who_can_read_private_products_is_not_intercepted(): void {
+		$this->private_caps = array( 'product' => 'read_private_products' );
+		$this->user_caps    = array( 'read_private_products' );
+
+		self::assertNull(
+			$this->translator( $this->no_constraints() )->translate(
+				$this->make_query(
+					array(
+						's'         => 'shoe',
+						'post_type' => 'product',
+					)
+				)
+			)
+		);
+	}
 }

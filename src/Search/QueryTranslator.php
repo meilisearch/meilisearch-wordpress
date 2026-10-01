@@ -147,6 +147,10 @@ final class QueryTranslator {
 			return null;
 		}
 
+		if ( $this->may_include_private_posts( $query, $types ) ) {
+			return null;
+		}
+
 		$content_types = array();
 		$has_products  = false;
 		foreach ( $types as $type ) {
@@ -288,6 +292,33 @@ final class QueryTranslator {
 		}
 		// has_password=false (only posts without a password) is what the index holds anyway.
 		return (bool) $query->get( 'suppress_filters' ) || (bool) $query->get( 'has_password' );
+	}
+
+	/**
+	 * Whether WP_Query would add private posts to this query for the current user. With an empty
+	 * post_status, WordPress includes the private status for users holding the type's
+	 * read_private_posts capability; the index only holds public posts.
+	 *
+	 * @param \WP_Query $query Query.
+	 * @param string[]  $types Requested post types.
+	 * @return bool
+	 */
+	private function may_include_private_posts( \WP_Query $query, array $types ): bool {
+		$status = $query->get( 'post_status' );
+		if ( null !== $status && '' !== $status && array() !== $status ) {
+			return false;
+			// Explicit statuses were already validated by has_unsupported_vars().
+		}
+		foreach ( $types as $type ) {
+			$object = get_post_type_object( $type );
+			$cap    = is_object( $object ) && isset( $object->cap->read_private_posts ) && is_string( $object->cap->read_private_posts ) && '' !== $object->cap->read_private_posts
+				? $object->cap->read_private_posts
+				: 'read_private_posts';
+			if ( current_user_can( $cap ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
