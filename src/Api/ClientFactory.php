@@ -57,7 +57,7 @@ final class ClientFactory {
 	 */
 	public function client(): Client {
 		if ( ! $this->options->is_configured() ) {
-			throw new \RuntimeException( esc_html__( 'Meilisearch is not configured.', 'meilisearch' ) );
+			throw new \RuntimeException( __( 'Meilisearch is not configured.', 'meilisearch' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 
 		$host = $this->options->host();

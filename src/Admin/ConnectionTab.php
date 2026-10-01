@@ -418,9 +418,8 @@ final class ConnectionTab implements Tab, Registrable {
 	/**
 	 * Plain-text exception message, without the machine prefix of an unsupported version.
 	 *
-	 * IndexManager::check_connection() builds that message with esc_html()ed
-	 * arguments, so it is decoded here: Notices escapes every message exactly once, at display.
-	 * Other messages (ApiError, possibly from the server) are kept as-is for the same reason.
+	 * Exception messages are raw data (IndexManager::check_connection() included): Notices escapes
+	 * every message exactly once, at display.
 	 *
 	 * @param \Throwable $error Error.
 	 * @return string
@@ -429,7 +428,7 @@ final class ConnectionTab implements Tab, Registrable {
 		$message = $error->getMessage();
 		$prefix  = 'unsupported_version: ';
 		if ( str_starts_with( $message, $prefix ) ) {
-			return htmlspecialchars_decode( substr( $message, strlen( $prefix ) ), ENT_QUOTES );
+			return substr( $message, strlen( $prefix ) );
 		}
 
 		return $message;

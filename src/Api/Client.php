@@ -298,7 +298,7 @@ final class Client {
 	private function task( Response $response ): Task {
 		$uid = $response->body['taskUid'] ?? null;
 		if ( ! is_int( $uid ) ) {
-			throw new ApiError( esc_html__( 'Meilisearch did not return a task identifier.', 'meilisearch' ), 'invalid_response', (int) $response->status );
+			throw new ApiError( __( 'Meilisearch did not return a task identifier.', 'meilisearch' ), 'invalid_response', $response->status ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 		return new Task( $this, $uid );
 	}
@@ -332,13 +332,13 @@ final class Client {
 		if ( null !== $body ) {
 			$payload = wp_json_encode( $body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION );
 			if ( false === $payload ) {
-				throw new ApiError( esc_html__( 'The request body could not be encoded as JSON.', 'meilisearch' ), 'encode_error' );
+				throw new ApiError( __( 'The request body could not be encoded as JSON.', 'meilisearch' ), 'encode_error' ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 			}
 		}
 
 		$response = $this->transport->send( $method, $url, $headers, $payload, $timeout );
 		if ( $response->status < 200 || $response->status > 299 ) {
-			throw ApiError::from_response( $response ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Server message is data; display points escape it.
+			throw ApiError::from_response( $response ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 
 		return $response;

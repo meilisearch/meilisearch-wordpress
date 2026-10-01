@@ -40,7 +40,7 @@ final class WpTransport implements Transport {
 
 		$response = wp_remote_request( $url, $args );
 		if ( is_wp_error( $response ) ) {
-			throw ApiError::transport( $response->get_error_message() ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Transport message is data; display points escape it.
+			throw ApiError::transport( $response->get_error_message() ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 
 		$raw     = (string) wp_remote_retrieve_body( $response );

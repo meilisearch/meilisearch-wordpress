@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Tests\Unit\Api;
 
+use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\Client;
 use Meilisearch\WordPress\Api\Task;
@@ -119,5 +120,20 @@ final class TaskTest extends TestCase {
 		$this->expectExceptionMessage( 'Task `5` not found.' );
 
 		$this->task->wait( 30.0, 0 );
+	}
+
+	public function test_translated_messages_are_raw_data_not_html_escaped(): void {
+		Functions\when( '__' )->justReturn( "La tâche %d n'a pas été annulée & \"stoppée\"" );
+		Functions\when( 'esc_html__' )->alias( static fn(): string => htmlspecialchars( "La tâche %d n'a pas été annulée & \"stoppée\"", ENT_QUOTES ) );
+		$this->state( 'canceled' );
+
+		try {
+			$this->task->wait( 1.0, 0 );
+			$this->fail( 'Expected ApiError.' );
+		} catch ( ApiError $error ) {
+			$this->assertSame( "La tâche 5 n'a pas été annulée & \"stoppée\"", $error->getMessage() );
+			$this->assertStringNotContainsString( '&#039;', $error->getMessage() );
+			$this->assertStringNotContainsString( '&amp;', $error->getMessage() );
+		}
 	}
 }

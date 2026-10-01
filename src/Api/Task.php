@@ -42,7 +42,7 @@ final class Task {
 			}
 
 			if ( microtime( true ) >= $deadline ) {
-				throw $this->timeout_error( $timeout ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Built from an escaped, translated string and integers.
+				throw $this->timeout_error( $timeout ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 			}
 
 			if ( $poll_ms > 0 ) {
@@ -61,7 +61,7 @@ final class Task {
 		return new ApiError(
 			sprintf(
 				/* translators: 1: Meilisearch task uid, 2: number of seconds. */
-				esc_html__( 'Meilisearch task %1$d did not finish within %2$d seconds.', 'meilisearch' ),
+				__( 'Meilisearch task %1$d did not finish within %2$d seconds.', 'meilisearch' ),
 				$this->uid,
 				(int) ceil( $timeout )
 			),
@@ -85,12 +85,12 @@ final class Task {
 				? $error['message']
 				/* translators: %d: Meilisearch task uid. */
 				: sprintf( __( 'Meilisearch task %d failed.', 'meilisearch' ), $this->uid );
-			throw new ApiError( $message, 'task_failed' ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Server message is data; display points escape it.
+			throw new ApiError( $message, 'task_failed' ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 
 		if ( 'canceled' === $status ) {
 			/* translators: %d: Meilisearch task uid. */
-			throw new ApiError( sprintf( esc_html__( 'Meilisearch task %d was canceled.', 'meilisearch' ), (int) $this->uid ), 'task_canceled' );
+			throw new ApiError( sprintf( __( 'Meilisearch task %d was canceled.', 'meilisearch' ), $this->uid ), 'task_canceled' ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 
 		return 'succeeded' === $status;

@@ -54,14 +54,16 @@ final class IndexManager {
 		$found   = isset( $version['pkgVersion'] ) && is_string( $version['pkgVersion'] ) ? $version['pkgVersion'] : '';
 
 		if ( '' === $found || version_compare( $found, self::MIN_VERSION, '<' ) ) {
+			// phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 			throw new \RuntimeException(
 				'unsupported_version: ' . sprintf(
 					/* translators: 1: version found on the server, 2: minimum supported version. */
-					esc_html__( 'Meilisearch %1$s is not supported. Version %2$s or newer is required.', 'meilisearch' ),
-					'' === $found ? esc_html__( '(unknown)', 'meilisearch' ) : esc_html( $found ),
-					esc_html( self::MIN_VERSION )
+					__( 'Meilisearch %1$s is not supported. Version %2$s or newer is required.', 'meilisearch' ),
+					'' === $found ? __( '(unknown)', 'meilisearch' ) : $found,
+					self::MIN_VERSION
 				)
 			);
+			// phpcs:enable WordPress.Security.EscapeOutput.ExceptionNotEscaped
 		}
 
 		return $found;
@@ -208,7 +210,7 @@ final class IndexManager {
 		$new_key = (string) ( $key['key'] ?? '' );
 		$new_uid = (string) ( $key['uid'] ?? '' );
 		if ( '' === $new_key ) {
-			throw new ApiError( esc_html__( 'Meilisearch did not return the search key.', 'meilisearch' ), 'invalid_response' );
+			throw new ApiError( __( 'Meilisearch did not return the search key.', 'meilisearch' ), 'invalid_response' ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 
 		$previous = $this->options->search_key_uid();

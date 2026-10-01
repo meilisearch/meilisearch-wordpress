@@ -179,7 +179,7 @@ final class Reindexer implements Registrable {
 		}//end try
 
 		if ( 'failed' === $state['status'] ) {
-			throw new \RuntimeException( esc_html( (string) $state['error'] ) );
+			throw new \RuntimeException( (string) $state['error'] ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 	}
 
