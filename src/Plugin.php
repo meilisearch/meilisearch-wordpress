@@ -162,7 +162,9 @@ final class Plugin {
 		);
 
 		$tabs[] = new Admin\SearchTab( $options );
+		$tabs[] = new Admin\StatusTab( $options, $names, $reindexer, $error_log, $clients );
 		$this->add( 'admin_menu', new Admin\Menu( $tabs ) );
 		$this->add( 'admin_notices', new Admin\Notices( $options, $error_log ) );
+		$this->add( 'admin_rest', new Admin\RestController( $indexes, $reindexer, $options ) );
 	}
 }

@@ -84,6 +84,7 @@ final class Reindexer implements Registrable {
 	 *
 	 * @param string $logical 'content' or 'products'.
 	 * @return array<string, mixed> The new run state.
+	 * @throws \InvalidArgumentException For an inactive logical index.
 	 * @throws \RuntimeException 'already_running' while another run is active; ApiError on Meilisearch errors.
 	 */
 	public function start( string $logical ): array {
