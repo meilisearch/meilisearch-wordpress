@@ -27,7 +27,7 @@ Ship the official Meilisearch plugin to wordpress.org (and Packagist) quickly, w
 
 - Content indexing for admin-selected post types (posts, pages, CPTs), taxonomies and meta keys.
 - WooCommerce product indexing: simple/variable/grouped/external products, variations folded into the parent, category hierarchy, attributes, price, stock, ratings.
-- Real-time sync via Action Scheduler; atomic full reindex via index swap.
+- Real-time sync via Action Scheduler; full reindex in place with an orphan sweep (never touches index settings).
 - Server-side search replacement (`posts_pre_query`) for theme search and WooCommerce product search, including WC ordering and layered-nav/price filters on search results.
 - Optional hybrid search (embedder configured in Meilisearch/Cloud; embedder name + semantic ratio set in WP).
 - Optional excerpt highlighting.
@@ -53,7 +53,7 @@ Ship the official Meilisearch plugin to wordpress.org (and Packagist) quickly, w
 | PHP | ≥ 8.1 (Composer `config.platform.php = 8.1.0`; no 8.2+ syntax such as `readonly class`) |
 | WordPress | ≥ 6.9 (bundled Action Scheduler 4.x requires 6.9); `Tested up to: 7.1` |
 | WooCommerce | ≥ 8.5, optional |
-| Meilisearch | ≥ 1.13 (federated multi-search with `page`/`hitsPerPage`, stable hybrid search). Checked via `GET /version` on connect. |
+| Meilisearch | ≥ 1.34 (federated multi-search with `page`/`hitsPerPage` — exact totals for mixed searches; document fetch with `filter`/`sort` for the orphan sweep; stable hybrid search). Checked via `GET /version` on connect. |
 | Slug / text domain | `meilisearch` (verified available on wordpress.org, 2026-09-30) |
 | Main file | `meilisearch.php` |
 | Namespace | `Meilisearch\WordPress\` (PSR-4, `src/`) |
@@ -92,7 +92,7 @@ WooCommerce services are constructed only when `class_exists('WooCommerce')` and
 | `Indexing\ContentDocumentBuilder` | `WP_Post` → content document. | `Options` |
 | `Indexing\SettingsBuilder` | Required filterable/sortable fields and initial searchable order per index. | `Options` |
 | `Indexing\IndexManager` | Create indexes, apply/merge settings, drift detection, create/rotate scoped key. | `Client`, `SettingsBuilder`, `IndexNames` |
-| `Indexing\Reindexer` | Full reindex into a temp index, then swap (§ 6.3). | `Client`, `IndexManager`, builders |
+| `Indexing\Reindexer` | Full reindex in place, then orphan sweep (§ 6.3). | `Client`, `IndexManager`, builders |
 | `Sync\ChangeCollector` | Collects changed post IDs per index during a request; flushes on `shutdown`. | `Indexability` (post-type check only) |
 | `Sync\SyncJob` | AS handler: reconciles a batch of IDs (upsert or delete); retry with backoff. | builders, `Indexability`, `Client` |
 | `Sync\TermJob` | AS handler: pages through posts attached to a changed term and feeds `SyncJob`. | `ChangeCollector` |
@@ -124,7 +124,6 @@ Each unit is small and single-purpose; builders and translators are pure (inputs
 
 - **Prefix:** `wp_{h}` on single-site, `wp_{h}_{blog_id}` on multisite, where `{h}` = first 6 hex chars of `md5(network_home_url())` (single-site: `home_url()`). Editable in Connection tab; changing it after indexing requires a reindex.
 - **Indexes:** `{prefix}_content`, and `{prefix}_products` when WooCommerce indexing is on.
-- **Temp indexes during reindex:** `{prefix}_content_tmp_{run}` / `{prefix}_products_tmp_{run}`.
 - Prefix contains only `[a-z0-9_]`, so all UIDs satisfy Meilisearch's `[a-zA-Z0-9_-]` rule.
 - Distinct prefixes per site mean staging and production can share one Cloud project safely.
 
@@ -171,8 +170,10 @@ The plugin **owns only what it needs to function**:
 
 Content index required settings:
 
-- filterable: `post_type`, `author_id`, `date`, `modified`, `tax_*`, `tax_*_ids`, `meta_*`
-- sortable: `date`, `modified`, `title`, numeric `meta_*`
+- filterable: `id`, `post_type`, `author_id`, `date`, `modified`, `tax_*`, `tax_*_ids`, `meta_*`
+- sortable: `id`, `date`, `modified`, `title`, `meta_*`
+
+`id` is filterable and sortable in both indexes so the orphan sweep (§ 6.3) can page through documents by id.
 
 ## 6. Sync
 
@@ -193,7 +194,6 @@ Revisions, autosaves and non-enabled post types are ignored at collection time. 
 
 Args: `{index, ids[], attempt}`. For each ID: reload the post; if indexable → build document; else → mark for deletion. Then one `documents` add-or-replace call and one `documents/delete-batch` call. The job reads current state, so ordering and duplicate jobs are harmless.
 
-- While a reindex is running (§ 6.3), the same writes also go to the temp index.
 - On `ApiError` or transport failure: reschedule the same payload with `attempt + 1` after 1 m, 5 m, 30 m, 2 h, 6 h. After attempt 5, record in `ErrorLog` and throw so AS marks the action failed.
 - Jobs do not wait on Meilisearch tasks (fire-and-forget); failed tasks surface through Site Health drift and the Status tab's "recent failed tasks" (`GET /tasks?statuses=failed&indexUids=...`).
 
@@ -201,13 +201,16 @@ Args: `{index, ids[], attempt}`. For each ID: reload the post; if indexable → 
 
 ### 6.3 Full reindex
 
-1. Create `{index}_tmp_{run}`; copy the live index's full settings (`GET /settings` → `PATCH`) then merge required settings. If no live index exists, apply initial settings.
-2. Record run state in `meilisearch_state` (`run`, `index`, `tmp`, `last_id`, `sent`, `task_uids`, `started_at`, `status`).
-3. Batches: indexable posts with `ID > last_id` ordered by `ID`, 200 per batch (filter `meilisearch_reindex_batch_size`). Admin-triggered runs chain `meilisearch_reindex_batch` AS actions; CLI runs loop synchronously with a progress bar.
-4. Finalize: wait for all recorded task UIDs; if any failed → mark run failed, delete temp, keep live, log. Otherwise `POST /swap-indexes` (live ↔ temp), wait, delete the old (now temp-named) index, clear run state.
-5. Only one run per index at a time; a new request while running is rejected with the current progress.
+Full reindex runs **in place** against the live index and never reads or writes index settings beyond § 5.4's required set. (A temp-index + swap design was rejected: `GET /settings` redacts embedder `apiKey` values, so copied settings would break hybrid search, and a fresh index re-embeds every document.)
 
-Result: orphans disappear, Cloud-configured settings are preserved, and search never sees a partial index.
+1. `IndexManager::ensure_index()` for the logical index (creates it and applies required settings if missing).
+2. Record run state in `meilisearch_state` (`run`, `phase`, `last_id`, `sent`, `deleted`, `total`, `task_uids`, `started_at`, `status`, `error`).
+3. **Upsert phase:** indexable posts with `ID > last_id` ordered by `ID`, 200 per batch (filter `meilisearch_reindex_batch_size`), sent with add-or-replace to the live index. Real-time sync keeps writing to the same index meanwhile; both write current state, so they never conflict.
+4. **Sweep phase:** page through the index's documents with `POST /indexes/{uid}/documents/fetch` (`filter: id > last`, `sort: ["id:asc"]`, `fields: ["id"]`, `limit: 1000`); for each page, delete the ids whose post no longer exists or is not indexable.
+5. **Finalize:** wait for all recorded task UIDs; if any failed → status `failed` with the error, logged; otherwise status `done`, clear the "needs reindex" flag, set `first_reindex_done`.
+6. Admin-triggered runs chain `meilisearch_reindex_batch` Action Scheduler actions (one batch or sweep page per action); CLI runs loop synchronously with a progress bar. Only one run per index at a time; a new request while running is rejected with the current progress.
+
+Result: orphans disappear, every setting configured in Cloud (including embedders and their keys) is untouched, only changed documents are re-embedded, and search keeps working throughout (results may briefly mix pre- and post-reindex versions of a document).
 
 ## 7. Admin
 
@@ -282,8 +285,9 @@ Variations are read via `get_children()` + `wc_get_product()` (not `get_availabl
 ### 8.3 Products index settings
 
 - searchable (initial order): `title`, `sku`, `variation_skus`, `attr_*`, `tax_product_cat`, `tax_product_tag`, `excerpt`, `content`
-- filterable: `tax_product_cat_ids`, `tax_product_tag_ids`, `attr_*`, `custom_attr_*`, `price`, `in_stock`, `stock_status`, `on_sale`, `featured`, `product_type`, `rating_average`
-- sortable: `price`, `total_sales`, `rating_average`, `date`, `title`
+- filterable: `id`, `tax_product_cat_ids`, `tax_product_tag_ids`, `attr_*`, `price`, `in_stock`, `stock_status`, `on_sale`, `featured`, `product_type`, `rating_average`
+- sortable: `id`, `price`, `total_sales`, `rating_average`, `date`, `title`
+- `custom_attr_*` fields are stored on documents (for display and future facets) but are neither filterable nor searchable in v1: their names cannot be enumerated when settings are built, and WooCommerce layered nav only uses global `pa_*` attributes.
 
 ### 8.4 Product sync hooks
 
@@ -292,7 +296,8 @@ All feed `ChangeCollector` with the **parent** product ID:
 - `woocommerce_new_product`, `woocommerce_update_product` (product trash/delete already arrive through the core `transition_post_status` / `before_delete_post` hooks of § 6.1; WooCommerce 11.x has no dedicated product delete/trash actions)
 - `woocommerce_new_product_variation`, `woocommerce_update_product_variation`, `woocommerce_before_delete_product_variation`, `woocommerce_trash_product_variation`
 - `woocommerce_product_set_stock`, `woocommerce_variation_set_stock`, `woocommerce_product_set_stock_status`, `woocommerce_variation_set_stock_status`
-- `wp_update_comment_count` for products (rating changes)
+- `wp_update_comment_count` for products (rating changes), at priority 20 so WooCommerce has recalculated the rating first
+- edits to `product_cat`, `product_tag` and `pa_*` terms go through the term job of § 6.1
 
 To keep checkout bursts from flooding the queue, the collector skips product IDs already queued in the last 60 s, tracked with a short-lived `meilisearch_pending_{id}` transient that the job clears **before** reading the posts (so a change arriving mid-job is never lost). (`as_has_scheduled_action` cannot dedupe here because job args are batches of IDs.) Updating `woocommerce_hide_out_of_stock_items` or catalog visibility settings sets "needs reindex" for products.
 
@@ -314,7 +319,7 @@ Shop and category archives without `s` are not intercepted in v1.
 `pre_get_posts` marks a query for interception when **all** hold:
 
 - `$query->is_main_query()`, not `is_admin()`, not a REST request, `is_search()`, and trimmed `s` non-empty;
-- the requested post types (or, if none, all `exclude_from_search = false` types) are all indexed;
+- the requested post types (or, if none, all `exclude_from_search = false` types except `attachment`) are all indexed;
 - "Replace site search" is enabled and the circuit breaker is closed;
 - `QueryTranslator` returns a request (not `null`);
 - `apply_filters('meilisearch_should_intercept', true, $query)`.
@@ -351,12 +356,12 @@ Anything else (other meta compares, `orderby=meta_value*`, `post__in`, `post_par
 
 - Content-only → `POST /indexes/{prefix}_content/search`.
 - `post_type=product` only → products index (+ `ProductQueryTranslator`).
-- Mixed → `POST /multi-search` with `federation: {page, hitsPerPage}` and one query per index (filters per index; `post_type` filter only on content).
+- Mixed → `POST /multi-search` with `federation: {page, hitsPerPage}` and one query per index (filters per index; `post_type` filter only on content). Federated queries must share the same sort; mismatched sorts → do not intercept.
 - All requests: `attributesToRetrieve: ["id"]` (plus `title`, `content` when highlighting, so `_formatted` is returned).
 
 ### 9.5 Results
 
-`ResultMapper` takes hit IDs in order, calls `_prime_post_caches($ids)`, returns `WP_Post` objects via `posts_pre_query`, and sets `$query->found_posts = totalHits` and `$query->max_num_pages = totalPages` (WordPress does not compute these when `posts_pre_query` short-circuits). Hits whose post no longer loads are dropped (defensive; counts unchanged).
+`ResultMapper` takes hit IDs in order, calls `_prime_post_caches($ids)`, returns `WP_Post` objects via `posts_pre_query`, and sets `$query->found_posts = totalHits` and `$query->max_num_pages = totalPages` (WordPress does not compute these when `posts_pre_query` short-circuits). Hits whose post no longer loads are dropped (defensive; counts unchanged). A page past the last one returns no posts with the real totals, so WordPress takes the same 404 decision it takes for an empty MySQL page.
 
 ### 9.6 Highlighting (optional, default off)
 
@@ -398,7 +403,7 @@ When enabled, intercepted searches add `attributesToCrop: ["content:30"]`, `attr
 
 ### 11.3 Site Health
 
-Tests: connection + version ≥ 1.13; doc count vs indexable count (warn when drift > 2 %); required settings present; sync backlog (> 500 pending) and failed actions; browser key has only `search` and only this site's indexes; "needs reindex" flag.
+Tests: connection + version ≥ 1.34; doc count vs indexable count (warn when drift > 2 %); required settings present; sync backlog (> 500 pending) and failed actions; browser key has only `search` and only this site's indexes; "needs reindex" flag.
 
 ### 11.4 Privacy
 
@@ -424,17 +429,17 @@ Collaborators are injected (notably `Api\Transport`, clock, and WordPress functi
 - `ClientTest` — request method/path/body/headers per call; error mapping; `Task::wait` failure handling.
 - `IndexNamesTest`, `OptionsTest` (constants override, admin key never returned for rendering).
 
-### 12.2 Integration (WordPress test suite via `wp-env run tests-cli`, real Meilisearch container)
+### 12.2 Integration (WordPress test suite via `wp-phpunit` + Composer-installed core, MySQL and Meilisearch from `compose.yaml`)
 
 - `BootTest` — all hooks, routes, CLI commands and AS handlers registered.
 - `SyncTest` — publish → indexed; draft/private/pending/password → removed; trash/delete → removed; term rename updates docs; `_edit_lock` updates enqueue nothing.
-- `ReindexTest` — swap preserves a Cloud-set synonym and ranking rule; orphans removed; failed task keeps live index.
+- `ReindexTest` — reindex preserves a Cloud-set synonym, ranking rule and embedder; orphans removed by the sweep; a failed task marks the run failed.
 - `SearchTest` — real `WP_Query` search: order, `found_posts`, `max_num_pages`, tax/meta filters; untranslatable query falls back; Meilisearch stopped → MySQL results + breaker open.
 - `WooCommerceTest` — variable product attributes/prices; hidden and out-of-stock handling; stock change resync; product search with orderby and price filter.
 - `ConnectionTest` — invalid key rejected; scoped key created with only `search` on the two indexes.
 - `MultisiteTest` — two sites, distinct prefixes, independent indexes.
 
-### 12.3 E2E (Playwright + `wp-env`)
+### 12.3 E2E (Playwright against the `compose.yaml` WordPress service)
 
 Connect and reindex from admin; theme search served by Meilisearch; autocomplete keyboard navigation + axe accessibility scan; WooCommerce product search with sorting and price filter.
 
@@ -442,7 +447,7 @@ Connect and reindex from admin; theme search served by Meilisearch; autocomplete
 
 - Lint: PHPCS (WordPress Coding Standards), PHPStan level 6 (`szepeviktor/phpstan-wordpress`, `php-stubs/woocommerce-stubs`), `wp plugin check`.
 - Unit: PHP 8.1 / 8.3 / 8.5.
-- Integration: {WP 6.9, latest} × {Meilisearch 1.13, latest}, plus a WooCommerce-latest job.
+- Integration: {WP 6.9, latest} × {Meilisearch 1.34, latest}, plus WooCommerce-latest and multisite jobs.
 - E2E: latest WP + WC + Meilisearch.
 - All config files (`phpcs.xml.dist`, `phpstan.neon.dist`, `phpunit.xml.dist` with separate unit/integration bootstraps, `.wp-env.json`, `playwright.config.ts`) are part of the plan, not assumed.
 
@@ -471,4 +476,4 @@ Connect and reindex from admin; theme search served by Meilisearch; autocomplete
 
 ## 15. Open questions
 
-None. Decisions taken during the 2026-09-30 redesign: v1 scope (search + WooCommerce), index model (one content + one products index), own HTTP client on `wp_remote_request` (no SDK), plugin-created scoped search key, autocomplete instead of InstantSearch.
+None. Decisions taken during the 2026-09-30 / 10-01 redesign: v1 scope (search + WooCommerce), index model (one content + one products index), own HTTP client on `wp_remote_request` (no SDK), plugin-created scoped search key, autocomplete instead of InstantSearch, WordPress ≥ 6.9 (Action Scheduler 4.x), Meilisearch ≥ 1.34, in-place reindex with orphan sweep.
