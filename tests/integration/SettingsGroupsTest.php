@@ -14,6 +14,8 @@ final class SettingsGroupsTest extends TestCase {
 
 	private const GROUPS = array(
 		'meilisearch_connection' => array( Options::CONNECTION, Options::ADMIN_KEY ),
+		'meilisearch_content'    => array( Options::CONTENT ),
+		'meilisearch_search'     => array( Options::SEARCH ),
 	);
 
 	public function set_up(): void {
@@ -117,5 +119,86 @@ final class SettingsGroupsTest extends TestCase {
 		$this->assertSame( 'off', $autoload );
 		$this->assertSame( 'fresh-key', get_option( Options::ADMIN_KEY ) );
 		update_option( Options::ADMIN_KEY, $original );
+	}
+
+	public function test_saving_search_does_not_modify_connection_or_content(): void {
+		$content = array(
+			'post_types' => array( 'page' ),
+			'taxonomies' => array( 'page' => array() ),
+			'meta_keys'  => array( 'page' => array() ),
+		);
+		update_option( Options::CONTENT, $content );
+		$connection = get_option( Options::CONNECTION );
+		$admin_key  = get_option( Options::ADMIN_KEY );
+		$this->register_settings();
+
+		$this->submit(
+			'meilisearch_search',
+			array(
+				Options::SEARCH => array(
+					'replace'        => '1',
+					'semantic_ratio' => '2',
+				),
+			)
+		);
+
+		$this->assertSame( $content, get_option( Options::CONTENT ) );
+		$this->assertSame( $connection, get_option( Options::CONNECTION ) );
+		$this->assertSame( $admin_key, get_option( Options::ADMIN_KEY ) );
+		$search = get_option( Options::SEARCH );
+		$this->assertTrue( $search['replace'] );
+		$this->assertSame( 1.0, $search['semantic_ratio'] );
+	}
+
+	public function test_saving_content_flags_reindex_and_leaves_other_tabs_alone(): void {
+		$search = array(
+			'replace'        => false,
+			'highlight'      => true,
+			'embedder'       => '',
+			'semantic_ratio' => 0.0,
+			'autocomplete'   => false,
+		);
+		update_option( Options::SEARCH, $search );
+		update_option(
+			Options::CONTENT,
+			array(
+				'post_types' => array( 'post' ),
+				'taxonomies' => array( 'post' => array() ),
+				'meta_keys'  => array( 'post' => array() ),
+			)
+		);
+		$options = Plugin::instance()->get( 'options' );
+		$options->flag_reindex( 'content', false );
+		$connection = get_option( Options::CONNECTION );
+		$this->register_settings();
+
+		$this->submit(
+			'meilisearch_content',
+			array(
+				Options::CONTENT => array(
+					'post_types' => array( 'post', 'page' ),
+					'taxonomies' => array( 'post' => array( 'category' ) ),
+					'meta_keys'  => array( 'post' => "price\nrating" ),
+				),
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'post_types' => array( 'post', 'page' ),
+				'taxonomies' => array(
+					'post' => array( 'category' ),
+					'page' => array(),
+				),
+				'meta_keys'  => array(
+					'post' => array( 'price', 'rating' ),
+					'page' => array(),
+				),
+			),
+			get_option( Options::CONTENT )
+		);
+		$this->assertTrue( $options->needs_reindex( 'content' ) );
+		$this->assertSame( $search, get_option( Options::SEARCH ) );
+		$this->assertSame( $connection, get_option( Options::CONNECTION ) );
 	}
 }

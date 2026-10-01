@@ -147,7 +147,10 @@ final class Plugin {
 		// Tasks 9-10, 14, 21 — admin.
 		$tabs = array(
 			new Admin\ConnectionTab( $options, $indexes, $names ),
+			new Admin\ContentTab( $options ),
 		);
+
+		$tabs[] = new Admin\SearchTab( $options );
 		$this->add( 'admin_menu', new Admin\Menu( $tabs ) );
 		$this->add( 'admin_notices', new Admin\Notices( $options, $error_log ) );
 	}
