@@ -9,3 +9,6 @@
 *.zip
 .DS_Store
 assets/js/autocomplete.min.js
+
+# E2E
+/tests/e2e/.auth/

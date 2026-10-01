@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1.7
+# WordPress + WP-CLI with the Meilisearch plugin, for local development (docker compose watch) and E2E.
+# The plugin lives in /opt/meilisearch (an image layer, refreshed by watch/rebuild) and is symlinked into
+# wp-content/plugins: /var/www/html is a VOLUME in the base image, so files copied there would go stale.
+
+ARG WORDPRESS_TAG=7.1.2-php8.3-apache
+
+FROM composer:2 AS vendor
+WORKDIR /app
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --no-autoloader --no-scripts --no-interaction --no-progress --prefer-dist
+COPY src ./src
+RUN composer dump-autoload --no-dev --optimize --no-interaction
+
+FROM node:22-alpine AS assets
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY assets ./assets
+RUN npm run build
+
+FROM wordpress:${WORDPRESS_TAG}
+ENV WP_CLI_CACHE_DIR=/tmp/wp-cli-cache
+RUN curl -fsSL -o /usr/local/bin/wp https://github.com/wp-cli/wp-cli/releases/download/v2.12.0/wp-cli-2.12.0.phar \
+	&& chmod +x /usr/local/bin/wp \
+	&& printf '<Directory /opt/meilisearch/>\n\tOptions FollowSymLinks\n\tAllowOverride None\n\tRequire all granted\n</Directory>\n' \
+		> /etc/apache2/conf-enabled/meilisearch-plugin.conf
+
+WORKDIR /opt/meilisearch
+COPY meilisearch.php uninstall.php ./
+COPY src ./src
+COPY assets ./assets
+COPY --from=vendor /app/vendor ./vendor
+COPY --from=assets /app/assets/js/autocomplete.min.js ./assets/js/autocomplete.min.js
+# The entrypoint copies /usr/src/wordpress into the volume on first start; tar keeps the symlink.
+RUN ln -s /opt/meilisearch /usr/src/wordpress/wp-content/plugins/meilisearch
+
+# The entrypoint installs WordPress into the current directory: it must be /var/www/html.
+WORKDIR /var/www/html

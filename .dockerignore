@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+.wordpress-org
+node_modules
+vendor
+build
+docs
+tests
+playwright-report
+test-results
