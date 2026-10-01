@@ -160,11 +160,12 @@ final class StatusTab implements Tab, Registrable {
 		echo '</tr></thead><tbody>';
 
 		foreach ( $this->names->active_logicals() as $logical ) {
-			$uid    = $this->names->uid( $logical );
-			$state  = $this->reindexer->status( $logical );
-			$active = null !== $state && 'running' === ( $state['status'] ?? '' );
-			$total  = null !== $state ? (int) ( $state['total'] ?? 0 ) : 0;
-			$sent   = null !== $state ? (int) ( $state['sent'] ?? 0 ) : 0;
+			$uid     = $this->names->uid( $logical );
+			$state   = $this->reindexer->status( $logical );
+			$stalled = $this->reindexer->is_stalled( $logical );
+			$active  = null !== $state && 'running' === ( $state['status'] ?? '' ) && ! $stalled;
+			$total   = null !== $state ? (int) ( $state['total'] ?? 0 ) : 0;
+			$sent    = null !== $state ? (int) ( $state['sent'] ?? 0 ) : 0;
 
 			echo '<tr><th scope="row">' . esc_html( $this->logical_label( $logical ) ) . '<br><code>' . esc_html( $uid ) . '</code>';
 			if ( $this->options->needs_reindex( $logical ) ) {
@@ -180,7 +181,7 @@ final class StatusTab implements Tab, Registrable {
 			$percent = 'upsert' === ( $state['phase'] ?? 'upsert' ) ? ( $total > 0 ? min( 100, round( $sent * 100 / $total ) ) : 0 ) : 100;
 			printf( '<progress max="100" value="%d"', (int) $percent );
 			echo $active ? '' : ' hidden';
-			echo '></progress> <span class="meilisearch-progress-text">' . esc_html( $this->describe( $state ) ) . '</span></div></td></tr>';
+			echo '></progress> <span class="meilisearch-progress-text">' . esc_html( $stalled ? __( 'The previous reindex stopped responding. Start a new one.', 'meilisearch' ) : $this->describe( $state ) ) . '</span></div></td></tr>';
 		}//end foreach
 
 		echo '</tbody></table>';

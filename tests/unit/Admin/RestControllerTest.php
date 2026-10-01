@@ -187,12 +187,13 @@ final class RestControllerTest extends TestCase {
 	 */
 	public function test_status_returns_both_indexes(): void {
 		$state = array(
-			'run'     => 'r1',
-			'phase'   => 'sweep',
-			'sent'    => 40,
-			'total'   => 40,
-			'deleted' => 3,
-			'status'  => 'running',
+			'run'        => 'r1',
+			'phase'      => 'sweep',
+			'sent'       => 40,
+			'total'      => 40,
+			'deleted'    => 3,
+			'status'     => 'running',
+			'updated_at' => time(),
 		);
 		$this->options->set_reindex_state( 'content', $state );
 
@@ -201,11 +202,40 @@ final class RestControllerTest extends TestCase {
 		$this->assertSame( 200, $response->get_status() );
 		$this->assertSame(
 			array(
-				'content'  => $state,
-				'products' => null,
+				'content'   => $state,
+				'products'  => null,
+				'abandoned' => array(
+					'content'  => false,
+					'products' => false,
+				),
 			),
 			$response->get_data()
 		);
+	}
+
+	/**
+	 * A running run untouched past STALE_AFTER with no pending batch is reported as abandoned.
+	 */
+	public function test_status_flags_abandoned_run(): void {
+		$this->options->set_reindex_state(
+			'content',
+			array(
+				'run'        => 'r1',
+				'phase'      => 'upsert',
+				'sent'       => 5,
+				'total'      => 40,
+				'deleted'    => 0,
+				'started_at' => time() - 10000,
+				'updated_at' => time() - 10000,
+				'status'     => 'running',
+			)
+		);
+		Functions\when( 'as_has_scheduled_action' )->justReturn( false );
+
+		$data = $this->controller->reindex_status()->get_data();
+
+		$this->assertTrue( $data['abandoned']['content'] );
+		$this->assertFalse( $data['abandoned']['products'] );
 	}
 
 	/**

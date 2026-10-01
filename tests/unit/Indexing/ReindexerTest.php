@@ -840,4 +840,16 @@ final class ReindexerTest extends TestCase {
 			$this->assertSame( 'already_running', $e->getMessage() );
 		}
 	}
+
+	/**
+	 * A running run untouched past STALE_AFTER with no pending batch is stalled; a recent one is not.
+	 */
+	public function test_is_stalled(): void {
+		$this->seed_run( array( 'updated_at' => time() - 2 * Reindexer::STALE_AFTER ) );
+		Functions\when( 'as_has_scheduled_action' )->justReturn( false );
+		$this->assertTrue( $this->reindexer()->is_stalled( 'content' ) );
+
+		$this->seed_run( array( 'updated_at' => time() ) );
+		$this->assertFalse( $this->reindexer()->is_stalled( 'content' ) );
+	}
 }

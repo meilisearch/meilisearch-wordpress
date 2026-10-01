@@ -176,8 +176,9 @@ final class RestController implements Registrable {
 					'meilisearch_already_running',
 					__( 'A reindex of this index is already running.', 'meilisearch' ),
 					array(
-						'status' => 409,
-						'state'  => $this->reindexer->status( $logical ),
+						'status'    => 409,
+						'state'     => $this->reindexer->status( $logical ),
+						'abandoned' => $this->reindexer->is_stalled( $logical ),
 					)
 				);
 			}
@@ -187,7 +188,7 @@ final class RestController implements Registrable {
 	}
 
 	/**
-	 * GET /reindex/status → {content: state|null, products: state|null}; a state carries
+	 * GET /reindex/status → {content: state|null, products: state|null, abandoned: {content: bool, products: bool}}; a state carries
 	 * status, phase (upsert|sweep|finalizing), sent, total and deleted for the progress UI.
 	 *
 	 * @return \WP_REST_Response
@@ -195,8 +196,12 @@ final class RestController implements Registrable {
 	public function reindex_status(): \WP_REST_Response {
 		return new \WP_REST_Response(
 			array(
-				'content'  => $this->reindexer->status( 'content' ),
-				'products' => $this->reindexer->status( 'products' ),
+				'content'   => $this->reindexer->status( 'content' ),
+				'products'  => $this->reindexer->status( 'products' ),
+				'abandoned' => array(
+					'content'  => $this->reindexer->is_stalled( 'content' ),
+					'products' => $this->reindexer->is_stalled( 'products' ),
+				),
 			),
 			200
 		);
@@ -262,6 +267,7 @@ final class RestController implements Registrable {
 					'done'          => __( 'Last reindex completed: %1$s posts sent, %2$s stale documents removed.', 'meilisearch' ),
 					/* translators: %s: error message. */
 					'failed'        => __( 'Last reindex failed: %s', 'meilisearch' ),
+					'abandoned'     => __( 'The previous reindex stopped responding. Start a new one.', 'meilisearch' ),
 				),
 			)
 		);

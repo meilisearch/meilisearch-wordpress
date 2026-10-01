@@ -22,6 +22,7 @@
 	var POLL_INTERVAL = 3000;
 	var pollTimer = null;
 	var lastStatus = {};
+	var abandoned = {};
 
 	function format( template ) {
 		var args = Array.prototype.slice.call( arguments, 1 );
@@ -78,13 +79,16 @@
 		} );
 	}
 
-	function isActive( state ) {
-		return !! state && 'running' === state.status;
+	function isActive( state, index ) {
+		return !! state && 'running' === state.status && ! abandoned[ index ];
 	}
 
-	function describe( state ) {
+	function describe( state, index ) {
 		if ( ! state ) {
 			return '';
+		}
+		if ( 'running' === state.status && abandoned[ index ] ) {
+			return i18n.abandoned;
 		}
 		switch ( state.status ) {
 			case 'running':
@@ -107,7 +111,7 @@
 		var button = document.querySelector( '[data-meilisearch-action="reindex"][data-meilisearch-index="' + index + '"]' );
 		var container = document.querySelector( '[data-meilisearch-progress="' + index + '"]' );
 		if ( button ) {
-			button.disabled = isActive( state );
+			button.disabled = isActive( state, index );
 		}
 		if ( ! container ) {
 			return;
@@ -116,7 +120,7 @@
 		var text = container.querySelector( '.meilisearch-progress-text' );
 		if ( bar ) {
 			var total = state && state.total > 0 ? state.total : 0;
-			bar.hidden = ! isActive( state );
+			bar.hidden = ! isActive( state, index );
 			bar.max = 100;
 			if ( state && 'upsert' !== state.phase ) {
 				bar.value = 100;
@@ -125,29 +129,33 @@
 			}
 		}
 		if ( text && state ) {
-			text.textContent = describe( state );
+			text.textContent = describe( state, index );
 		}
 	}
 
-	function update( states ) {
+	function update( states, flags ) {
 		var anyActive = false;
 		Object.keys( states || {} ).forEach( function ( index ) {
 			var state = states[ index ];
-			var status = state ? state.status + ':' + state.phase : null;
+			if ( flags ) {
+				abandoned[ index ] = !! flags[ index ];
+			}
+			var status = state ? state.status + ':' + state.phase + ':' + ( abandoned[ index ] ? 'x' : '' ) : null;
 			render( index, state );
 			if ( state && undefined !== lastStatus[ index ] && lastStatus[ index ] !== status ) {
-				announce( describe( state ) );
+				announce( describe( state, index ) );
 			}
 			lastStatus[ index ] = status;
-			anyActive = anyActive || isActive( state );
+			anyActive = anyActive || isActive( state, index );
 		} );
 		return anyActive;
 	}
 
 	function poll() {
 		window.clearTimeout( pollTimer );
-		request( 'GET', 'reindex/status' ).then( function ( states ) {
-			if ( update( states ) ) {
+		request( 'GET', 'reindex/status' ).then( function ( data ) {
+			var states = { content: data.content, products: data.products };
+			if ( update( states, data.abandoned || {} ) ) {
 				pollTimer = window.setTimeout( poll, POLL_INTERVAL );
 			}
 		} ).catch( function ( error ) {
@@ -162,14 +170,14 @@
 		request( 'POST', 'reindex', { index: index } ).then( function ( state ) {
 			var states = {};
 			states[ index ] = state;
-			update( states );
-			announce( describe( state ) );
+			update( states, { [ index ]: false } );
+			announce( describe( state, index ) );
 			poll();
 		} ).catch( function ( error ) {
 			var states = {};
 			if ( 409 === error.status && error.data && error.data.state ) {
 				states[ index ] = error.data.state;
-				update( states );
+				update( states, { [ index ]: !! error.data.abandoned } );
 				announce( error.message );
 				poll();
 				return;

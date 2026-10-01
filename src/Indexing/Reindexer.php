@@ -194,6 +194,17 @@ final class Reindexer implements Registrable {
 	}
 
 	/**
+	 * Whether the stored run is marked running but abandoned (start() would accept a restart).
+	 *
+	 * @param string $logical 'content' or 'products'.
+	 * @return bool
+	 */
+	public function is_stalled( string $logical ): bool {
+		$state = $this->status( $logical );
+		return null !== $state && self::is_active( $state ) && $this->is_abandoned( $logical, $state );
+	}
+
+	/**
 	 * The IDs among $ids that must not be in the index: missing posts, wrong type, not public, vetoed.
 	 * One SQL query narrows to published, password-less posts of the index's types; Indexability decides.
 	 *

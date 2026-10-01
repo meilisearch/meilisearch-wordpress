@@ -252,6 +252,37 @@ final class StatusTabTest extends TestCase {
 	}
 
 	/**
+	 * An abandoned run enables the button, hides the bar and says so.
+	 */
+	public function test_render_abandoned_run_can_be_restarted(): void {
+		$this->options->set_reindex_state(
+			'content',
+			array(
+				'run'        => 'r1',
+				'phase'      => 'upsert',
+				'last_id'    => 50,
+				'sent'       => 50,
+				'deleted'    => 0,
+				'total'      => 200,
+				'task_uids'  => array(),
+				'started_at' => time() - 10000,
+				'updated_at' => time() - 10000,
+				'status'     => 'running',
+				'error'      => '',
+			)
+		);
+		Functions\when( 'as_has_scheduled_action' )->justReturn( false );
+		$this->transport->queue( self::json_response( 200, array( 'numberOfDocuments' => 0 ) ) )->queue( self::tasks_response( array() ) );
+
+		$html = $this->render();
+
+		$this->assertStringNotContainsString( 'data-meilisearch-index="content" disabled', $html );
+		$this->assertStringContainsString( 'data-meilisearch-index="content">', $html );
+		$this->assertStringContainsString( '<progress max="100" value="25" hidden>', $html );
+		$this->assertStringContainsString( 'The previous reindex stopped responding. Start a new one.', $html );
+	}
+
+	/**
 	 * Without a connection nothing remote is called and the reindex button is disabled.
 	 */
 	public function test_render_without_connection_makes_no_requests(): void {
