@@ -144,6 +144,12 @@ final class Plugin {
 		$indexes = new Indexing\IndexManager( $clients, $names, $settings, $options );
 		$this->add( 'index_manager', $indexes );
 
+		// Tasks 11-13 — sync and reindex.
+		$queue     = new Sync\Queue();
+		$collector = new Sync\ChangeCollector( $indexability, $queue, $options );
+		$this->add( 'queue', $queue );
+		$this->add( 'collector', $collector );
+
 		// Tasks 9-10, 14, 21 — admin.
 		$tabs = array(
 			new Admin\ConnectionTab( $options, $indexes, $names ),
