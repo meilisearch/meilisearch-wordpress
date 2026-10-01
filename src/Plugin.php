@@ -179,7 +179,9 @@ final class Plugin {
 			new Admin\ConnectionTab( $options, $indexes, $names ),
 			new Admin\ContentTab( $options ),
 		);
-
+		if ( class_exists( 'WooCommerce' ) ) {
+			$tabs[] = new WooCommerce\WooCommerceTab( $options );
+		}
 		$tabs[] = new Admin\SearchTab( $options );
 		$tabs[] = new Admin\StatusTab( $options, $names, $reindexer, $error_log, $clients );
 		$this->add( 'admin_menu', new Admin\Menu( $tabs ) );
@@ -189,6 +191,9 @@ final class Plugin {
 		// Task 19, Task 21 — WooCommerce hooks.
 		if ( class_exists( 'WooCommerce' ) ) {
 			$this->add( 'wc_compat', new WooCommerce\Compatibility() );
+			if ( $options->products_enabled() ) {
+				$this->add( 'wc_product_sync', new WooCommerce\ProductSync( $collector, $options ) );
+			}
 		}
 	}
 }
