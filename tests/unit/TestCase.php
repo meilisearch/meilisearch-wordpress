@@ -43,6 +43,7 @@ abstract class TestCase extends PolyfillTestCase {
 		// Pure helpers with identical PHP equivalents on PHP 8.1+.
 		Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
 		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+		Functions\when( 'wp_cache_delete' )->justReturn( true );
 		$this->option_store    = [];
 		$this->option_autoload = [];
 	}

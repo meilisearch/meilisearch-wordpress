@@ -375,9 +375,12 @@ final class Options {
 	 * @param mixed  $value Value.
 	 */
 	public function set_state( string $key, mixed $value ): void {
-		$state         = $this->group( self::STATE );
-		$state[ $key ] = $value;
-		update_option( self::STATE, $state, false );
+		$this->mutate_state(
+			static function ( array $state ) use ( $key, $value ): array {
+				$state[ $key ] = $value;
+				return $state;
+			}
+		);
 	}
 
 	/**
@@ -397,11 +400,16 @@ final class Options {
 	 * @param bool   $flag    New flag.
 	 */
 	public function flag_reindex( string $logical, bool $flag ): void {
-		$flags = array_values( array_diff( self::to_string_list( $this->state( 'needs_reindex', array() ) ), array( $logical ) ) );
-		if ( $flag ) {
-			$flags[] = $logical;
-		}
-		$this->set_state( 'needs_reindex', $flags );
+		$this->mutate_state(
+			static function ( array $state ) use ( $logical, $flag ): array {
+				$flags = array_values( array_diff( self::to_string_list( $state['needs_reindex'] ?? array() ), array( $logical ) ) );
+				if ( $flag ) {
+					$flags[] = $logical;
+				}
+				$state['needs_reindex'] = $flags;
+				return $state;
+			}
+		);
 	}
 
 	/**
@@ -411,6 +419,7 @@ final class Options {
 	 * @return array<string, mixed>|null
 	 */
 	public function reindex_state( string $logical ): ?array {
+		$this->drop_state_cache();
 		$all = $this->state( 'reindex', array() );
 		return is_array( $all ) && isset( $all[ $logical ] ) && is_array( $all[ $logical ] ) ? $all[ $logical ] : null;
 	}
@@ -422,16 +431,37 @@ final class Options {
 	 * @param array<string, mixed>|null $state   Run state.
 	 */
 	public function set_reindex_state( string $logical, ?array $state ): void {
-		$all = $this->state( 'reindex', array() );
-		if ( ! is_array( $all ) ) {
-			$all = array();
-		}
-		if ( null === $state ) {
-			unset( $all[ $logical ] );
-		} else {
-			$all[ $logical ] = $state;
-		}
-		$this->set_state( 'reindex', $all );
+		$this->mutate_state(
+			static function ( array $current ) use ( $logical, $state ): array {
+				$all = isset( $current['reindex'] ) && is_array( $current['reindex'] ) ? $current['reindex'] : array();
+				if ( null === $state ) {
+					unset( $all[ $logical ] );
+				} else {
+					$all[ $logical ] = $state;
+				}
+				$current['reindex'] = $all;
+				return $current;
+			}
+		);
+	}
+
+	/**
+	 * Read-modify-write of the state option from a fresh read. The option is not autoloaded and
+	 * get_option() caches it per process, so a long-running process (WP-CLI) would otherwise rewrite
+	 * the whole option from a stale snapshot and revert other writers' changes.
+	 *
+	 * @param callable $change Receives the current state array, returns the new one.
+	 */
+	private function mutate_state( callable $change ): void {
+		$this->drop_state_cache();
+		update_option( self::STATE, $change( $this->group( self::STATE ) ), false );
+	}
+
+	/**
+	 * Drops the cached copy of the state option so the next read hits the database.
+	 */
+	private function drop_state_cache(): void {
+		wp_cache_delete( self::STATE, 'options' );
 	}
 
 	/**

@@ -47,6 +47,7 @@ final class Reindexer implements Registrable {
 
 	private const TASK_UID_CHUNK = 100;
 	private const TASK_PRUNE_AT  = 20;
+	private const SUPERSEDED     = 'superseded';
 
 	/**
 	 * Constructor.
@@ -122,7 +123,11 @@ final class Reindexer implements Registrable {
 				}
 			}
 		} catch ( \Throwable $e ) {
-			$this->fail( $logical, $this->status( $logical ) ?? $state, $e->getMessage() );
+			if ( $e instanceof \RuntimeException && self::SUPERSEDED === $e->getMessage() ) {
+				// A newer run owns the state now; this action has nothing left to do.
+				return;
+			}
+			$this->fail( $logical, $state, $e->getMessage() );
 			throw $e;
 		}
 	}
@@ -148,7 +153,7 @@ final class Reindexer implements Registrable {
 			while ( self::is_active( $state ) ) {
 				$current = $this->status( $logical );
 				if ( null === $current || ( $current['run'] ?? '' ) !== $run ) {
-					throw new \RuntimeException( 'superseded' );
+					throw new \RuntimeException( self::SUPERSEDED );
 				}
 				if ( 'finalizing' === $state['phase'] ) {
 					$deadline = 0 === $deadline ? time() + self::CLI_TASK_TIMEOUT : $deadline;
@@ -299,9 +304,12 @@ final class Reindexer implements Registrable {
 			'total'      => $this->count_indexable( $logical ),
 			'task_uids'  => array(),
 			'started_at' => time(),
+			'updated_at' => time(),
 			'status'     => 'running',
 			'error'      => '',
 		);
+		// Flags raised from now on (settings changed mid-run) survive the run: finalize does not clear them.
+		$this->options->flag_reindex( $logical, false );
 		$this->options->set_reindex_state( $logical, $state );
 		return $state;
 	}
@@ -334,8 +342,7 @@ final class Reindexer implements Registrable {
 			}
 			$state['task_uids'] = $checked['pending'];
 		}
-		$this->options->set_reindex_state( $logical, $state );
-		return $state;
+		return $this->save( $logical, $state );
 	}
 
 	/**
@@ -428,14 +435,12 @@ final class Reindexer implements Registrable {
 		}
 		$state['task_uids'] = $checked['pending'];
 		if ( array() !== $checked['pending'] ) {
-			$this->options->set_reindex_state( $logical, $state );
-			return $state;
+			return $this->save( $logical, $state );
 		}
 
 		$state['status'] = 'done';
 		$state['error']  = '';
-		$this->options->set_reindex_state( $logical, $state );
-		$this->options->flag_reindex( $logical, false );
+		$state           = $this->save( $logical, $state );
 		$this->options->set_state( 'first_reindex_done', true );
 		return $state;
 	}
@@ -492,7 +497,26 @@ final class Reindexer implements Registrable {
 	}
 
 	/**
-	 * Marks the run failed and logs.
+	 * Stores the state of the run being executed, stamped with updated_at, unless another run has taken over.
+	 *
+	 * @param string               $logical Logical index.
+	 * @param array<string, mixed> $state   Run state.
+	 * @return array<string, mixed> The stored state.
+	 * @throws \RuntimeException 'superseded' when the stored run differs from this one.
+	 */
+	private function save( string $logical, array $state ): array {
+		$current = $this->status( $logical );
+		if ( null === $current || ( $current['run'] ?? '' ) !== ( $state['run'] ?? '' ) ) {
+			throw new \RuntimeException( self::SUPERSEDED ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped
+		}
+		$state['updated_at'] = time();
+		$this->options->set_reindex_state( $logical, $state );
+		return $state;
+	}
+
+	/**
+	 * Marks the run failed, re-flags the index as needing a reindex and logs. Does nothing to the stored
+	 * state when another run has taken over.
 	 *
 	 * @param string               $logical Logical index.
 	 * @param array<string, mixed> $state   Run state.
@@ -502,7 +526,14 @@ final class Reindexer implements Registrable {
 	private function fail( string $logical, array $state, string $message ): array {
 		$state['status'] = 'failed';
 		$state['error']  = $message;
+		$current         = $this->status( $logical );
+		if ( null === $current || ( $current['run'] ?? '' ) !== ( $state['run'] ?? '' ) ) {
+			// Superseded: the newer run's state is not ours to touch.
+			return $state;
+		}
+		$state['updated_at'] = time();
 		$this->options->set_reindex_state( $logical, $state );
+		$this->options->flag_reindex( $logical, true );
 		$this->log->add( 'reindex', sprintf( 'Reindex of the %1$s index failed: %2$s', $logical, $message ) );
 		return $state;
 	}
@@ -624,7 +655,8 @@ final class Reindexer implements Registrable {
 	 * @return bool
 	 */
 	private function is_abandoned( string $logical, array $state ): bool {
-		if ( time() - (int) ( $state['started_at'] ?? 0 ) <= self::STALE_AFTER ) {
+		$touched = (int) ( $state['updated_at'] ?? $state['started_at'] ?? 0 );
+		if ( time() - $touched <= self::STALE_AFTER ) {
 			return false;
 		}
 		return ! as_has_scheduled_action( Queue::REINDEX_BATCH, array( $this->payload( $logical, (string) ( $state['run'] ?? '' ) ) ), Queue::GROUP );

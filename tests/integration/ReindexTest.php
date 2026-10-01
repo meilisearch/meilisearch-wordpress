@@ -257,4 +257,30 @@ final class ReindexTest extends TestCase {
 			$this->assertSame( 'already_running', $e->getMessage() );
 		}
 	}
+
+	/**
+	 * A flag raised while a run is in progress survives the run's completion.
+	 */
+	public function test_flag_raised_mid_run_survives_finalize(): void {
+		self::factory()->post->create();
+		$options = Plugin::instance()->get( 'options' );
+		assert( $options instanceof Options );
+		$options->flag_reindex( 'content', true );
+		$this->reindexer()->start( 'content' );
+		$this->assertFalse( $options->needs_reindex( 'content' ), 'Starting a run clears the flag.' );
+		$options->flag_reindex( 'content', true );
+
+		for ( $i = 0; $i < 240; $i++ ) {
+			$this->run_actions();
+			$state = $this->reindexer()->status( 'content' );
+			if ( null !== $state && 'running' !== $state['status'] ) {
+				break;
+			}
+			usleep( 250000 );
+		}
+		$this->wait_for_tasks();
+
+		$this->assertSame( 'done', $this->reindexer()->status( 'content' )['status'] );
+		$this->assertTrue( $options->needs_reindex( 'content' ) );
+	}
 }
