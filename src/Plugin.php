@@ -73,7 +73,7 @@ final class Plugin {
 	 */
 	public function get( string $id ): object {
 		if ( ! isset( $this->services[ $id ] ) ) {
-			throw new \OutOfBoundsException( sprintf( 'Unknown Meilisearch service "%s".', $id ) );
+			throw new \OutOfBoundsException( sprintf( 'Unknown Meilisearch service "%s".', esc_html( $id ) ) );
 		}
 		return $this->services[ $id ];
 	}
@@ -96,7 +96,7 @@ final class Plugin {
 	 */
 	private function add( string $id, object $service ): void {
 		if ( isset( $this->services[ $id ] ) ) {
-			throw new \LogicException( sprintf( 'Meilisearch service "%s" is already registered.', $id ) );
+			throw new \LogicException( sprintf( 'Meilisearch service "%s" is already registered.', esc_html( $id ) ) );
 		}
 		$this->services[ $id ] = $service;
 	}

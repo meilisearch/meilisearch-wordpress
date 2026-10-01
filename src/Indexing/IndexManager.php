@@ -57,7 +57,7 @@ final class IndexManager {
 			throw new \RuntimeException(
 				'unsupported_version: ' . sprintf(
 					/* translators: 1: version found on the server, 2: minimum supported version. */
-					__( 'Meilisearch %1$s is not supported. Version %2$s or newer is required.', 'meilisearch' ),
+					esc_html__( 'Meilisearch %1$s is not supported. Version %2$s or newer is required.', 'meilisearch' ),
 					'' === $found ? esc_html__( '(unknown)', 'meilisearch' ) : esc_html( $found ),
 					esc_html( self::MIN_VERSION )
 				)
@@ -208,7 +208,7 @@ final class IndexManager {
 		$new_key = (string) ( $key['key'] ?? '' );
 		$new_uid = (string) ( $key['uid'] ?? '' );
 		if ( '' === $new_key ) {
-			throw new ApiError( __( 'Meilisearch did not return the search key.', 'meilisearch' ), 'invalid_response' );
+			throw new ApiError( esc_html__( 'Meilisearch did not return the search key.', 'meilisearch' ), 'invalid_response' );
 		}
 
 		$previous = $this->options->search_key_uid();
