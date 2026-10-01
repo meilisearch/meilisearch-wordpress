@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Tag, Version header, MEILISEARCH_VERSION and Stable tag must match
         run: bash bin/check-version.sh "$GITHUB_REF_NAME"
@@ -32,6 +34,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -52,7 +56,7 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to the wordpress.org plugin directory
-        uses: 10up/action-wordpress-plugin-deploy@stable
+        uses: 10up/action-wordpress-plugin-deploy@54bd289b8525fd23a5c365ec369185f2966529c2 # 2.3.0
         env:
           SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
           SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
@@ -65,7 +69,7 @@ jobs:
         run: cp build/meilisearch.zip "build/meilisearch-${{ steps.version.outputs.version }}.zip"
 
       - name: GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: build/meilisearch-${{ steps.version.outputs.version }}.zip
           generate_release_notes: true
