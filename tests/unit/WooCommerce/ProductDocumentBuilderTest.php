@@ -149,6 +149,13 @@ final class ProductDocumentBuilderTest extends TestCase {
 		);
 	}
 
+	public function test_scheduled_sale_price_is_not_indexed_while_the_sale_is_inactive(): void {
+		$fields = $this->builder()->product_fields( new \WC_Product_Simple( $this->simple_props( array( 'on_sale' => false ) ) ) );
+
+		self::assertNull( $fields['sale_price'] );
+		self::assertFalse( $fields['on_sale'] );
+	}
+
 	public function test_empty_prices_unmanaged_stock_and_no_categories(): void {
 		$fields = $this->builder()->product_fields(
 			new \WC_Product_External(

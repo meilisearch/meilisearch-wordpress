@@ -125,6 +125,7 @@ final class ProductDocumentBuilder implements DocumentBuilder {
 	 */
 	private function scalar_fields( \WC_Product $product ): array {
 		$quantity = $product->get_stock_quantity();
+		$on_sale  = (bool) $product->is_on_sale();
 
 		return array(
 			'sku'            => (string) $product->get_sku(),
@@ -132,8 +133,9 @@ final class ProductDocumentBuilder implements DocumentBuilder {
 			'featured'       => (bool) $product->is_featured(),
 			'price'          => $this->display_price( $product, $product->get_price() ),
 			'regular_price'  => $this->display_price( $product, $product->get_regular_price() ),
-			'sale_price'     => $this->display_price( $product, $product->get_sale_price() ),
-			'on_sale'        => (bool) $product->is_on_sale(),
+			// get_sale_price() returns the stored value even for a scheduled (future) or expired sale.
+			'sale_price'     => $on_sale ? $this->display_price( $product, $product->get_sale_price() ) : null,
+			'on_sale'        => $on_sale,
 			'in_stock'       => (bool) $product->is_in_stock(),
 			'stock_status'   => (string) $product->get_stock_status(),
 			'stock_quantity' => is_numeric( $quantity ) ? (int) $quantity : null,
