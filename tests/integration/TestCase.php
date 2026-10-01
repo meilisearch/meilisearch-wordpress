@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Meilisearch\WordPress\Tests\Integration;
 
 use ActionScheduler;
+use Meilisearch\WordPress\Plugin;
 use ActionScheduler_Store;
 use WP_UnitTestCase;
 
@@ -28,6 +29,13 @@ abstract class TestCase extends WP_UnitTestCase {
 	 * @var list<string>
 	 */
 	protected array $action_failures = [];
+
+	/**
+	 * Plugin instance bootstrapped with WordPress, while a test runs on a rebooted one.
+	 *
+	 * @var Plugin|null
+	 */
+	private ?Plugin $bootstrapped_plugin = null;
 
 	public function set_up(): void {
 		parent::set_up();
@@ -78,27 +86,40 @@ abstract class TestCase extends WP_UnitTestCase {
 				}
 			}
 		}
-		$this->discard_collector_shutdown_flush();
+		$this->settle_plugin();
 		parent::tear_down();
 	}
 
 	/**
-	 * Detaches every ChangeCollector `shutdown` flush (Plugin::reset() leaves older instances hooked).
-	 * Otherwise IDs still pending after the last test are scheduled at shutdown, after the test
-	 * transaction has rolled back, and leak committed actions into the next run.
+	 * Boots a fresh Plugin (e.g. after options changed which services exist), remembering the
+	 * bootstrapped instance so tear_down() can put it back next to the hooks WP_UnitTestCase restores.
 	 */
-	private function discard_collector_shutdown_flush(): void {
-		global $wp_filter;
-		if ( ! isset( $wp_filter['shutdown'] ) ) {
-			return;
+	protected function reboot_plugin(): void {
+		if ( null === $this->bootstrapped_plugin ) {
+			$this->bootstrapped_plugin = Plugin::instance();
 		}
-		foreach ( $wp_filter['shutdown']->callbacks as $priority => $callbacks ) {
-			foreach ( $callbacks as $callback ) {
-				$function = $callback['function'];
-				if ( is_array( $function ) && $function[0] instanceof \Meilisearch\WordPress\Sync\ChangeCollector ) {
-					remove_action( 'shutdown', $function, $priority );
-				}
-			}
+		Plugin::reset();
+		Plugin::boot();
+	}
+
+	/**
+	 * Schedules whatever the collectors still hold while the test transaction is open, so nothing is
+	 * left for the `shutdown` flush, which would run after the rollback and commit actions for real.
+	 * Then restores the bootstrapped Plugin instance (parent::tear_down() restores its hooks).
+	 */
+	private function settle_plugin(): void {
+		$this->flush_collector( Plugin::instance() );
+		if ( null !== $this->bootstrapped_plugin ) {
+			$this->flush_collector( $this->bootstrapped_plugin );
+			// Test-only seam: Plugin has no setter, and its hooks are the bootstrapped instance's.
+			( new \ReflectionProperty( Plugin::class, 'instance' ) )->setValue( null, $this->bootstrapped_plugin );
+			$this->bootstrapped_plugin = null;
+		}
+	}
+
+	private function flush_collector( ?Plugin $plugin ): void {
+		if ( null !== $plugin && isset( $plugin->services()['collector'] ) ) {
+			$plugin->get( 'collector' )->flush();
 		}
 	}
 

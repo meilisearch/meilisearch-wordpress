@@ -85,7 +85,7 @@ final class ProductDocumentBuilderTest extends TestCase {
 		$this->assertEqualsCanonicalizing( array( 'Clothing', 'Shirts' ), $document['tax_product_cat'] );
 		$this->assertEqualsCanonicalizing( array( (int) $parent['term_id'], (int) $child['term_id'] ), $document['tax_product_cat_ids'] );
 		$this->assertSame( array( 'Clothing > Shirts' ), $document['categories']['lvl1'] );
-		$this->assertFalse( has_filter( 'woocommerce_get_tax_location', array( $this->builder(), 'base_tax_location' ) ) );
+		$this->assertFalse( has_filter( 'woocommerce_get_tax_location' ) );
 	}
 
 	public function test_variation_post_is_not_built(): void {
@@ -116,8 +116,43 @@ final class ProductDocumentBuilderTest extends TestCase {
 		$document = $this->product_document( $visible->get_id() );
 		$this->assertIsArray( $document );
 		$this->assertSame( 'simple', $document['product_type'] );
-		$this->assertSame( 15.5, (float) $document['price'] );
+		$this->assertSame( 15.5, $document['price'] );
 		$this->assertSame( 'MUG-1', $document['sku'] );
 		$this->assertNull( $this->product_document( $hidden->get_id() ) );
+	}
+
+	public function test_scheduled_sale_price_is_not_exposed(): void {
+		$product = $this->create_simple_product(
+			'Meili Scheduled Sale',
+			'20',
+			array(
+				'sale_price'        => '5',
+				'date_on_sale_from' => gmdate( 'Y-m-d', time() + DAY_IN_SECONDS ),
+			)
+		);
+
+		$document = $this->builder()->build( get_post( $product->get_id() ) );
+
+		$this->assertIsArray( $document );
+		$this->assertNull( $document['sale_price'] );
+		$this->assertFalse( $document['on_sale'] );
+		$this->assertSame( 20.0, $document['price'] );
+	}
+
+	public function test_enable_products_syncs_a_product_first(): void {
+		$this->assert_product_syncs( 'Meili Sync One' );
+	}
+
+	public function test_enable_products_syncs_a_product_second(): void {
+		$this->assert_product_syncs( 'Meili Sync Two' );
+	}
+
+	private function assert_product_syncs( string $name ): void {
+		$this->enable_products();
+		$product = $this->create_simple_product( $name, '12' );
+
+		$this->sync_products();
+
+		$this->assertIsArray( $this->product_document( $product->get_id() ) );
 	}
 }

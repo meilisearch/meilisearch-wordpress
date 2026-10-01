@@ -23,7 +23,7 @@ trait CreatesProducts {
 	}
 
 	/**
-	 * Enables product indexing, rebuilds the services if they were built without products,
+	 * Enables product indexing, rebuilds the services (always: the previous test's hooks were restored away),
 	 * and creates the products index (after attributes exist, so attr_* are filterable).
 	 */
 	protected function enable_products( array $woocommerce = array() ): void {
@@ -39,10 +39,7 @@ trait CreatesProducts {
 				$woocommerce
 			)
 		);
-		if ( 'products' !== Plugin::instance()->get( 'indexability' )->index_for_type( 'product' ) ) {
-			Plugin::reset();
-			Plugin::boot();
-		}
+		$this->reboot_plugin();
 		Plugin::instance()->get( 'index_manager' )->ensure_index( 'products' );
 	}
 
