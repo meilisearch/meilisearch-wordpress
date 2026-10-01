@@ -159,7 +159,13 @@ final class Plugin {
 		// Task 22 replaces the null with the WooCommerce product query translator when products are indexed.
 		$product_translator = null;
 		$translator         = new Search\QueryTranslator( $options, $indexability, $product_translator );
+		$searcher           = new Search\Searcher( $clients, $names );
+		$mapper             = new Search\ResultMapper();
+		$breaker            = new Search\CircuitBreaker();
 		$this->add( 'translator', $translator );
+		$this->add( 'searcher', $searcher );
+		$this->add( 'result_mapper', $mapper );
+		$this->add( 'circuit_breaker', $breaker );
 
 		// Tasks 9-10, 14, 21 — admin.
 		$tabs = array(
