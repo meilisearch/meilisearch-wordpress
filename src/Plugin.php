@@ -199,7 +199,12 @@ final class Plugin {
 		$this->add( 'autocomplete', new Frontend\Autocomplete( $options, $names ) );
 
 		// Task 24 — operations (Site Health + privacy text).
-		$this->add( 'site_health', new Ops\SiteHealth( $clients, $indexes, $names, $reindexer, $queue, $options ) );
+		$health = new Ops\SiteHealth( $clients, $indexes, $names, $reindexer, $queue, $options );
+		$this->add( 'site_health', $health );
 		$this->add( 'privacy', new Ops\Privacy() );
+
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			\WP_CLI::add_command( 'meilisearch', new Ops\Cli( $reindexer, $sync_job, $clients, $names, $health, $indexability, $queue ) );
+		}
 	}
 }

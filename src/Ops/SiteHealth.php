@@ -687,7 +687,7 @@ final class SiteHealth implements Registrable {
 	 * @param string $message Message that may come from the server.
 	 * @return string
 	 */
-	private function redact( string $message ): string {
+	public function redact( string $message ): string {
 		$keys = array_filter( array( $this->options->admin_key(), $this->options->search_key() ), static fn ( string $key ): bool => '' !== $key );
 
 		return array() === $keys ? $message : str_replace( $keys, '…', $message );

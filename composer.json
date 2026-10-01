@@ -30,6 +30,7 @@
 		"dealerdirect/phpcodesniffer-composer-installer": "^1.0",
 		"mockery/mockery": "^1.6",
 		"php-stubs/woocommerce-stubs": "^11.1",
+		"php-stubs/wp-cli-stubs": "dev-master",
 		"phpcompatibility/phpcompatibility-wp": "^2.1",
 		"phpstan/phpstan": "^2.0",
 		"phpunit/phpunit": "^9.6",
