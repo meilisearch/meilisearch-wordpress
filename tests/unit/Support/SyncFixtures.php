@@ -12,8 +12,16 @@ namespace Meilisearch\WordPress\Tests\Unit\Support;
 use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Api\Response;
+use Meilisearch\WordPress\Indexing\ContentSchema;
 use Meilisearch\WordPress\Indexing\DocumentBuilder;
+use Meilisearch\WordPress\Indexing\Indexability;
+use Meilisearch\WordPress\Indexing\IndexManager;
+use Meilisearch\WordPress\Indexing\Reindexer;
+use Meilisearch\WordPress\Indexing\SettingsBuilder;
+use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
+use Meilisearch\WordPress\Sync\ErrorLog;
+use Meilisearch\WordPress\Sync\Queue;
 
 /**
  * Stubs options, transients, posts and URL helpers against arrays held by the test.
@@ -168,6 +176,92 @@ trait SyncFixtures {
 	 */
 	protected function make_clients( Options $options, FakeTransport $transport ): ClientFactory {
 		return new ClientFactory( $options, $transport );
+	}
+
+	/**
+	 * A real Reindexer wired over the given collaborators (content index only).
+	 *
+	 * @param Options                        $options  Options.
+	 * @param ClientFactory                  $clients  Client factory.
+	 * @param Queue                          $queue    Queue.
+	 * @param ErrorLog                       $log      Error log.
+	 * @param array<string, DocumentBuilder> $builders Logical index => builder.
+	 * @return Reindexer
+	 */
+	protected function make_reindexer( Options $options, ClientFactory $clients, Queue $queue, ErrorLog $log, array $builders ): Reindexer {
+		$names   = new IndexNames( $options );
+		$indexes = new IndexManager( $clients, $names, new SettingsBuilder( array( 'content' => new ContentSchema( $options ) ) ), $options );
+		return new Reindexer( $clients, $indexes, $names, new Indexability( $options ), $builders, $queue, $options, $log );
+	}
+
+	/**
+	 * Installs a $wpdb double: get_col() returns the given pages in order, get_var() the given count.
+	 * Every prepare() call is recorded in $GLOBALS['wpdb']->prepared as [query, args].
+	 *
+	 * @param list<list<int|string>> $pages Result of each successive get_col() call.
+	 * @param string                 $count Result of get_var().
+	 * @return object
+	 */
+	protected function install_wpdb( array $pages, string $count = '0' ): object {
+		$wpdb = new class( $pages, $count ) {
+			/**
+			 * Posts table name.
+			 *
+			 * @var string
+			 */
+			public string $posts = 'wp_posts';
+
+			/**
+			 * Recorded prepare() calls.
+			 *
+			 * @var list<array{0: string, 1: array<int, mixed>}>
+			 */
+			public array $prepared = array();
+
+			/**
+			 * Constructor.
+			 *
+			 * @param list<list<int|string>> $pages Pages.
+			 * @param string                 $count Count.
+			 */
+			public function __construct( private array $pages, private string $count ) {}
+
+			/**
+			 * Records the query and returns it unchanged.
+			 *
+			 * @param string $query   Query.
+			 * @param mixed  ...$args Arguments (or one array of arguments).
+			 * @return string
+			 */
+			public function prepare( string $query, ...$args ): string {
+				if ( 1 === count( $args ) && is_array( $args[0] ) ) {
+					$args = $args[0];
+				}
+				$this->prepared[] = array( $query, $args );
+				return $query;
+			}
+
+			/**
+			 * Next page (the query argument is ignored).
+			 *
+			 * @return list<int|string>
+			 */
+			public function get_col(): array {
+				return array_shift( $this->pages ) ?? array();
+			}
+
+			/**
+			 * The count (the query argument is ignored).
+			 *
+			 * @return string
+			 */
+			public function get_var(): string {
+				return $this->count;
+			}
+		};
+
+		$GLOBALS['wpdb'] = $wpdb; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Unit-test double.
+		return $wpdb;
 	}
 
 	/**

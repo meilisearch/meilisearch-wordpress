@@ -148,8 +148,10 @@ final class Plugin {
 		$queue     = new Sync\Queue();
 		$collector = new Sync\ChangeCollector( $indexability, $queue, $options );
 		$sync_job  = new Sync\SyncJob( $clients, $names, $indexability, $builders, $queue, $error_log );
+		$reindexer = new Indexing\Reindexer( $clients, $indexes, $names, $indexability, $builders, $queue, $options, $error_log );
 		$this->add( 'queue', $queue );
 		$this->add( 'collector', $collector );
+		$this->add( 'reindexer', $reindexer );
 		$this->add( 'sync_job', $sync_job );
 		$this->add( 'term_job', new Sync\TermJob( $collector, $queue, $options ) );
 
