@@ -96,7 +96,7 @@ final class Plugin {
 	 */
 	private function add( string $id, object $service ): void {
 		if ( isset( $this->services[ $id ] ) ) {
-			throw new \LogicException( sprintf( 'Meilisearch service "%s" is already registered.', $id ) );
+			throw new \LogicException( sprintf( 'Meilisearch service "%s" is already registered.', $id ) ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 		$this->services[ $id ] = $service;
 	}
