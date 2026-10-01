@@ -135,5 +135,9 @@ final class Plugin {
 		$settings     = new Indexing\SettingsBuilder( $schemas );
 		$this->add( 'indexability', $indexability );
 		$this->add( 'settings_builder', $settings );
+
+		// Task 8 — index manager.
+		$indexes = new Indexing\IndexManager( $clients, $names, $settings, $options );
+		$this->add( 'index_manager', $indexes );
 	}
 }
