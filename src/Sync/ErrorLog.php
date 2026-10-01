@@ -21,13 +21,21 @@ final class ErrorLog {
 	public const MAX = 50;
 
 	/**
-	 * Records an error.
+	 * Constructor.
+	 *
+	 * @param Options $options Options (the keys to redact from messages).
+	 */
+	public function __construct( private readonly Options $options = new Options() ) {}
+
+	/**
+	 * Records an error. The configured keys are redacted from the message first.
 	 *
 	 * @param string $context Short origin such as 'sync', 'reindex' or 'search'.
 	 * @param string $message Human-readable message.
 	 * @return void
 	 */
 	public function add( string $context, string $message ): void {
+		$message = $this->options->redact( $message );
 		$entries = $this->all();
 		array_unshift(
 			$entries,

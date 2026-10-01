@@ -273,6 +273,19 @@ final class Options {
 	}
 
 	/**
+	 * Removes the configured admin and search keys from a message before it is stored, logged or
+	 * displayed (Meilisearch echoes the key in some errors). Empty keys are skipped.
+	 *
+	 * @param string $message Message that may come from the server.
+	 * @return string
+	 */
+	public function redact( string $message ): string {
+		$keys = array_filter( array( $this->admin_key(), $this->search_key() ), static fn ( string $key ): bool => '' !== $key );
+
+		return array() === $keys ? $message : str_replace( $keys, '…', $message );
+	}
+
+	/**
 	 * Hash recorded in the `search_key_verified` state for a key that may be served to browsers.
 	 *
 	 * @param string $key Key value.

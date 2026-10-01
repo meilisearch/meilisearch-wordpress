@@ -115,7 +115,7 @@ final class SiteHealth implements Registrable {
 				$info    = $this->clients->client()->version();
 				$version = (string) ( $info['pkgVersion'] ?? '' );
 			} catch ( \Throwable $e ) {
-				$error = $this->redact( $e->getMessage() );
+				$error = $this->options->redact( $e->getMessage() );
 			}
 		}
 
@@ -599,7 +599,7 @@ final class SiteHealth implements Registrable {
 		try {
 			return $check();
 		} catch ( \Throwable $e ) {
-			return self::not_checked( $test, $this->redact( $e->getMessage() ) );
+			return self::not_checked( $test, $this->options->redact( $e->getMessage() ) );
 		}
 	}
 
@@ -714,7 +714,7 @@ final class SiteHealth implements Registrable {
 		foreach ( $this->names->active_logicals() as $logical ) {
 			$state = $this->reindexer->status( $logical );
 			if ( is_array( $state ) && 'failed' === ( $state['status'] ?? '' ) ) {
-				$failed[ $logical ] = $this->redact( (string) ( $state['error'] ?? '' ) );
+				$failed[ $logical ] = $this->options->redact( (string) ( $state['error'] ?? '' ) );
 			}
 		}
 
@@ -735,18 +735,6 @@ final class SiteHealth implements Registrable {
 		}
 
 		return $stalled;
-	}
-
-	/**
-	 * Removes the configured admin and search keys from a message before it is displayed.
-	 *
-	 * @param string $message Message that may come from the server.
-	 * @return string
-	 */
-	public function redact( string $message ): string {
-		$keys = array_filter( array( $this->options->admin_key(), $this->options->search_key() ), static fn ( string $key ): bool => '' !== $key );
-
-		return array() === $keys ? $message : str_replace( $keys, '…', $message );
 	}
 
 	/**

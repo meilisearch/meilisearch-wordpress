@@ -374,4 +374,21 @@ final class OptionsTest extends TestCase {
 		$this->assertFalse( $options->is_populated( 'content' ) );
 		$this->assertSame( [], $options->state( 'populated' ) );
 	}
+
+	public function test_redact_removes_the_configured_keys(): void {
+		$this->stub_options(
+			[
+				Options::ADMIN_KEY  => 'admin-secret',
+				Options::CONNECTION => [ 'search_key' => 'search-secret' ],
+			]
+		);
+
+		$this->assertSame( 'key … and …, again …', $this->options()->redact( 'key admin-secret and search-secret, again admin-secret' ) );
+	}
+
+	public function test_redact_skips_empty_keys(): void {
+		$this->stub_options( [ Options::ADMIN_KEY => '' ] );
+
+		$this->assertSame( 'nothing to hide', $this->options()->redact( 'nothing to hide' ) );
+	}
 }

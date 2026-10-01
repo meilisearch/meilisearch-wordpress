@@ -127,7 +127,7 @@ final class Plugin {
 		$this->add( 'clients', $clients );
 
 		// Task 9 — error log (used by admin notices, sync and search).
-		$error_log = new Sync\ErrorLog();
+		$error_log = new Sync\ErrorLog( $options );
 		$this->add( 'error_log', $error_log );
 
 		// Tasks 6-7 (content), Task 20 (products) — indexing model.
@@ -208,7 +208,7 @@ final class Plugin {
 		$this->add( 'site_seeder', new Lifecycle\SiteSeeder() );
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
-			\WP_CLI::add_command( 'meilisearch', new Ops\Cli( $reindexer, $sync_job, $clients, $names, $health, $indexability, $queue ) );
+			\WP_CLI::add_command( 'meilisearch', new Ops\Cli( $reindexer, $sync_job, $clients, $names, $health, $indexability, $queue, $options ) );
 		}
 	}
 }

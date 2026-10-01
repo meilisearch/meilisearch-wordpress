@@ -16,6 +16,7 @@ use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\Reindexer;
 use Meilisearch\WordPress\Settings\IndexNames;
+use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\Queue;
 use Meilisearch\WordPress\Sync\SyncJob;
 use WP_CLI;
@@ -40,9 +41,10 @@ final class Cli {
 	 * @param SyncJob       $sync         Sync job.
 	 * @param ClientFactory $clients      Client factory.
 	 * @param IndexNames    $names        Index names.
-	 * @param SiteHealth    $health       Site Health tests (also redacts keys from messages).
+	 * @param SiteHealth    $health       Site Health tests.
 	 * @param Indexability  $indexability Indexability rule.
 	 * @param Queue         $queue        Action Scheduler wrapper.
+	 * @param Options       $options      Options (redacts the configured keys from messages).
 	 */
 	public function __construct(
 		private readonly Reindexer $reindexer,
@@ -51,7 +53,8 @@ final class Cli {
 		private readonly IndexNames $names,
 		private readonly SiteHealth $health,
 		private readonly Indexability $indexability,
-		private readonly Queue $queue
+		private readonly Queue $queue,
+		private readonly Options $options = new Options()
 	) {}
 
 	/**
@@ -398,7 +401,7 @@ final class Cli {
 	 * @param \Throwable|string $error Exception or message.
 	 */
 	private function message( \Throwable|string $error ): string {
-		$message = $this->health->redact( $error instanceof \Throwable ? $error->getMessage() : $error );
+		$message = $this->options->redact( $error instanceof \Throwable ? $error->getMessage() : $error );
 		$prefix  = 'unsupported_version: ';
 
 		return str_starts_with( $message, $prefix ) ? substr( $message, strlen( $prefix ) ) : $message;

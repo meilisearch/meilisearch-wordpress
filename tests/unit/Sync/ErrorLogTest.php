@@ -76,4 +76,18 @@ final class ErrorLogTest extends TestCase {
 
 		$this->assertSame( array(), $log->all() );
 	}
+
+	public function test_add_redacts_the_configured_keys(): void {
+		$this->stub_options(
+			array(
+				Options::LOG        => array(),
+				Options::ADMIN_KEY  => 'admin-secret',
+				Options::CONNECTION => array( 'search_key' => 'search-secret' ),
+			)
+		);
+
+		( new ErrorLog() )->add( 'sync', 'API key `admin-secret` is invalid; search-secret too' );
+
+		$this->assertSame( 'API key `…` is invalid; … too', ( new ErrorLog() )->all()[0]['message'] );
+	}
 }

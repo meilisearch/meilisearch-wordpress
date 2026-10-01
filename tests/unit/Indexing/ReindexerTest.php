@@ -546,6 +546,26 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
+	 * A failure message that echoes a configured key is stored and logged redacted.
+	 */
+	public function test_failure_message_is_redacted(): void {
+		$this->seed_run();
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( new ApiError( 'The provided API key `test-admin-key` is invalid.', 'invalid_api_key', 403 ) );
+
+		try {
+			$this->handle();
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( 'invalid_api_key', $e->error_code );
+		}
+
+		$this->assertSame( 'The provided API key `…` is invalid.', $this->state()['error'] );
+		$this->assertStringNotContainsString( 'test-admin-key', $this->log->all()[0]['message'] );
+	}
+
+	/**
 	 * A second start while a recent run is active is refused without touching Meilisearch.
 	 */
 	public function test_start_refuses_while_running(): void {

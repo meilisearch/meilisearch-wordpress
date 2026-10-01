@@ -543,6 +543,7 @@ final class Reindexer implements Registrable {
 	 * @return array<string, mixed>
 	 */
 	private function fail( string $logical, array $state, string $message ): array {
+		$message         = $this->options->redact( $message );
 		$state['status'] = 'failed';
 		$state['error']  = $message;
 		$current         = $this->status( $logical );
