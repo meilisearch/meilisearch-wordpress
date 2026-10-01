@@ -1,0 +1,118 @@
+---
+title: WordPress and WooCommerce
+description: Replace WordPress and WooCommerce search with Meilisearch using the official plugin.
+---
+
+The official Meilisearch plugin answers your theme's search and WooCommerce product search with Meilisearch, keeps content in sync in near-real time and can add an accessible autocomplete to your search forms. It needs no template changes.
+
+## Requirements
+
+- WordPress 6.9 or later, PHP 8.1 or later
+- Meilisearch 1.34 or later — [Meilisearch Cloud](https://www.meilisearch.com/cloud) or self-hosted
+- WooCommerce 8.5 or later (optional); product search needs a theme with WooCommerce support or a block theme
+
+## Install
+
+<Steps>
+  <Step title="Install the plugin">
+    In your WordPress admin, open **Plugins > Add New**, search for **Meilisearch**, then click **Install** and **Activate**.
+  </Step>
+  <Step title="Get a Meilisearch URL and admin key">
+    On Meilisearch Cloud, open your project and copy its URL and the **Default Admin API Key**. On a self-hosted instance, use its public URL and an API key with admin permissions (never the master key).
+  </Step>
+  <Step title="Connect">
+    Open **Meilisearch > Connection**, paste the URL and the admin key, and save. The plugin checks the version, creates `{prefix}_content` (and `{prefix}_products` with WooCommerce) and creates a search-only key for browsers.
+  </Step>
+</Steps>
+
+<Note>
+The admin key is stored server-side and never printed in pages. Browsers only receive a key restricted to the `search` action on this site's indexes.
+</Note>
+
+### Configure the connection in `wp-config.php`
+
+Constants override the Connection tab and make its fields read-only, which is convenient for deployments:
+
+```php
+define( 'MEILISEARCH_HOST', 'https://ms-example.meilisearch.io' );
+define( 'MEILISEARCH_ADMIN_KEY', 'your-admin-key' );
+```
+
+Each site gets its own index prefix (`wp_{hash}`, plus the site ID on multisite), so staging and production can share one project. You can change the prefix on the Connection tab; a reindex is then required.
+
+## Choose what to index
+
+Open **Meilisearch > Content** and select the post types, then for each post type the taxonomies and custom field (meta) keys to index. Only public content is indexed: drafts, private, pending and password-protected posts are never sent, and a post that stops being public is removed from Meilisearch.
+
+## Run the first reindex
+
+Open **Meilisearch > Status** and click **Reindex**. In the background, the plugin sends every indexable post to the live index in batches, then deletes documents of posts that no longer exist or are no longer public (orphan sweep). Search keeps working during the reindex, and settings you changed in Meilisearch (synonyms, ranking rules, embedders) are never overwritten.
+
+For large sites, use WP-CLI instead (see below).
+
+## Replace site search
+
+After the first reindex, an admin notice offers to **replace site search**; you can also enable it on **Meilisearch > Search**. From then on, every search results page of your theme is answered by Meilisearch, with the same templates and pagination.
+
+The WordPress database answers instead of Meilisearch when the query cannot be translated, when the current user can read private posts (the index only holds public content), and when the circuit breaker is open: if Meilisearch is slow or unavailable, search falls back within 2 seconds and keeps using the database for 60 seconds.
+
+<Warning>
+Only one plugin can answer the search query. Disable search replacement in Relevanssi, SearchWP, ElasticPress or Jetpack Search before enabling it here.
+</Warning>
+
+## WooCommerce
+
+With WooCommerce active, open **Meilisearch > WooCommerce** and enable **Index products**. Choose the global attributes to index (all by default), whether to index custom attributes and variation SKUs, then reindex.
+
+Product search results support WooCommerce sorting (price, popularity, rating, date), the `min_price` / `max_price` filters and layered navigation attribute filters. Variations are folded into their parent product. Hidden products, and out-of-stock products when **Hide out of stock items** is enabled, are not indexed.
+
+## Autocomplete
+
+Enable **Autocomplete** on **Meilisearch > Search**. A dropdown with matching posts and products appears under existing search fields as visitors type. It follows the WAI-ARIA combobox pattern (arrow keys, Enter, Escape, screen reader announcements) and inherits your theme's colors. Pressing Enter without selecting a suggestion submits the normal search.
+
+<Note>
+With autocomplete on, the characters a visitor types are sent from their browser directly to your Meilisearch host (with the search-only key). Only public content is indexed.
+</Note>
+
+Developers can change which inputs it attaches to with the `meilisearch_autocomplete_selector` filter.
+
+## Hybrid search
+
+Configure an embedder in Meilisearch first (for example in your Meilisearch Cloud project's index settings). Then, on **Meilisearch > Search**, enter the embedder name and a semantic ratio between 0 (keyword only) and 1 (semantic only). The plugin never creates or changes embedders.
+
+## WP-CLI
+
+| Command | Purpose |
+|---|---|
+| `wp meilisearch status` | Version, document count vs. expected count per index, reindex status/phase/progress/deleted orphans, sync queue |
+| `wp meilisearch reindex [--index=<content\|products>] [--batch-size=<n>]` | Synchronous in-place reindex with a progress bar, followed by an orphan sweep |
+| `wp meilisearch sync <id>...` | Reconcile specific posts now |
+| `wp meilisearch clear [--index=<content\|products>] [--yes]` | Delete all documents of an index |
+| `wp meilisearch check` | Run the Site Health checks; exits with status 1 when a check is critical |
+
+## Multisite
+
+Each site has its own connection settings and index prefix. On multisite, only super admins can edit the Connection tab. New sites receive default settings automatically.
+
+## Troubleshooting
+
+- **Tools > Site Health** reports the connection and version, document count drift, missing index settings, the sync queue backlog and failed jobs, the scope of the browser search key, and pending reindexes. `wp meilisearch check` prints the same checks.
+- **Changes do not appear in search**: sync jobs run through Action Scheduler, which relies on WP-Cron. Make sure WP-Cron runs (or call `wp-cron.php` from a server cron), and check **Tools > Scheduled Actions**, group `meilisearch`.
+- **Search results come from the database**: check that **Replace site search** is enabled, and look for a connection error in Site Health; after an error the plugin waits 60 seconds before using Meilisearch again.
+- **Autocomplete does not show**: it needs a search key. Save the Connection tab again, or paste a search-only key if your admin key cannot create keys.
+
+## Developer hooks
+
+| Hook | Type | Purpose |
+|---|---|---|
+| `meilisearch_should_index_post` | filter | Veto indexing a post |
+| `meilisearch_document` | filter | Modify a document before it is sent |
+| `meilisearch_document_content` | filter | Replace how the `content` field is built |
+| `meilisearch_index_settings` | filter | Adjust the settings the plugin requires |
+| `meilisearch_should_intercept` | filter | Veto search interception for a query |
+| `meilisearch_search_params` | filter | Modify the Meilisearch search request |
+| `meilisearch_search_timeout` | filter | Search timeout in seconds (default 2) |
+| `meilisearch_reindex_batch_size` | filter | Reindex batch size (default 200) |
+| `meilisearch_autocomplete_selector` | filter | Inputs the autocomplete attaches to |
+
+Any `WP_Query` can opt in to Meilisearch with the `'meilisearch' => true` argument; queries the plugin cannot translate still run on the database.

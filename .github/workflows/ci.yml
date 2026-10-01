@@ -17,6 +17,7 @@ jobs:
   lint:
     name: PHPCS + PHPStan
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -38,6 +39,7 @@ jobs:
   unit:
     name: Unit (PHP ${{ matrix.php }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +65,7 @@ jobs:
   integration:
     name: Integration (WP ${{ matrix.wp }}, Meilisearch ${{ matrix.meili }}, ${{ matrix.suite }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -98,6 +101,7 @@ jobs:
         image: getmeili/meilisearch:${{ matrix.meili }}
         env:
           MEILI_MASTER_KEY: masterKey
+          MEILI_ENV: development
           MEILI_NO_ANALYTICS: 'true'
         ports:
           - 7700:7700
@@ -152,6 +156,7 @@ jobs:
   e2e:
     name: E2E (latest WordPress, WooCommerce and Meilisearch)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       MEILI_VERSION: latest
     steps:
@@ -192,3 +197,29 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 14
+
+  plugin-check:
+    name: Plugin Check (distributable zip)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          coverage: none
+          tools: composer:v2, wp-cli
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build the distributable
+        run: bash bin/build-zip.sh
+
+      - name: Plugin Check
+        uses: WordPress/plugin-check-action@v1
+        with:
+          build-dir: ./build/meilisearch

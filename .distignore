@@ -1,0 +1,24 @@
+```text
+# Files that never ship to wordpress.org (read by wp dist-archive in bin/build-zip.sh).
+# Every dotfile and dot-directory (.git, .github, .wordpress-org, .distignore, .editorconfig, ...).
+.*
+/bin
+/build
+/docs
+/wordpress
+/node_modules
+/tests
+/test-results
+/playwright-report
+/compose.yaml
+/Dockerfile.dev
+/composer.lock
+/package.json
+/package-lock.json
+/phpcs.xml.dist
+/phpstan.neon.dist
+/phpunit.xml.dist
+/phpunit-integration.xml.dist
+/README.md
+/CLAUDE.md
+/AGENTS.md
