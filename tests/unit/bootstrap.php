@@ -21,3 +21,4 @@ define( 'MEILISEARCH_FILE', $meilisearch_root . '/meilisearch.php' );
 define( 'MEILISEARCH_DIR', $meilisearch_root . '/' );
 
 require_once __DIR__ . '/Support/wp-doubles.php';
+require_once __DIR__ . '/Support/wc-features-util.php';

@@ -301,6 +301,14 @@ if ( ! class_exists( 'WC_Product' ) ) {
 			return $this->prop( 'attributes', [] );
 		}
 
+		public function get_category_ids() {
+			return $this->prop( 'category_ids', [] );
+		}
+
+		public function get_tag_ids() {
+			return $this->prop( 'tag_ids', [] );
+		}
+
 		public function get_meta( $key = '', $single = true ) {
 			$meta = $this->prop( 'meta', [] );
 			if ( array_key_exists( $key, $meta ) ) {
@@ -308,6 +316,11 @@ if ( ! class_exists( 'WC_Product' ) ) {
 			}
 			return $single ? '' : [];
 		}
+	}
+}
+
+if ( ! class_exists( 'WC_Product_Simple' ) ) {
+	class WC_Product_Simple extends WC_Product {
 	}
 }
 
@@ -321,13 +334,30 @@ if ( ! class_exists( 'WC_Product_Variable' ) ) {
 			$prices = $this->prop( 'variation_prices', [] );
 			return $prices[ $min_or_max ] ?? '';
 		}
+
+		public function get_variation_regular_price( $min_or_max = 'min', $for_display = false ) {
+			$prices = $this->prop( 'variation_regular_prices', [] );
+			return $prices[ $min_or_max ] ?? '';
+		}
+
+		public function get_variation_sale_price( $min_or_max = 'min', $for_display = false ) {
+			$prices = $this->prop( 'variation_sale_prices', [] );
+			return $prices[ $min_or_max ] ?? '';
+		}
 	}
 }
 
 if ( ! class_exists( 'WC_Product_Variation' ) ) {
-	class WC_Product_Variation extends WC_Product {
+	// Like WooCommerce core, a variation is a simple product.
+	class WC_Product_Variation extends WC_Product_Simple {
 		public function get_type() {
 			return $this->prop( 'type', 'variation' );
+		}
+
+		// Core falls back to the parent SKU in 'view' context; prop parent_sku stands for it.
+		public function get_sku( $context = 'view' ) {
+			$sku = $this->prop( 'sku', '' );
+			return ( 'view' === $context && '' === $sku ) ? $this->prop( 'parent_sku', '' ) : $sku;
 		}
 
 		public function get_variation_attributes( $with_prefix = true ) {
@@ -405,6 +435,45 @@ if ( ! class_exists( 'WC_Product_Attribute' ) ) {
 
 		public function is_taxonomy() {
 			return 0 < $this->get_id();
+		}
+	}
+}
+
+if ( ! class_exists( 'WC_Product_Grouped' ) ) {
+	class WC_Product_Grouped extends WC_Product {
+		public function get_type() {
+			return $this->prop( 'type', 'grouped' );
+		}
+	}
+}
+
+if ( ! class_exists( 'WC_Product_External' ) ) {
+	class WC_Product_External extends WC_Product {
+		public function get_type() {
+			return $this->prop( 'type', 'external' );
+		}
+	}
+}
+
+if ( ! class_exists( 'WP_Term' ) ) {
+	class WP_Term {
+		public $term_id          = 0;
+		public $name             = '';
+		public $slug             = '';
+		public $term_group       = 0;
+		public $term_taxonomy_id = 0;
+		public $taxonomy         = '';
+		public $description      = '';
+		public $parent           = 0;
+		public $count            = 0;
+		public $filter           = 'raw';
+
+		public function __construct( $term = [] ) {
+			foreach ( (array) $term as $key => $value ) {
+				if ( property_exists( $this, (string) $key ) ) {
+					$this->{$key} = $value;
+				}
+			}
 		}
 	}
 }

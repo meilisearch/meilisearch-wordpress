@@ -84,7 +84,7 @@
 		],
 		"lint": "phpcs",
 		"lint:fix": "phpcbf",
-		"analyse": "phpstan analyse --memory-limit=1G --no-progress"
+		"analyse": "phpstan analyse --memory-limit=2G --no-progress"
 	},
 	"minimum-stability": "stable",
 	"prefer-stable": true

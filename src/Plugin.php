@@ -180,5 +180,10 @@ final class Plugin {
 		$this->add( 'admin_menu', new Admin\Menu( $tabs ) );
 		$this->add( 'admin_notices', new Admin\Notices( $options, $error_log ) );
 		$this->add( 'admin_rest', new Admin\RestController( $indexes, $reindexer, $options ) );
+
+		// Task 19, Task 21 — WooCommerce hooks.
+		if ( class_exists( 'WooCommerce' ) ) {
+			$this->add( 'wc_compat', new WooCommerce\Compatibility() );
+		}
 	}
 }
