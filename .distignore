@@ -1,4 +1,4 @@
-# Files that never ship to wordpress.org (read by wp dist-archive in bin/build-zip.sh).
+# Files that never ship to wordpress.org (rsync --exclude-from patterns, read by bin/build-zip.sh).
 # Every dotfile and dot-directory (.git, .github, .wordpress-org, .distignore, .editorconfig, ...).
 .*
 /bin

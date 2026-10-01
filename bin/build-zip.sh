@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds build/meilisearch.zip and build/meilisearch/: the exact wordpress.org payload.
 # Works from a staging copy, so the checkout's vendor/ and node_modules/ are untouched.
-# Requires: git, php + composer, node + npm, wp-cli, tar, zip, unzip.
+# Requires: git, php + composer, node + npm, tar, rsync, zip.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,12 +20,9 @@ trap 'rm -rf "$stage"' EXIT
 ( cd "$stage" && composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress )
 ( cd "$stage" && npm ci --no-audit --no-fund && npm run build )
 
-# dist-archive v3.2+ requires WP-CLI ^2.13; v3.1.0 works with the current WP-CLI 2.12 release.
-if ! wp package path wp-cli/dist-archive-command > /dev/null 2>&1; then
-php -d memory_limit=-1 "$(command -v wp)" package install wp-cli/dist-archive-command:v3.1.0
-fi
-wp dist-archive "$stage" "$build/meilisearch.zip" --plugin-dirname=meilisearch --force
-unzip -q "$build/meilisearch.zip" -d "$build"
+# Apply .distignore (rsync patterns: a leading "/" anchors to the plugin root, ".*" matches every dotfile).
+rsync -a --exclude-from="$root/.distignore" "$stage/" "$dist/"
+( cd "$build" && zip -q -r -X meilisearch.zip meilisearch )
 rm -rf "$stage"
 
 status=0
