@@ -7,6 +7,12 @@
 
 declare(strict_types=1);
 
+// Opt-in: boot the plugin as if running under WP-CLI (BootTest::test_cli_command_is_registered).
+if ( '1' === getenv( 'MEILISEARCH_TEST_WP_CLI' ) ) {
+	require_once __DIR__ . '/Support/wp-cli-shim.php';
+	define( 'WP_CLI', true );
+}
+
 $meilisearch_root = dirname( __DIR__, 2 );
 
 // Loads the PHPUnit Polyfills and sets WP_PHPUNIT__DIR.
@@ -18,6 +24,19 @@ putenv( 'WP_PHPUNIT__TESTS_CONFIG=' . __DIR__ . '/wp-tests-config.php' );
 $meilisearch_wp_tests = (string) getenv( 'WP_PHPUNIT__DIR' );
 
 require_once $meilisearch_wp_tests . '/includes/functions.php';
+
+// WooCommerce runs: enable product indexing before Plugin::boot() (plugins_loaded) so ProductSync is wired.
+// muplugins_loaded runs after the test database is installed; priority 1 runs before the plugin is loaded.
+if ( '1' === getenv( 'MEILISEARCH_TEST_WC' ) ) {
+	tests_add_filter(
+		'muplugins_loaded',
+		static function (): void {
+			$defaults = \Meilisearch\WordPress\Settings\Options::defaults()[ \Meilisearch\WordPress\Settings\Options::WOOCOMMERCE ];
+			update_option( \Meilisearch\WordPress\Settings\Options::WOOCOMMERCE, array_merge( $defaults, array( 'enabled' => true ) ) );
+		},
+		1
+	);
+}
 
 tests_add_filter(
 	'muplugins_loaded',
