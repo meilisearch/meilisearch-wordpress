@@ -54,6 +54,7 @@ final class ContentDocumentBuilderTest extends TestCase {
 		);
 		Functions\when( 'strip_shortcodes' )->alias( static fn( $text ) => (string) preg_replace( '/\[[^\]]*\]/', '', (string) $text ) );
 		Functions\when( 'do_blocks' )->returnArg();
+		Functions\when( 'get_current_user_id' )->justReturn( 0 );
 		Functions\when( 'wp_trim_words' )->alias(
 			static function ( $text, $num = 55, $more = null ) {
 				$words = preg_split( '/\s+/', trim( (string) $text ) );
@@ -108,6 +109,58 @@ final class ContentDocumentBuilderTest extends TestCase {
 		$this->assertSame( 7, $doc['author_id'] );
 		$this->assertSame( 'Ada & Co', $doc['author_name'] );
 		$this->assertNull( $doc['thumbnail_url'] );
+	}
+
+	public function test_blocks_are_rendered_as_anonymous_and_user_is_restored(): void {
+		$calls = array();
+		Functions\when( 'get_current_user_id' )->justReturn( 5 );
+		Functions\when( 'wp_set_current_user' )->alias(
+			static function ( $id ) use ( &$calls ) {
+				$calls[] = 'user:' . $id;
+				return null;
+			}
+		);
+		Functions\when( 'do_blocks' )->alias(
+			static function ( $content ) use ( &$calls ) {
+				$calls[] = 'do_blocks';
+				return $content;
+			}
+		);
+
+		$this->builder()->core_fields( $this->post() );
+
+		$this->assertSame( array( 'user:0', 'do_blocks', 'user:5' ), $calls );
+	}
+
+	public function test_current_user_is_restored_when_rendering_throws(): void {
+		$calls = array();
+		Functions\when( 'get_current_user_id' )->justReturn( 5 );
+		Functions\when( 'wp_set_current_user' )->alias(
+			static function ( $id ) use ( &$calls ) {
+				$calls[] = 'user:' . $id;
+				return null;
+			}
+		);
+		Functions\when( 'do_blocks' )->alias(
+			static function () {
+				throw new \RuntimeException( 'block failed' );
+			}
+		);
+
+		try {
+			$this->builder()->core_fields( $this->post() );
+			$this->fail( 'The rendering exception must propagate.' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertSame( 'block failed', $e->getMessage() );
+		}
+
+		$this->assertSame( array( 'user:0', 'user:5' ), $calls );
+	}
+
+	public function test_anonymous_visitor_is_not_switched(): void {
+		Functions\expect( 'wp_set_current_user' )->never();
+
+		$this->builder()->core_fields( $this->post() );
 	}
 
 	public function test_explicit_excerpt_wins_and_is_cleaned(): void {

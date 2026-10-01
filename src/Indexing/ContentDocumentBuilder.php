@@ -61,11 +61,13 @@ final class ContentDocumentBuilder implements DocumentBuilder {
 	/**
 	 * Core fields shared by content and product documents.
 	 *
+	 * Block content is always rendered as an anonymous visitor (see render_as_anonymous()).
+	 *
 	 * @param \WP_Post $post Post.
 	 * @return array<string, mixed>
 	 */
 	public function core_fields( \WP_Post $post ): array {
-		$raw     = wp_strip_all_tags( do_blocks( strip_shortcodes( (string) $post->post_content ) ) );
+		$raw     = wp_strip_all_tags( self::render_as_anonymous( strip_shortcodes( (string) $post->post_content ) ) );
 		$content = self::clean_text( $raw );
 
 		/**
@@ -170,6 +172,30 @@ final class ContentDocumentBuilder implements DocumentBuilder {
 		}
 
 		return $fields;
+	}
+
+	/**
+	 * Renders blocks with the capabilities of an anonymous visitor.
+	 *
+	 * Dynamic blocks (core/query, core/latest-posts, ...) run queries as the current user, so an
+	 * editor or WP-CLI admin would otherwise index private posts inside a public document. The
+	 * previous user is restored in a finally block, and only when it was changed.
+	 *
+	 * @param string $content Post content.
+	 * @return string Rendered content.
+	 */
+	private static function render_as_anonymous( string $content ): string {
+		$previous = (int) get_current_user_id();
+		if ( 0 === $previous ) {
+			return do_blocks( $content );
+		}
+
+		wp_set_current_user( 0 );
+		try {
+			return do_blocks( $content );
+		} finally {
+			wp_set_current_user( $previous );
+		}
 	}
 
 	/**
