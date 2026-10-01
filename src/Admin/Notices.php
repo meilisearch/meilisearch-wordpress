@@ -50,6 +50,8 @@ final class Notices implements Registrable {
 	 */
 	public function register(): void {
 		add_action( 'admin_notices', array( $this, 'render' ) );
+		add_action( 'admin_notices', array( $this, 'render_search_notices' ) );
+		add_action( 'admin_post_meilisearch_enable_search', array( $this, 'handle_enable_search' ) );
 	}
 
 	/**
@@ -83,6 +85,74 @@ final class Notices implements Registrable {
 				$link // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Escaped above.
 			);
 		}
+	}
+
+	/**
+	 * First active plugin that also replaces the site search, or null.
+	 *
+	 * @return string|null Plugin file.
+	 */
+	public function conflicting_plugin(): ?string {
+		if ( ! function_exists( 'is_plugin_active' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+		foreach ( self::CONFLICTING_PLUGINS as $plugin ) {
+			if ( is_plugin_active( $plugin ) ) {
+				return $plugin;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Search notices (spec § 9.1): the conflict warning, or the prompt to enable Meilisearch
+	 * search once the first full reindex is done.
+	 */
+	public function render_search_notices(): void {
+		if ( ! current_user_can( 'manage_options' ) || ! $this->options->is_configured() ) {
+			return;
+		}
+		$search    = $this->options->search();
+		$reindexed = (bool) $this->options->state( 'first_reindex_done', false );
+		$conflict  = $this->conflicting_plugin();
+		if ( null !== $conflict ) {
+			if ( $search['replace'] || $reindexed ) {
+				printf(
+					'<div class="notice notice-warning"><p>%s</p></div>',
+					esc_html(
+						sprintf(
+							/* translators: %s: plugin file of the other search plugin, e.g. relevanssi/relevanssi.php. */
+							__( 'Another search plugin is active (%s). Two plugins replacing the site search at the same time give unpredictable results: deactivate one of them before using Meilisearch search.', 'meilisearch' ),
+							$conflict
+						)
+					)
+				);
+			}
+			return;
+		}
+		if ( $search['replace'] || ! $reindexed ) {
+			return;
+		}
+		echo '<div class="notice notice-info"><p>' . esc_html__( 'Your content is indexed in Meilisearch. Use Meilisearch to answer your site search?', 'meilisearch' ) . '</p>';
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><p>';
+		echo '<input type="hidden" name="action" value="meilisearch_enable_search" />';
+		wp_nonce_field( 'meilisearch_enable_search' );
+		echo '<button type="submit" class="button button-primary">' . esc_html__( 'Enable Meilisearch search', 'meilisearch' ) . '</button>';
+		echo '</p></form></div>';
+	}
+
+	/**
+	 * Handles the enable-search button (admin-post.php?action=meilisearch_enable_search).
+	 */
+	public function handle_enable_search(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Sorry, you are not allowed to change the Meilisearch settings.', 'meilisearch' ), '', array( 'response' => 403 ) );
+		}
+		check_admin_referer( 'meilisearch_enable_search' );
+		update_option( Options::SEARCH, array_merge( $this->options->search(), array( 'replace' => true ) ) );
+		$referer = wp_get_referer();
+		wp_safe_redirect( false !== $referer ? $referer : Menu::url( 'search' ) );
+		exit;
 	}
 
 	/**

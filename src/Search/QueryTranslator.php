@@ -71,6 +71,12 @@ final class QueryTranslator {
 	);
 
 	/**
+	 * Denied query vars that WP_Query::parse_query() fills with the integer 0 when they are not
+	 * requested (absint()), so 0 means "unset" for them.
+	 */
+	private const ZERO_WHEN_UNSET_VARS = array( 'p', 'page_id', 'attachment_id', 'year', 'monthnum', 'day', 'w' );
+
+	/**
 	 * WP_Query orderby keys => sortable content fields.
 	 */
 	private const SORT_FIELDS = array(
@@ -279,7 +285,11 @@ final class QueryTranslator {
 	 */
 	private function has_unsupported_vars( \WP_Query $query ): bool {
 		foreach ( self::DENIED_VARS as $var ) {
-			if ( self::has_value( $query->get( $var ) ) ) {
+			$value = $query->get( $var );
+			if ( in_array( $var, self::ZERO_WHEN_UNSET_VARS, true ) && ( 0 === $value || '0' === $value ) ) {
+				continue;
+			}
+			if ( self::has_value( $value ) ) {
 				return true;
 			}
 		}

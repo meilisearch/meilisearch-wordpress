@@ -120,6 +120,26 @@ final class QueryTranslatorTest extends TestCase {
 	}
 
 	/**
+	 * WP_Query::parse_query() fills p, page_id, attachment_id, year, monthnum, day and w with 0
+	 * when unset: that is not a restriction. A real value still is.
+	 */
+	public function test_zero_defaults_filled_by_parse_query_do_not_block_interception(): void {
+		$defaults = array(
+			's'             => 'shoes',
+			'p'             => 0,
+			'page_id'       => 0,
+			'attachment_id' => 0,
+			'year'          => 0,
+			'monthnum'      => 0,
+			'day'           => 0,
+			'w'             => 0,
+		);
+		self::assertNotNull( $this->translator()->translate( $this->make_query( $defaults ) ) );
+		self::assertNull( $this->translator()->translate( $this->make_query( array_merge( $defaults, array( 'p' => 5 ) ) ) ) );
+		self::assertNull( $this->translator()->translate( $this->make_query( array_merge( $defaults, array( 'year' => 2024 ) ) ) ) );
+	}
+
+	/**
 	 * Surrounding whitespace is trimmed from q.
 	 */
 	public function test_query_is_trimmed(): void {

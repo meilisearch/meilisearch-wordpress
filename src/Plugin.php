@@ -166,6 +166,8 @@ final class Plugin {
 		$this->add( 'searcher', $searcher );
 		$this->add( 'result_mapper', $mapper );
 		$this->add( 'circuit_breaker', $breaker );
+		$this->add( 'interceptor', new Search\Interceptor( $translator, $searcher, $mapper, $breaker, $options, $error_log ) );
+		$this->add( 'highlighter', new Search\Highlighter( $mapper, $options ) );
 
 		// Tasks 9-10, 14, 21 — admin.
 		$tabs = array(
