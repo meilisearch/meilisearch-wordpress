@@ -339,6 +339,35 @@ final class SearcherTest extends TestCase {
 	}
 
 	/**
+	 * A 2xx answer without a hits list is an invalid response, not an empty result: the caller
+	 * falls back to MySQL and trips the breaker.
+	 *
+	 * @dataProvider responses_without_hits
+	 *
+	 * @param array<string, mixed> $body Response body.
+	 */
+	public function test_response_without_hits_is_an_invalid_response( array $body ): void {
+		$this->transport->queue( self::ok( $body ) );
+
+		try {
+			$this->searcher()->execute( new SearchRequest( array( 'content' ), 'x', 1, 10, array(), array(), null, false ) );
+			self::fail( 'Expected an ApiError.' );
+		} catch ( ApiError $e ) {
+			self::assertSame( 'invalid_response', $e->error_code );
+		}
+	}
+
+	/**
+	 * @return array<string, array{0: array<string, mixed>}>
+	 */
+	public static function responses_without_hits(): array {
+		return array(
+			'no hits key'    => array( array( 'totalHits' => 3 ) ),
+			'hits not array' => array( array( 'hits' => 'nope' ) ),
+		);
+	}
+
+	/**
 	 * Transport errors propagate as ApiError.
 	 */
 	public function test_api_error_propagates(): void {

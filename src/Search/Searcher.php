@@ -152,11 +152,15 @@ final class Searcher {
 	 * @param array<string, mixed> $response Response body.
 	 * @param SearchRequest        $request  Request.
 	 * @return SearchResult
+	 * @throws ApiError Code 'invalid_response' when the body has no hits list (MySQL answers instead).
 	 */
 	private function parse( array $response, SearchRequest $request ): SearchResult {
+		if ( ! isset( $response['hits'] ) || ! is_array( $response['hits'] ) ) {
+			throw new ApiError( __( 'Meilisearch answered the search without a list of hits.', 'meilisearch' ), 'invalid_response' ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
+		}
 		$ids       = array();
 		$formatted = array();
-		$hits      = isset( $response['hits'] ) && is_array( $response['hits'] ) ? $response['hits'] : array();
+		$hits      = $response['hits'];
 		foreach ( $hits as $hit ) {
 			if ( ! is_array( $hit ) || ! isset( $hit['id'] ) || ! is_numeric( $hit['id'] ) ) {
 				continue;
