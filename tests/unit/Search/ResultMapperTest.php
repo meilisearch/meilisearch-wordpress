@@ -72,6 +72,45 @@ final class ResultMapperTest extends TestCase {
 	}
 
 	/**
+	 * Stale hits for trashed, private, draft and password-protected posts are dropped; totals unchanged.
+	 */
+	public function test_non_public_posts_are_dropped(): void {
+		Functions\when( '_prime_post_caches' )->justReturn( null );
+		$this->posts[20] = new \WP_Post(
+			array(
+				'ID'          => 20,
+				'post_status' => 'trash',
+			)
+		);
+		$this->posts[21] = new \WP_Post(
+			array(
+				'ID'          => 21,
+				'post_status' => 'private',
+			)
+		);
+		$this->posts[22] = new \WP_Post(
+			array(
+				'ID'          => 22,
+				'post_status' => 'draft',
+			)
+		);
+		$this->posts[23] = new \WP_Post(
+			array(
+				'ID'            => 23,
+				'post_status'   => 'publish',
+				'post_password' => 'secret',
+			)
+		);
+		$query           = new \WP_Query( array() );
+
+		$posts = ( new ResultMapper() )->apply( $query, new SearchResult( array( 12, 20, 21, 22, 23, 7 ), 6, 1, array() ) );
+
+		self::assertSame( array( $this->posts[12], $this->posts[7] ), $posts );
+		self::assertSame( 6, $query->found_posts );
+		self::assertSame( 1, $query->max_num_pages );
+	}
+
+	/**
 	 * Review Focus #3: paged past the end → no posts, real totals, no cache priming.
 	 */
 	public function test_page_beyond_last_returns_empty_but_keeps_totals(): void {

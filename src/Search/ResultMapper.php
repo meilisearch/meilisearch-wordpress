@@ -46,9 +46,10 @@ final class ResultMapper {
 
 		$posts = array();
 		foreach ( $result->ids as $id ) {
-			// Hits whose post no longer loads are dropped; totals unchanged.
+			// Hits whose post no longer loads, or is no longer public (stale index entry until its
+			// queued delete runs: spec § 5.2), are dropped; totals unchanged.
 			$post = get_post( $id );
-			if ( $post instanceof \WP_Post ) {
+			if ( $post instanceof \WP_Post && 'publish' === $post->post_status && '' === $post->post_password ) {
 				$posts[] = $post;
 			}
 		}
