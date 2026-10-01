@@ -29,4 +29,7 @@ require_once MEILISEARCH_DIR . 'vendor/autoload.php';
 // Loaded at plugin load time, never inside a hook, so Action Scheduler can negotiate versions with other copies.
 require_once MEILISEARCH_DIR . 'vendor/woocommerce/action-scheduler/action-scheduler.php';
 
+register_activation_hook( MEILISEARCH_FILE, array( \Meilisearch\WordPress\Lifecycle\Activator::class, 'activate' ) );
+register_deactivation_hook( MEILISEARCH_FILE, array( \Meilisearch\WordPress\Lifecycle\Deactivator::class, 'deactivate' ) );
+
 add_action( 'plugins_loaded', array( \Meilisearch\WordPress\Plugin::class, 'boot' ) );

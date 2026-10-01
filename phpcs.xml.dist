@@ -3,6 +3,7 @@
 	<description>Coding standard for the Meilisearch WordPress plugin.</description>
 
 	<file>meilisearch.php</file>
+	<file>uninstall.php</file>
 	<file>src</file>
 	<file>tests</file>
 

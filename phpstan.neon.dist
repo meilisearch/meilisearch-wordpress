@@ -6,6 +6,7 @@ parameters:
 	phpVersion: 80100
 	paths:
 		- meilisearch.php
+		- uninstall.php
 		- src
 	scanFiles:
 		- vendor/php-stubs/woocommerce-stubs/woocommerce-stubs.php
