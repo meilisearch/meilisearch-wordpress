@@ -147,8 +147,11 @@ final class Plugin {
 		// Tasks 11-13 — sync and reindex.
 		$queue     = new Sync\Queue();
 		$collector = new Sync\ChangeCollector( $indexability, $queue, $options );
+		$sync_job  = new Sync\SyncJob( $clients, $names, $indexability, $builders, $queue, $error_log );
 		$this->add( 'queue', $queue );
 		$this->add( 'collector', $collector );
+		$this->add( 'sync_job', $sync_job );
+		$this->add( 'term_job', new Sync\TermJob( $collector, $queue, $options ) );
 
 		// Tasks 9-10, 14, 21 — admin.
 		$tabs = array(
