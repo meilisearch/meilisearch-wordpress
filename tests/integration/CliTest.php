@@ -54,7 +54,8 @@ final class CliTest extends TestCase {
 			$this->service( 'names', IndexNames::class ),
 			$this->service( 'reindexer', Reindexer::class ),
 			$this->service( 'queue', Queue::class ),
-			$this->service( 'options', Options::class )
+			$this->service( 'options', Options::class ),
+			$this->service( 'indexability', Indexability::class )
 		);
 
 		return new Cli(

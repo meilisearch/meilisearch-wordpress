@@ -5,6 +5,7 @@ namespace Meilisearch\WordPress\Tests\Unit\Admin;
 
 use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Admin\SearchTab;
+use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Tests\Unit\TestCase;
 
@@ -14,10 +15,16 @@ final class SearchTabTest extends TestCase {
 		parent::set_up();
 		Functions\when( 'sanitize_text_field' )->alias( static fn( $text ) => trim( (string) preg_replace( '/[\r\n\t ]+/', ' ', strip_tags( (string) $text ) ) ) );
 		Functions\when( 'current_user_can' )->justReturn( true );
+		Functions\when( 'get_post_types' )->justReturn( array( 'post' => 'post' ) );
+	}
+
+	private static function tab(): SearchTab {
+		$options = new Options();
+		return new SearchTab( $options, new Indexability( $options ) );
 	}
 
 	public function test_identity(): void {
-		$tab = new SearchTab( new Options() );
+		$tab = self::tab();
 
 		$this->assertSame( 'search', $tab->slug() );
 		$this->assertSame( 'Search', $tab->label() );
@@ -32,7 +39,7 @@ final class SearchTabTest extends TestCase {
 			}
 		);
 
-		( new SearchTab( new Options() ) )->register_settings();
+		( self::tab() )->register_settings();
 
 		$this->assertSame( array( array( 'meilisearch_search', Options::SEARCH, array( SearchTab::class, 'sanitize' ) ) ), $registered );
 	}
@@ -129,7 +136,7 @@ final class SearchTabTest extends TestCase {
 		Functions\when( 'checked' )->alias( static fn( $a, $b ) => $a === $b ? ' checked="checked"' : '' );
 
 		ob_start();
-		( new SearchTab( new Options() ) )->render();
+		( self::tab() )->render();
 		$html = (string) ob_get_clean();
 
 		$this->assertStringContainsString( 'value="meilisearch_search"', $html );
@@ -138,5 +145,38 @@ final class SearchTabTest extends TestCase {
 		$this->assertStringContainsString( 'name="meilisearch_search[embedder]" value="default"', $html );
 		$this->assertStringContainsString( 'value="0.5"', $html );
 		$this->assertStringContainsString( SearchTab::DOCS_URL, $html );
+	}
+
+	/**
+	 * @return string Rendered tab with the given search settings and searchable post types.
+	 */
+	private function render_with( bool $replace, array $searchable ): string {
+		Functions\when( 'get_option' )->alias(
+			static fn( $name ) => Options::SEARCH === $name
+				? array( 'replace' => $replace )
+				: ( Options::CONTENT === $name ? array( 'post_types' => array( 'post', 'page' ) ) : false )
+		);
+		Functions\when( 'get_post_types' )->justReturn( array_combine( $searchable, $searchable ) );
+		Functions\when( 'settings_fields' )->justReturn( null );
+		Functions\when( 'submit_button' )->justReturn( null );
+		Functions\when( 'checked' )->justReturn( '' );
+
+		ob_start();
+		self::tab()->render();
+		return (string) ob_get_clean();
+	}
+
+	public function test_replace_warns_about_searchable_types_that_are_not_indexed(): void {
+		$html = $this->render_with( true, array( 'post', 'page', 'attachment', 'event<b>' ) );
+
+		$this->assertStringContainsString( 'notice-warning', $html );
+		$this->assertStringContainsString( 'event&lt;b&gt;', $html );
+		$this->assertStringNotContainsString( 'event<b>', $html );
+		$this->assertStringNotContainsString( 'attachment', $html );
+	}
+
+	public function test_no_warning_when_every_searchable_type_is_indexed_or_replace_is_off(): void {
+		$this->assertStringNotContainsString( 'notice-warning', $this->render_with( true, array( 'post', 'page', 'attachment' ) ) );
+		$this->assertStringNotContainsString( 'notice-warning', $this->render_with( false, array( 'post', 'event' ) ) );
 	}
 }

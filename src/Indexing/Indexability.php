@@ -58,6 +58,25 @@ final class Indexability {
 	}
 
 	/**
+	 * Post types included in default ("any") searches that no index holds. A search that includes one
+	 * of them is never answered by Meilisearch. Attachments are left out: "any" searches skip them
+	 * when they are not indexed (see QueryTranslator).
+	 *
+	 * @return list<string>
+	 */
+	public function unindexed_searchable_types(): array {
+		$types = array();
+		foreach ( get_post_types( array( 'exclude_from_search' => false ) ) as $type ) {
+			$type = (string) $type;
+			if ( 'attachment' !== $type && 'product_variation' !== $type && null === $this->index_for_type( $type ) ) {
+				$types[] = $type;
+			}
+		}
+
+		return $types;
+	}
+
+	/**
 	 * Logical index for a post; null for revisions, autosaves and non-indexed types.
 	 *
 	 * @param \WP_Post $post Post.

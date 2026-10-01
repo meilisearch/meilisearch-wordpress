@@ -151,4 +151,21 @@ final class IndexabilityTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		new Indexability( new Options(), 'not a function name' );
 	}
+
+	public function test_unindexed_searchable_types(): void {
+		Functions\expect( 'get_post_types' )
+			->with( array( 'exclude_from_search' => false ) )
+			->andReturn(
+				array(
+					'post'       => 'post',
+					'page'       => 'page',
+					'attachment' => 'attachment',
+					'event'      => 'event',
+					'product'    => 'product',
+				)
+			);
+
+		$this->assertSame( array( 'event', 'product' ), ( new Indexability( new Options() ) )->unindexed_searchable_types() );
+		$this->assertSame( array( 'event' ), ( new Indexability( new Options(), static fn(): bool => true ) )->unindexed_searchable_types() );
+	}
 }

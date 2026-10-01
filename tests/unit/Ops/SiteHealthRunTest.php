@@ -11,6 +11,7 @@ namespace Meilisearch\WordPress\Tests\Unit\Ops;
 
 use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Indexing\ContentSchema;
+use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Indexing\SettingsBuilder;
 use Meilisearch\WordPress\Ops\SiteHealth;
@@ -41,6 +42,7 @@ final class SiteHealthRunTest extends TestCase {
 		$this->stub_wordpress_state();
 		$this->install_wpdb( array(), '0' );
 		Functions\when( 'as_get_scheduled_actions' )->justReturn( array() );
+		Functions\when( 'get_post_types' )->justReturn( array( 'post' => 'post' ) );
 		Functions\when( 'admin_url' )->alias( static fn ( string $path = '' ): string => 'https://example.test/wp-admin/' . $path );
 		Functions\when( 'add_query_arg' )->alias( static fn ( array $args, string $url ): string => $url . '?' . http_build_query( $args ) );
 		$this->option_store[ Options::CONNECTION ]['search_key'] = self::SEARCH_KEY;
@@ -59,7 +61,7 @@ final class SiteHealthRunTest extends TestCase {
 		$indexes = new IndexManager( $clients, $names, new SettingsBuilder( array( 'content' => new ContentSchema( $options ) ) ), $options );
 		$queue   = new Queue();
 
-		return new SiteHealth( $clients, $indexes, $names, $this->make_reindexer( $options, $clients, $queue, new ErrorLog(), array() ), $queue, $options );
+		return new SiteHealth( $clients, $indexes, $names, $this->make_reindexer( $options, $clients, $queue, new ErrorLog(), array() ), $queue, $options, new Indexability( $options ) );
 	}
 
 	/**

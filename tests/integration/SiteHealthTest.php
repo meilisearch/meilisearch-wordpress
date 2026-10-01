@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Meilisearch\WordPress\Tests\Integration;
 
 use Meilisearch\WordPress\Api\ClientFactory;
+use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Indexing\Reindexer;
 use Meilisearch\WordPress\Ops\SiteHealth;
@@ -41,7 +42,8 @@ final class SiteHealthTest extends TestCase {
 			$this->service( 'names', IndexNames::class ),
 			$this->service( 'reindexer', Reindexer::class ),
 			$this->service( 'queue', Queue::class ),
-			$this->service( 'options', Options::class )
+			$this->service( 'options', Options::class ),
+			$this->service( 'indexability', Indexability::class )
 		);
 	}
 
@@ -164,5 +166,18 @@ final class SiteHealthTest extends TestCase {
 		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_REINDEX ];
 
 		self::assertStringNotContainsString( 'stopped making progress', $result['description'] );
+	}
+
+	public function test_replace_with_an_unindexed_searchable_type_is_recommended(): void {
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		register_post_type( 'meili_event', array( 'public' => true ) );
+		try {
+			$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_COVERAGE ];
+		} finally {
+			unregister_post_type( 'meili_event' );
+		}
+
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertStringContainsString( 'meili_event', $result['description'] );
 	}
 }

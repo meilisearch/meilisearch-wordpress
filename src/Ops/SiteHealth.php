@@ -14,6 +14,7 @@ defined( 'ABSPATH' ) || exit;
 use Meilisearch\WordPress\Admin\Menu;
 use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\ClientFactory;
+use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Indexing\Reindexer;
 use Meilisearch\WordPress\Registrable;
@@ -37,6 +38,7 @@ final class SiteHealth implements Registrable {
 	public const TEST_SEARCH_KEY = 'meilisearch_search_key';
 	public const TEST_QUEUE      = 'meilisearch_queue';
 	public const TEST_REINDEX    = 'meilisearch_reindex';
+	public const TEST_COVERAGE   = 'meilisearch_search_coverage';
 
 	/**
 	 * Memoized results for this request.
@@ -54,6 +56,7 @@ final class SiteHealth implements Registrable {
 	 * @param Reindexer     $reindexer Reindexer.
 	 * @param Queue         $queue     Sync queue.
 	 * @param Options       $options   Options.
+	 * @param Indexability  $indexability Indexability rule (which post types are indexed).
 	 */
 	public function __construct(
 		private readonly ClientFactory $clients,
@@ -61,7 +64,8 @@ final class SiteHealth implements Registrable {
 		private readonly IndexNames $names,
 		private readonly Reindexer $reindexer,
 		private readonly Queue $queue,
-		private readonly Options $options
+		private readonly Options $options,
+		private readonly Indexability $indexability
 	) {}
 
 	/**
@@ -122,6 +126,7 @@ final class SiteHealth implements Registrable {
 			$results[] = $this->checked( self::TEST_DOCUMENTS, $usable, fn (): array => self::evaluate_documents( $this->document_counts(), $status_url ) );
 			$results[] = $this->checked( self::TEST_SETTINGS, $usable, fn (): array => self::evaluate_settings( $this->missing_settings(), $connection_url ) );
 			$results[] = $this->checked( self::TEST_SEARCH_KEY, $usable, fn (): array => $this->search_key_result( $connection_url ) );
+			$results[] = self::evaluate_coverage( $this->options->search()['replace'], $this->indexability->unindexed_searchable_types(), Menu::url( 'content' ) );
 		}
 
 		$results[] = self::evaluate_queue( $this->queue->count( 'pending' ), $this->queue->count( 'failed' ), $status_url );
@@ -365,6 +370,38 @@ final class SiteHealth implements Registrable {
 	}
 
 	/**
+	 * Reports searchable post types that no index holds while "Replace site search" is on: searches
+	 * that include them (the default theme search does) are never answered by Meilisearch.
+	 *
+	 * @param bool     $replace     Whether "Replace site search" is on.
+	 * @param string[] $unindexed   Searchable post types that are not indexed.
+	 * @param string   $content_url URL of the Content tab.
+	 * @return Result
+	 */
+	public static function evaluate_coverage( bool $replace, array $unindexed, string $content_url ): array {
+		if ( ! $replace || array() === $unindexed ) {
+			return self::make(
+				self::TEST_COVERAGE,
+				'good',
+				__( 'Meilisearch can answer your site searches', 'meilisearch' ),
+				__( 'Every post type included in site searches is indexed, or Meilisearch search is turned off.', 'meilisearch' )
+			);
+		}
+
+		return self::make(
+			self::TEST_COVERAGE,
+			'recommended',
+			__( 'Some site searches are not answered by Meilisearch', 'meilisearch' ),
+			sprintf(
+				/* translators: %s: comma-separated post type names. */
+				__( 'These post types are included in site searches but are not indexed: %s. Searches that include them, such as the default theme search, keep using the WordPress database. Index them in the Content tab (products in the WooCommerce tab).', 'meilisearch' ),
+				implode( ', ', $unindexed )
+			),
+			$content_url
+		);
+	}
+
+	/**
 	 * Reports a backed-up or failing sync queue.
 	 *
 	 * @param int    $pending    Pending sync jobs.
@@ -512,6 +549,7 @@ final class SiteHealth implements Registrable {
 			self::TEST_SEARCH_KEY => __( 'Meilisearch browser search key', 'meilisearch' ),
 			self::TEST_QUEUE      => __( 'Meilisearch sync queue', 'meilisearch' ),
 			self::TEST_REINDEX    => __( 'Meilisearch reindex status', 'meilisearch' ),
+			self::TEST_COVERAGE   => __( 'Meilisearch search coverage', 'meilisearch' ),
 		);
 	}
 

@@ -182,7 +182,7 @@ final class Plugin {
 		if ( class_exists( 'WooCommerce' ) ) {
 			$tabs[] = new WooCommerce\WooCommerceTab( $options );
 		}
-		$tabs[] = new Admin\SearchTab( $options );
+		$tabs[] = new Admin\SearchTab( $options, $indexability );
 		$tabs[] = new Admin\StatusTab( $options, $names, $reindexer, $error_log, $clients );
 		$this->add( 'admin_menu', new Admin\Menu( $tabs ) );
 		$this->add( 'admin_notices', new Admin\Notices( $options, $error_log ) );
@@ -200,7 +200,7 @@ final class Plugin {
 		$this->add( 'autocomplete', new Frontend\Autocomplete( $options, $names ) );
 
 		// Task 24 — operations (Site Health + privacy text).
-		$health = new Ops\SiteHealth( $clients, $indexes, $names, $reindexer, $queue, $options );
+		$health = new Ops\SiteHealth( $clients, $indexes, $names, $reindexer, $queue, $options, $indexability );
 		$this->add( 'site_health', $health );
 		$this->add( 'privacy', new Ops\Privacy() );
 

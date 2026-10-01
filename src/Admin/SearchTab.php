@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Admin;
 
+use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
 
 defined( 'ABSPATH' ) || exit;
@@ -24,9 +25,10 @@ final class SearchTab implements Tab {
 	/**
 	 * Constructor.
 	 *
-	 * @param Options $options Plugin options.
+	 * @param Options      $options      Plugin options.
+	 * @param Indexability $indexability Indexability rule (which post types are indexed).
 	 */
-	public function __construct( private Options $options ) {}
+	public function __construct( private Options $options, private Indexability $indexability ) {}
 
 	/**
 	 * Tab slug.
@@ -102,6 +104,17 @@ final class SearchTab implements Tab {
 	 */
 	public function render(): void {
 		$search = $this->options->search();
+
+		$unindexed = $search['replace'] ? $this->indexability->unindexed_searchable_types() : array();
+		if ( array() !== $unindexed ) {
+			echo '<div class="notice notice-warning inline"><p>' . esc_html(
+				sprintf(
+					/* translators: %s: comma-separated post type names. */
+					__( 'These post types are included in site searches but are not indexed: %s. Searches that include them, such as the default theme search, keep using the WordPress database. Index them in the Content tab (products in the WooCommerce tab) for Meilisearch to answer those searches.', 'meilisearch' ),
+					implode( ', ', $unindexed )
+				)
+			) . '</p></div>';
+		}
 
 		echo '<form method="post" action="options.php">';
 		settings_fields( self::GROUP );

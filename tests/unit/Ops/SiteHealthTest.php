@@ -249,4 +249,14 @@ final class SiteHealthTest extends TestCase {
 		self::assertSame( 'recommended', $result['status'] );
 		self::assertSame( 'meilisearch_documents', $result['test'] );
 	}
+
+	public function test_search_coverage(): void {
+		self::assertSame( 'good', SiteHealth::evaluate_coverage( false, array( 'event' ), self::URL )['status'] );
+		self::assertSame( 'good', SiteHealth::evaluate_coverage( true, array(), self::URL )['status'] );
+
+		$result = SiteHealth::evaluate_coverage( true, array( 'event', 'product' ), self::URL );
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertSame( SiteHealth::TEST_COVERAGE, $result['test'] );
+		self::assertStringContainsString( 'event, product', $result['description'] );
+	}
 }
