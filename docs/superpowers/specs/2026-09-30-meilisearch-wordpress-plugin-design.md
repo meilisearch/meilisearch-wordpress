@@ -83,7 +83,7 @@ WooCommerce services are constructed only when `class_exists('WooCommerce')` and
 | Unit | Purpose | Depends on |
 |---|---|---|
 | `Api\Transport` (interface) / `Api\WpTransport` | Send an HTTP request; `WpTransport` uses `wp_remote_request`. Tests use a fake. | — |
-| `Api\Client` | Typed Meilisearch calls: version, keys (create/get/delete), indexes (create/delete/swap), settings (get/patch), documents (add-or-replace/delete-batch), tasks (get/list), search, multi-search. Timeouts: 2 s search, 15 s writes. Maps non-2xx to `ApiError` (code, message, HTTP status). | `Transport` |
+| `Api\Client` | Typed Meilisearch calls: version, keys (create/get/delete), indexes (create/delete/list/stats), settings (get/patch), documents (add-or-replace/delete-batch/delete-all/fetch), tasks (get/list), search, multi-search. Timeouts: 2 s search, 15 s writes. Maps non-2xx to `ApiError` (code, message, HTTP status). | `Transport` |
 | `Api\Task` | Wraps a task UID; `wait(int $timeout)` polls and throws `ApiError` if status is `failed` or `canceled`. | `Client` |
 | `Settings\Options` | Typed read/write of plugin options (§ 7.2). Constants in `wp-config.php` (`MEILISEARCH_HOST`, `MEILISEARCH_ADMIN_KEY`) override options and render the fields read-only. | — |
 | `Settings\IndexNames` | Computes prefix and index UIDs (§ 5.1). | `Options` |
@@ -247,7 +247,7 @@ Buttons call REST routes under `meilisearch/v1` (`POST /connection/test`, `POST 
 On saving the Connection tab:
 
 1. Validate the URL (`http`/`https`, host present). On multisite only super admins can reach this form (prevents SSRF from subsite admins).
-2. `GET /version` with the admin key (authenticated, unlike `/health`) → reject invalid keys and versions < 1.13 with a clear message.
+2. `GET /version` with the admin key (authenticated, unlike `/health`) → reject invalid keys and versions < 1.34 with a clear message.
 3. Create the scoped browser key: `POST /keys` with `actions: ["search"]`, `indexes: ["{prefix}_content", "{prefix}_products"]`, `expiresAt: null`, name `WordPress search ({home_url})`. Store value + uid. Delete the previous plugin-created key if one existed.
 4. Create missing indexes and apply settings (waits on tasks, max 30 s, failures shown).
 5. If host, key or prefix changed: set "needs reindex" and show a notice.
@@ -396,7 +396,7 @@ When enabled, intercepted searches add `attributesToCrop: ["content:30"]`, `attr
 | Command | Purpose |
 |---|---|
 | `status` | Connection, version, per-index doc count vs indexable count, pending/failed actions |
-| `reindex [--index=<content\|products>] [--batch-size=<n>]` | Synchronous swap reindex with progress bar |
+| `reindex [--index=<content\|products>] [--batch-size=<n>]` | Synchronous in-place reindex + orphan sweep with progress bar |
 | `sync <id>...` | Reconcile specific posts now |
 | `clear [--index=...] [--yes]` | Delete all documents of an index |
 | `check` | Run Site Health checks and print results |
