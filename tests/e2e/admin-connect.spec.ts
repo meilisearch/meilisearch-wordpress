@@ -1,7 +1,25 @@
-import { expect, test } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type Page } from '@playwright/test';
 import { CONTENT_INDEX, MEILI_KEY, MEILI_URL, contentReindexStatus, runActions, tabUrl } from './utils';
 
+/** Same rule set as the autocomplete scan: serious and critical violations fail. */
+async function expectAccessible( page: Page ): Promise< void > {
+	const axe = await new AxeBuilder( { page } ).include( '#wpbody-content' ).analyze();
+	const serious = axe.violations.filter( ( v ) => v.impact === 'serious' || v.impact === 'critical' );
+	expect( serious, JSON.stringify( serious, null, 2 ) ).toEqual( [] );
+}
+
 test.describe( 'admin', () => {
+	test( 'the Connection and Status tabs have no serious accessibility violations', async ( { page } ) => {
+		await page.goto( tabUrl( 'connection' ) );
+		await expect( page.getByRole( 'button', { name: 'Save and connect' } ) ).toBeVisible();
+		await expectAccessible( page );
+
+		await page.goto( tabUrl( 'status' ) );
+		await expect( page.locator( '.meilisearch-status-table' ) ).toBeVisible();
+		await expectAccessible( page );
+	} );
+
 	test( 'saving the Connection tab connects, shows the Meilisearch version and never the admin key', async ( { page, request } ) => {
 		const response = await request.get( `${ MEILI_URL }/version`, { headers: { Authorization: `Bearer ${ MEILI_KEY }` } } );
 		expect( response.ok() ).toBeTruthy();

@@ -9,3 +9,7 @@ docs
 tests
 playwright-report
 test-results
+wordpress
+.superpowers
+.env*
+*.zip

@@ -7,6 +7,10 @@ cd "$(dirname "$0")/.."
 SITE_URL="${E2E_SITE_URL:-http://localhost:8080}"
 ADMIN_USER="${E2E_ADMIN_USER:-admin}"
 ADMIN_PASSWORD="${E2E_ADMIN_PASSWORD:-password}"
+# Meilisearch as the WordPress container sees it, and its admin key (same default as tests/e2e/utils.ts).
+MEILI_HOST="${E2E_MEILI_HOST:-http://meilisearch:7700}"
+MEILI_KEY="${E2E_MEILI_KEY:-masterKey}"
+MEILI_URL="${E2E_MEILI_URL:-http://localhost:7700}" # the same instance, from the host
 
 wp() {
 	docker compose exec -T -u www-data wordpress wp "$@"
@@ -51,10 +55,18 @@ ensure_product "Meili Mug Small" 5
 ensure_product "Meili Mug Large" 15
 ensure_product "Meili Mug Deluxe" 25
 
-# Patch only host and prefix: rewriting the whole option would drop the search key, and every run would create another one.
-wp option patch update meilisearch_connection host "http://meilisearch:7700"
+# Start from a fresh browser search key: delete the previous one (if any) so none leaks, and so a key that was
+# removed from Meilisearch behind the plugin's back is not trusted (connect() keeps a stored key).
+OLD_KEY_UID="$(wp option pluck meilisearch_connection search_key_uid 2> /dev/null || true)"
+if [ -n "$OLD_KEY_UID" ]; then
+	curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $MEILI_KEY" "$MEILI_URL/keys/$OLD_KEY_UID" || true
+fi
+wp option patch update meilisearch_connection search_key ""
+wp option patch update meilisearch_connection search_key_uid ""
+# Patch single keys of the connection option instead of rewriting it.
+wp option patch update meilisearch_connection host "$MEILI_HOST"
 wp option patch update meilisearch_connection prefix "e2e"
-wp option update meilisearch_admin_key masterKey
+wp option update meilisearch_admin_key "$MEILI_KEY"
 wp option update meilisearch_content '{"post_types":["post","page"],"taxonomies":{"post":["category","post_tag"]},"meta_keys":{}}' --format=json
 wp option update meilisearch_woocommerce '{"enabled":true,"attributes":null,"custom_attributes":false,"variation_skus":false}' --format=json
 wp option update meilisearch_search '{"replace":true,"highlight":false,"embedder":"","semantic_ratio":0.5,"autocomplete":false}' --format=json
