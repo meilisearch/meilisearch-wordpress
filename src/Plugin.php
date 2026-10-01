@@ -197,5 +197,9 @@ final class Plugin {
 
 		// Task 23 — frontend.
 		$this->add( 'autocomplete', new Frontend\Autocomplete( $options, $names ) );
+
+		// Task 24 — operations (Site Health + privacy text).
+		$this->add( 'site_health', new Ops\SiteHealth( $clients, $indexes, $names, $reindexer, $queue, $options ) );
+		$this->add( 'privacy', new Ops\Privacy() );
 	}
 }
