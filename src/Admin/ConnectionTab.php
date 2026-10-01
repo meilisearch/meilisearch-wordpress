@@ -246,6 +246,8 @@ final class ConnectionTab implements Tab, Registrable {
 			)
 		);
 
+		$this->options->set_state( 'search_key_unsafe', false );
+
 		/* translators: %s: Meilisearch version. */
 		$message = sprintf( __( 'Connected to Meilisearch %s. Indexes are ready.', 'meilisearch' ), $result['version'] );
 		$type    = 'success';
@@ -258,6 +260,7 @@ final class ConnectionTab implements Tab, Registrable {
 				$message .= ' ' . __( 'Your admin key cannot create API keys: paste a search-only key below to enable autocomplete.', 'meilisearch' );
 			} else {
 				$verified = $this->indexes->verify_search_key( $search_key );
+				$this->options->set_state( 'search_key_unsafe', false === $verified );
 				if ( false === $verified ) {
 					$type     = 'error';
 					$message .= ' ' . __( 'The search key has more permissions than "search" on this site\'s indexes. Replace it with a search-only key: it is visible to visitors.', 'meilisearch' );

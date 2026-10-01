@@ -1,0 +1,16 @@
+{
+	"name": "meilisearch-wordpress",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Build tooling for the Meilisearch for WordPress plugin.",
+	"license": "GPL-2.0-or-later",
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"build": "terser assets/js/autocomplete.js -c -m -o assets/js/autocomplete.min.js"
+	},
+	"devDependencies": {
+		"terser": "5.51.2"
+	}
+}

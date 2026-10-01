@@ -8,3 +8,4 @@
 /.phpcs-cache
 *.zip
 .DS_Store
+assets/js/autocomplete.min.js

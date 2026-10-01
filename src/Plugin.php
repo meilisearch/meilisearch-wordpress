@@ -194,5 +194,8 @@ final class Plugin {
 				$this->add( 'wc_product_sync', new WooCommerce\ProductSync( $collector, $options ) );
 			}
 		}
+
+		// Task 23 — frontend.
+		$this->add( 'autocomplete', new Frontend\Autocomplete( $options, $names ) );
 	}
 }
