@@ -1,0 +1,58 @@
+{
+	"name": "meilisearch/meilisearch-wordpress",
+	"description": "Official Meilisearch plugin for WordPress and WooCommerce.",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"homepage": "https://www.meilisearch.com",
+	"authors": [
+		{
+			"name": "Meilisearch",
+			"homepage": "https://www.meilisearch.com"
+		}
+	],
+	"require": {
+		"php": ">=8.1",
+		"woocommerce/action-scheduler": "^4.2"
+	},
+	"require-dev": {
+		"brain/monkey": "^2.6",
+		"dealerdirect/phpcodesniffer-composer-installer": "^1.0",
+		"mockery/mockery": "^1.6",
+		"php-stubs/woocommerce-stubs": "^11.1",
+		"phpcompatibility/phpcompatibility-wp": "^2.1",
+		"phpstan/phpstan": "^2.0",
+		"phpunit/phpunit": "^9.6",
+		"szepeviktor/phpstan-wordpress": "^2.0",
+		"wp-coding-standards/wpcs": "^3.1",
+		"yoast/phpunit-polyfills": "^4.0"
+	},
+	"autoload": {
+		"psr-4": {
+			"Meilisearch\\WordPress\\": "src/"
+		}
+	},
+	"autoload-dev": {
+		"psr-4": {
+			"Meilisearch\\WordPress\\Tests\\Unit\\": "tests/unit/",
+			"Meilisearch\\WordPress\\Tests\\Integration\\": "tests/integration/"
+		}
+	},
+	"config": {
+		"platform": {
+			"php": "8.1.0"
+		},
+		"sort-packages": true,
+		"process-timeout": 0,
+		"allow-plugins": {
+			"dealerdirect/phpcodesniffer-composer-installer": true
+		}
+	},
+	"scripts": {
+		"test:unit": "phpunit -c phpunit.xml.dist",
+		"lint": "phpcs",
+		"lint:fix": "phpcbf",
+		"analyse": "phpstan analyse --memory-limit=1G --no-progress"
+	},
+	"minimum-stability": "stable",
+	"prefer-stable": true
+}

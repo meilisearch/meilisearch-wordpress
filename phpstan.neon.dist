@@ -1,0 +1,20 @@
+includes:
+	- vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+	level: 6
+	phpVersion: 80100
+	paths:
+		- meilisearch.php
+		- src
+	scanFiles:
+		- vendor/php-stubs/woocommerce-stubs/woocommerce-stubs.php
+		- vendor/woocommerce/action-scheduler/functions.php
+	scanDirectories:
+		- vendor/woocommerce/action-scheduler/classes
+	treatPhpDocTypesAsCertain: false
+	ignoreErrors:
+		# Plugin::add() gets its first caller in Task 5, which removes this entry.
+		-
+			identifier: method.unused
+			path: src/Plugin.php
