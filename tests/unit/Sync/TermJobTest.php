@@ -14,6 +14,7 @@ use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\ChangeCollector;
+use Meilisearch\WordPress\Sync\ErrorLog;
 use Meilisearch\WordPress\Sync\Queue;
 use Meilisearch\WordPress\Sync\TermJob;
 use Meilisearch\WordPress\Tests\Unit\Support\SyncFixtures;
@@ -56,7 +57,7 @@ final class TermJobTest extends TestCase {
 		$this->scheduled = array();
 		$options         = new Options();
 		$queue           = new Queue();
-		$this->collector = new ChangeCollector( new Indexability( $options ), $queue, $options );
+		$this->collector = new ChangeCollector( new Indexability( $options ), $queue, $options, new ErrorLog() );
 		$this->job       = new TermJob( $this->collector, $queue, $options );
 		Functions\when( 'as_schedule_single_action' )->alias(
 			function ( $timestamp, $hook, $args ): int {

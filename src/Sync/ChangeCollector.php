@@ -42,11 +42,13 @@ final class ChangeCollector implements Registrable {
 	 * @param Indexability $indexability Resolves the logical index of a post (type check only).
 	 * @param Queue        $queue        Action Scheduler wrapper.
 	 * @param Options      $options      Source of the indexed meta keys.
+	 * @param ErrorLog     $log          Error log (a chunk that cannot be scheduled).
 	 */
 	public function __construct(
 		private readonly Indexability $indexability,
 		private readonly Queue $queue,
-		private readonly Options $options
+		private readonly Options $options,
+		private readonly ErrorLog $log
 	) {}
 
 	/**
@@ -200,7 +202,13 @@ final class ChangeCollector implements Registrable {
 				}
 			}
 			foreach ( array_chunk( $fresh, self::CHUNK ) as $chunk ) {
-				$this->enqueue( $logical, $chunk, $blog_id );
+				try {
+					$this->enqueue( $logical, $chunk, $blog_id );
+				} catch ( \Throwable $e ) {
+					// Runs on shutdown: keep going with the other chunks and sites. No marker was set, so
+					// the next change of these posts retries; the message only, never the trace.
+					$this->log->add( 'sync', sprintf( 'Scheduling the sync of %1$d post(s) to the %2$s index failed: %3$s', count( $chunk ), $logical, $e->getMessage() ) );
+				}
 			}
 		}
 	}

@@ -152,7 +152,7 @@ final class Plugin {
 
 		// Tasks 11-13 — sync and reindex.
 		$queue     = new Sync\Queue();
-		$collector = new Sync\ChangeCollector( $indexability, $queue, $options );
+		$collector = new Sync\ChangeCollector( $indexability, $queue, $options, $error_log );
 		$sync_job  = new Sync\SyncJob( $clients, $names, $indexability, $builders, $queue, $error_log );
 		$reindexer = new Indexing\Reindexer( $clients, $indexes, $names, $indexability, $builders, $queue, $options, $error_log );
 		$this->add( 'queue', $queue );

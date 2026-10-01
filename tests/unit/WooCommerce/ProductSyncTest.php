@@ -7,6 +7,7 @@ use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\ChangeCollector;
+use Meilisearch\WordPress\Sync\ErrorLog;
 use Meilisearch\WordPress\Sync\Queue;
 use Meilisearch\WordPress\Tests\Unit\TestCase;
 use Meilisearch\WordPress\WooCommerce\ProductRule;
@@ -57,7 +58,7 @@ final class ProductSyncTest extends TestCase {
 		);
 
 		$options         = new Options();
-		$this->collector = new ChangeCollector( new Indexability( $options, new ProductRule() ), new Queue(), $options );
+		$this->collector = new ChangeCollector( new Indexability( $options, new ProductRule() ), new Queue(), $options, new ErrorLog() );
 		$this->sync      = new ProductSync( $this->collector, $options );
 	}
 

@@ -14,6 +14,7 @@ use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\ChangeCollector;
+use Meilisearch\WordPress\Sync\ErrorLog;
 use Meilisearch\WordPress\Sync\Queue;
 use Meilisearch\WordPress\Tests\Unit\Support\SyncFixtures;
 use Meilisearch\WordPress\Tests\Unit\TestCase;
@@ -47,7 +48,7 @@ final class ChangeCollectorTest extends TestCase {
 		$this->stub_wordpress_state();
 		$this->scheduled = array();
 		$options         = new Options();
-		$this->collector = new ChangeCollector( new Indexability( $options ), new Queue(), $options );
+		$this->collector = new ChangeCollector( new Indexability( $options ), new Queue(), $options, new ErrorLog() );
 
 		$this->add_post( array( 'ID' => 10 ) );
 		$this->add_post( array( 'ID' => 11 ) );
@@ -265,6 +266,40 @@ final class ChangeCollectorTest extends TestCase {
 
 		$this->assertCount( 1, $this->scheduled );
 		$this->assertSame( array(), $this->transient_store );
+	}
+
+	/**
+	 * A chunk that cannot be scheduled (Action Scheduler throws) is logged; the others still go out.
+	 */
+	public function test_schedule_failure_is_logged_and_the_flush_continues(): void {
+		$calls = 0;
+		Functions\when( 'as_schedule_single_action' )->alias(
+			function ( $timestamp, $hook, $args ) use ( &$calls ): int {
+				++$calls;
+				if ( 1 === $calls ) {
+					throw new \RuntimeException( 'Table wp_actionscheduler_actions is marked as crashed' );
+				}
+				$this->scheduled[] = array( $timestamp, $hook, $args[0] );
+				return $calls;
+			}
+		);
+		$ids = range( 1000, 1149 );
+		foreach ( $ids as $id ) {
+			$this->add_post( array( 'ID' => $id ) );
+		}
+		$this->collector->add_many( $ids );
+
+		$this->collector->flush();
+
+		$this->assertSame( 2, $calls );
+		$this->assertCount( 1, $this->scheduled );
+		$this->assertSame( range( 1100, 1149 ), $this->scheduled[0][2]['ids'] );
+		$this->assertArrayNotHasKey( 'meilisearch_pending_1_1000', $this->transient_store );
+		$this->assertArrayHasKey( 'meilisearch_pending_1_1100', $this->transient_store );
+		$entries = ( new ErrorLog() )->all();
+		$this->assertCount( 1, $entries );
+		$this->assertSame( 'sync', $entries[0]['context'] );
+		$this->assertStringContainsString( 'marked as crashed', $entries[0]['message'] );
 	}
 
 	/**
