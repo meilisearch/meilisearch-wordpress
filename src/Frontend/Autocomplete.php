@@ -96,7 +96,7 @@ final class Autocomplete implements Registrable {
 	 * Script configuration. Numbers live in nested arrays because wp_localize_script()
 	 * casts top-level scalars to strings.
 	 *
-	 * @return array{host: string, key: string, indexes: array{content: string, products: ?string}, limits: array{content: int, products: int, minChars: int, debounce: int}, selector: string, currency: ?string, locale: string, i18n: array<string, string>}
+	 * @return array{host: string, key: string, indexes: array{content: string, products: ?string}, limits: array{content: int, products: int, minChars: int, debounce: int}, subtitles: array{content: ?string, products: ?string}, selector: string, currency: ?string, locale: string, i18n: array<string, string>}
 	 */
 	public function config(): array {
 		$selector = apply_filters( 'meilisearch_autocomplete_selector', self::DEFAULT_SELECTOR );
@@ -105,23 +105,36 @@ final class Autocomplete implements Registrable {
 		}
 		$products = $this->options->products_enabled();
 
+		$subtitles = array();
+		foreach ( array( 'content', 'products' ) as $logical ) {
+			/**
+			 * Filters the document field shown as a second line under each autocomplete suggestion.
+			 *
+			 * @param string|null $field   Field name (top-level, [A-Za-z0-9_.]), or null for none.
+			 * @param string      $logical 'content' | 'products'.
+			 */
+			$field                 = apply_filters( 'meilisearch_autocomplete_subtitle_field', null, $logical );
+			$subtitles[ $logical ] = is_string( $field ) && 1 === preg_match( '/^[A-Za-z0-9_.]+$/', $field ) ? $field : null;
+		}
+
 		return array(
-			'host'     => $this->options->host(),
-			'key'      => $this->options->search_key(),
-			'indexes'  => array(
+			'host'      => $this->options->host(),
+			'key'       => $this->options->search_key(),
+			'indexes'   => array(
 				'content'  => $this->names->uid( 'content' ),
 				'products' => $products ? $this->names->uid( 'products' ) : null,
 			),
-			'limits'   => array(
+			'limits'    => array(
 				'content'  => self::LIMIT,
 				'products' => self::LIMIT,
 				'minChars' => self::MIN_CHARS,
 				'debounce' => self::DEBOUNCE_MS,
 			),
-			'selector' => $selector,
-			'currency' => $products && function_exists( 'get_woocommerce_currency' ) ? (string) get_woocommerce_currency() : null,
-			'locale'   => str_replace( '_', '-', determine_locale() ),
-			'i18n'     => array(
+			'subtitles' => $subtitles,
+			'selector'  => $selector,
+			'currency'  => $products && function_exists( 'get_woocommerce_currency' ) ? (string) get_woocommerce_currency() : null,
+			'locale'    => str_replace( '_', '-', determine_locale() ),
+			'i18n'      => array(
 				'products'  => __( 'Products', 'meilisearch' ),
 				'posts'     => __( 'Posts', 'meilisearch' ),
 				'listLabel' => __( 'Search suggestions', 'meilisearch' ),

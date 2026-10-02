@@ -20,6 +20,7 @@
 	const CONTENT_FIELDS = [ 'id', 'title', 'permalink', 'post_type', 'thumbnail_url' ];
 	const PRODUCT_FIELDS = CONTENT_FIELDS.concat( [ 'price' ] );
 	const limits = Object.assign( { content: 5, products: 5, minChars: 2, debounce: 150 }, config.limits || {} );
+	const subtitles = Object.assign( { content: null, products: null }, config.subtitles || {} );
 	const i18n = Object.assign(
 		{
 			products: 'Products',
@@ -82,6 +83,10 @@
 			}
 		}
 		return String( value );
+	}
+
+	function fieldsFor( key, base ) {
+		return subtitles[ key ] ? base.concat( [ subtitles[ key ] ] ) : base;
 	}
 
 	function buildQuery( indexUid, q, limit, fields ) {
@@ -203,6 +208,14 @@
 					const formatted = hit._formatted && typeof hit._formatted.title === 'string' ? hit._formatted.title : hit.title;
 					appendHighlighted( title, formatted || '' );
 					option.appendChild( title );
+					const subtitleField = subtitles[ group.key ];
+					const subtitleValue = subtitleField ? hit[ subtitleField ] : null;
+					if ( typeof subtitleValue === 'string' && subtitleValue !== '' ) {
+						const subtitle = element( 'span', { class: 'meilisearch-ac__subtitle' } );
+						subtitle.textContent = subtitleValue;
+						title.appendChild( document.createElement( 'br' ) );
+						title.appendChild( subtitle );
+					}
 					if ( group.key === 'products' ) {
 						const price = formatPrice( hit.price );
 						if ( price !== '' ) {
@@ -260,9 +273,9 @@
 			}
 			const queries = [];
 			if ( config.indexes.products ) {
-				queries.push( buildQuery( config.indexes.products, q, limits.products, PRODUCT_FIELDS ) );
+				queries.push( buildQuery( config.indexes.products, q, limits.products, fieldsFor( 'products', PRODUCT_FIELDS ) ) );
 			}
-			queries.push( buildQuery( config.indexes.content, q, limits.content, CONTENT_FIELDS ) );
+			queries.push( buildQuery( config.indexes.content, q, limits.content, fieldsFor( 'content', CONTENT_FIELDS ) ) );
 
 			const current = new AbortController();
 			controller = current;

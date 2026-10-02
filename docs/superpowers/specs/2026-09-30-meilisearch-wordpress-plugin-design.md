@@ -474,6 +474,7 @@ Connect and reindex from admin; theme search served by Meilisearch; autocomplete
 | `meilisearch_search_timeout` | filter | search timeout (s) |
 | `meilisearch_reindex_batch_size` | filter | reindex batch size |
 | `meilisearch_autocomplete_selector` | filter | inputs autocomplete attaches to |
+| `meilisearch_autocomplete_subtitle_field( ?string $field, string $logical )` | filter | document field shown under each suggestion (`content` or `products`) |
 
 ## 15. Open questions
 

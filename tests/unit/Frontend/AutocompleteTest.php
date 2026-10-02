@@ -222,4 +222,40 @@ final class AutocompleteTest extends TestCase {
 		Filters\expectApplied( 'meilisearch_autocomplete_selector' )->once()->andReturn( array( 'not', 'a', 'string' ) );
 		self::assertSame( Autocomplete::DEFAULT_SELECTOR, $this->autocomplete()->config()['selector'] );
 	}
+
+	public function test_subtitles_default_to_null(): void {
+		self::assertSame(
+			array(
+				'content'  => null,
+				'products' => null,
+			),
+			$this->autocomplete()->config()['subtitles']
+		);
+	}
+
+	public function test_subtitle_field_is_filterable_per_index_and_validated(): void {
+		Filters\expectApplied( 'meilisearch_autocomplete_subtitle_field' )->twice()->andReturnUsing(
+			static fn ( $field, string $logical ) => 'content' === $logical ? 'demo_subtitle' : 'bad field;'
+		);
+
+		self::assertSame(
+			array(
+				'content'  => 'demo_subtitle',
+				'products' => null,
+			),
+			$this->autocomplete()->config()['subtitles']
+		);
+	}
+
+	public function test_subtitle_field_ignores_non_strings(): void {
+		Filters\expectApplied( 'meilisearch_autocomplete_subtitle_field' )->twice()->andReturn( array( 'title' ) );
+
+		self::assertSame(
+			array(
+				'content'  => null,
+				'products' => null,
+			),
+			$this->autocomplete()->config()['subtitles']
+		);
+	}
 }

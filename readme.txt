@@ -83,6 +83,10 @@ Search falls back to the normal WordPress database search within 2 seconds and k
 
 No. The admin key is stored without autoloading and is never printed in pages. Browsers only receive a separate key that the plugin creates with the "search" permission on this site's indexes only. A search key pasted by hand is only sent to browsers after a check, and never when it is the admin key, a key Meilisearch does not know (such as the master key) or a key that can do more than search; Site Health reports such a key as critical.
 
+= How do I show a second line under each autocomplete suggestion? =
+
+Return the name of a top-level document field from the `meilisearch_autocomplete_subtitle_field( ?string $field, string $logical )` filter. `$logical` is `content` or `products`. The field must be in the index's displayed attributes. Its text is shown as plain text under the title.
+
 == External services ==
 
 This plugin connects to a Meilisearch server to index your content and to answer searches. It is required for the plugin to work. The server is chosen by the site administrator: either a self-hosted Meilisearch instance or a Meilisearch Cloud project operated by Meilisearch. No data is sent anywhere until the administrator saves a Meilisearch URL and API key.
