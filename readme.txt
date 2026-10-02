@@ -65,7 +65,7 @@ Yes, with WooCommerce 8.5 or later (optional). Product search needs a theme with
 
 = My site is very large. How do I index it? =
 
-Use WP-CLI: `wp meilisearch reindex` indexes synchronously with a progress bar and is not limited by PHP time limits. Other commands: `wp meilisearch status`, `wp meilisearch sync <id>...`, `wp meilisearch clear` and `wp meilisearch check`. On shared hosting without shell access, the Reindex button runs the same work in the background.
+Use WP-CLI: `wp meilisearch reindex` indexes synchronously with a progress bar and is not limited by PHP time limits. `wp meilisearch connect` checks the connection, creates the indexes and the browser search key (for sites configured in wp-config.php). Other commands: `wp meilisearch status`, `wp meilisearch sync <id>...`, `wp meilisearch clear` and `wp meilisearch check`. On shared hosting without shell access, the Reindex button runs the same work in the background.
 
 = Can I use it together with another search plugin? =
 

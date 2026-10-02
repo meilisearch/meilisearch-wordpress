@@ -395,6 +395,7 @@ When enabled, intercepted searches add `attributesToCrop: ["content:30"]`, `attr
 
 | Command | Purpose |
 |---|---|
+| `connect` | Check the connection, create the indexes and the browser search key (for sites configured in wp-config.php) |
 | `status` | Connection, version, per-index doc count vs indexable count, pending/failed actions |
 | `reindex [--index=<content\|products>] [--batch-size=<n>]` | Synchronous in-place reindex + orphan sweep with progress bar |
 | `sync <id>...` | Reconcile specific posts now |

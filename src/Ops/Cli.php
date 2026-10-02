@@ -1,6 +1,6 @@
 <?php
 /**
- * WP-CLI commands: wp meilisearch status|reindex|sync|clear|check.
+ * WP-CLI commands: wp meilisearch connect|status|reindex|sync|clear|check.
  *
  * @package Meilisearch
  */
@@ -14,6 +14,7 @@ defined( 'ABSPATH' ) || exit;
 use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Indexing\Indexability;
+use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Indexing\Reindexer;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
@@ -37,14 +38,15 @@ final class Cli {
 	/**
 	 * Creates the command object.
 	 *
-	 * @param Reindexer     $reindexer    Reindexer.
-	 * @param SyncJob       $sync         Sync job.
-	 * @param ClientFactory $clients      Client factory.
-	 * @param IndexNames    $names        Index names.
-	 * @param SiteHealth    $health       Site Health tests.
-	 * @param Indexability  $indexability Indexability rule.
-	 * @param Queue         $queue        Action Scheduler wrapper.
-	 * @param Options       $options      Options (redacts the configured keys from messages).
+	 * @param Reindexer         $reindexer    Reindexer.
+	 * @param SyncJob           $sync         Sync job.
+	 * @param ClientFactory     $clients      Client factory.
+	 * @param IndexNames        $names        Index names.
+	 * @param SiteHealth        $health       Site Health tests.
+	 * @param Indexability      $indexability Indexability rule.
+	 * @param Queue             $queue        Action Scheduler wrapper.
+	 * @param Options           $options      Options (redacts the configured keys from messages).
+	 * @param IndexManager|null $indexes  Index manager (the connect command).
 	 */
 	public function __construct(
 		private readonly Reindexer $reindexer,
@@ -54,7 +56,8 @@ final class Cli {
 		private readonly SiteHealth $health,
 		private readonly Indexability $indexability,
 		private readonly Queue $queue,
-		private readonly Options $options = new Options()
+		private readonly Options $options = new Options(),
+		private readonly ?IndexManager $indexes = null
 	) {}
 
 	/**
@@ -129,6 +132,48 @@ final class Cli {
 		\WP_CLI\Utils\format_items( $format, $rows, $fields );
 		if ( $human ) {
 			WP_CLI::log( sprintf( 'Queue: %1$d pending, %2$d failed actions in group "%3$s".', $pending, $failed, Queue::GROUP ) );
+		}
+	}
+
+	/**
+	 * Connects to Meilisearch: checks the version, creates the indexes with their settings and creates
+	 * the browser search key. This is the flow that saving the Connection screen runs, for sites
+	 * configured with MEILISEARCH_HOST and MEILISEARCH_ADMIN_KEY in wp-config.php.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     $ wp meilisearch connect
+	 *
+	 * @param string[]             $args       Positional arguments (none).
+	 * @param array<string, mixed> $assoc_args Associative arguments (none).
+	 */
+	public function connect( array $args, array $assoc_args ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- WP-CLI always passes both arrays.
+		$this->require_configured();
+		if ( null === $this->indexes ) {
+			$this->fail( 'The connection service is not available.' );
+		}
+
+		try {
+			$result = $this->indexes->connect();
+		} catch ( \Throwable $error ) {
+			$this->fail( sprintf( 'Could not connect to Meilisearch: %s', $this->message( $error ) ) );
+		}
+
+		$this->options->set_state(
+			'last_connect',
+			array(
+				'version' => $result['version'],
+				'time'    => time(),
+			)
+		);
+		WP_CLI::success( sprintf( 'Connected to Meilisearch %s. Indexes are ready.', $result['version'] ) );
+
+		if ( 'created' === $result['key'] ) {
+			WP_CLI::success( 'Created a search-only key for autocomplete.' );
+		} elseif ( 'kept' === $result['key'] ) {
+			WP_CLI::success( 'Kept the existing search-only key.' );
+		} else {
+			WP_CLI::warning( 'The search-only key is managed manually: check it on the Meilisearch > Connection screen.' );
 		}
 	}
 
