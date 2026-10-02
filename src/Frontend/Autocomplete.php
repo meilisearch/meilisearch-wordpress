@@ -135,13 +135,17 @@ final class Autocomplete implements Registrable {
 			'currency'  => $products && function_exists( 'get_woocommerce_currency' ) ? (string) get_woocommerce_currency() : null,
 			'locale'    => str_replace( '_', '-', determine_locale() ),
 			'i18n'      => array(
-				'products'  => __( 'Products', 'meilisearch' ),
-				'posts'     => __( 'Posts', 'meilisearch' ),
-				'listLabel' => __( 'Search suggestions', 'meilisearch' ),
-				'noResults' => __( 'No suggestions found.', 'meilisearch' ),
-				'oneResult' => __( '1 suggestion available. Use the up and down arrow keys to browse.', 'meilisearch' ),
+				'products'    => __( 'Products', 'meilisearch' ),
+				'posts'       => __( 'Posts', 'meilisearch' ),
+				'listLabel'   => __( 'Search suggestions', 'meilisearch' ),
+				'noResults'   => __( 'No suggestions found.', 'meilisearch' ),
+				'oneResult'   => __( '1 suggestion available. Use the up and down arrow keys to browse.', 'meilisearch' ),
 				/* translators: %d: number of suggestions. */
-				'results'   => __( '%d suggestions available. Use the up and down arrow keys to browse.', 'meilisearch' ),
+				'results'     => __( '%d suggestions available. Use the up and down arrow keys to browse.', 'meilisearch' ),
+				/* translators: %s: the search terms. */
+				'seeAll'      => __( 'See all results for “%s”', 'meilisearch' ),
+				/* translators: 1: number of results, 2: the search terms. */
+				'seeAllCount' => __( 'See all %1$d results for “%2$s”', 'meilisearch' ),
 			),
 		);
 	}

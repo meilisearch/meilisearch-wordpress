@@ -29,6 +29,8 @@
 			noResults: 'No suggestions found.',
 			oneResult: '1 suggestion available.',
 			results: '%d suggestions available.',
+			seeAll: 'See all results for “%s”',
+			seeAllCount: 'See all %1$d results for “%2$s”',
 		},
 		config.i18n || {}
 	);
@@ -177,7 +179,20 @@
 			window.location.assign( url );
 		}
 
-		function render( groups ) {
+		function submitSearch() {
+			close();
+			if ( input.form ) {
+				if ( typeof input.form.requestSubmit === 'function' ) {
+					input.form.requestSubmit();
+				} else {
+					input.form.submit();
+				}
+				return;
+			}
+			window.location.assign( '/?s=' + encodeURIComponent( input.value ) );
+		}
+
+		function render( groups, total ) {
 			listbox.textContent = '';
 			options = [];
 			groups.forEach( function ( group, groupIndex ) {
@@ -239,29 +254,59 @@
 				}
 			} );
 
+			const suggestions = options.filter( function ( option ) {
+				return option.url !== null;
+			} ).length;
+			if ( suggestions > 0 ) {
+				const footer = element( 'div', {
+					id: prefix + '-footer',
+					class: 'meilisearch-ac__footer',
+					role: 'option',
+					'aria-selected': 'false',
+					'data-submit': '1',
+				} );
+				footer.textContent = typeof total === 'number' && total > 0
+					? i18n.seeAllCount.replace( '%1$d', String( total ) ).replace( '%2$s', lastQuery )
+					: i18n.seeAll.replace( '%s', lastQuery );
+				footer.addEventListener( 'mousedown', function ( event ) {
+					event.preventDefault();
+				} );
+				footer.addEventListener( 'click', submitSearch );
+				options.push( { element: footer, url: null } );
+				listbox.appendChild( footer );
+			}
+
 			setActive( -1 );
-			if ( options.length === 0 ) {
+			if ( suggestions === 0 ) {
 				close();
 				announce( i18n.noResults );
 				return;
 			}
 			open();
-			announce( options.length === 1 ? i18n.oneResult : i18n.results.replace( '%d', String( options.length ) ) );
+			announce( suggestions === 1 ? i18n.oneResult : i18n.results.replace( '%d', String( suggestions ) ) );
 		}
 
 		function groupsFrom( data ) {
 			const hitsByIndex = {};
-			( data && Array.isArray( data.results ) ? data.results : [] ).forEach( function ( result ) {
+			const results = data && Array.isArray( data.results ) ? data.results : [];
+			let total = results.length > 0 ? 0 : null;
+			results.forEach( function ( result ) {
 				hitsByIndex[ result.indexUid ] = Array.isArray( result.hits ) ? result.hits : [];
+				if ( total !== null ) {
+					total = typeof result.estimatedTotalHits === 'number' ? total + result.estimatedTotalHits : null;
+				}
 			} );
 			const groups = [];
 			if ( config.indexes.products ) {
 				groups.push( { key: 'products', label: i18n.products, hits: hitsByIndex[ config.indexes.products ] || [] } );
 			}
 			groups.push( { key: 'content', label: i18n.posts, hits: hitsByIndex[ config.indexes.content ] || [] } );
-			return groups.filter( function ( group ) {
-				return group.hits.length > 0;
-			} );
+			return {
+				groups: groups.filter( function ( group ) {
+					return group.hits.length > 0;
+				} ),
+				total: total,
+			};
 		}
 
 		async function search( q ) {
@@ -294,7 +339,8 @@
 				if ( current.signal.aborted || q !== lastQuery ) {
 					return;
 				}
-				render( groupsFrom( data ) );
+				const result = groupsFrom( data );
+				render( result.groups, result.total );
 			} catch ( error ) {
 				if ( ! current.signal.aborted ) {
 					close(); // Network or API error: hide silently, the form keeps working.
@@ -355,7 +401,11 @@
 				case 'Enter':
 					if ( expanded && active >= 0 ) {
 						event.preventDefault();
-						go( options[ active ].url );
+						if ( options[ active ].url === null ) {
+							submitSearch();
+						} else {
+							go( options[ active ].url );
+						}
 					} else {
 						close(); // Normal form submission: the theme results page is canonical.
 					}

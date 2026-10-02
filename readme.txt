@@ -112,6 +112,7 @@ Meilisearch Cloud is provided by Meilisearch: [Terms of use](https://www.meilise
 == Changelog ==
 
 = 1.0.0 =
+* Autocomplete: a "See all N results" option submits the search form.
 * First release: content and WooCommerce product indexing with real-time sync, in-place reindex with orphan sweep, theme and WooCommerce search replacement with fallback, optional hybrid search, excerpt highlighting and autocomplete, WP-CLI commands, Site Health checks, privacy policy text and multisite support.
 
 == Upgrade Notice ==

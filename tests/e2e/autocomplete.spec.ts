@@ -136,4 +136,18 @@ test.describe( 'autocomplete', () => {
 			execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'rm', '-f', muPlugin ] );
 		}
 	} );
+
+	test( 'the footer shows the total and submits the search form', async ( { page } ) => {
+		await page.goto( '/search-demo/' );
+		const input = searchInput( page );
+		await input.pressSequentially( 'mountian', { delay: 50 } );
+		const footer = page.getByRole( 'option', { name: /See all \d+ results for “mountian”/ } );
+		await expect( footer ).toBeVisible();
+
+		// Keyboard: the footer is the last option.
+		await input.press( 'ArrowUp' );
+		await expect( footer ).toHaveAttribute( 'aria-selected', 'true' );
+		await input.press( 'Enter' );
+		await expect( page ).toHaveURL( /[?&]s=mountian/ );
+	} );
 } );

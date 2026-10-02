@@ -207,8 +207,11 @@ final class AutocompleteTest extends TestCase {
 		self::assertSame( Autocomplete::DEFAULT_SELECTOR, $config['selector'] );
 		self::assertNull( $config['currency'] );
 		self::assertSame( 'fr-FR', $config['locale'] );
-		self::assertSame( array( 'products', 'posts', 'listLabel', 'noResults', 'oneResult', 'results' ), array_keys( $config['i18n'] ) );
+		self::assertSame( array( 'products', 'posts', 'listLabel', 'noResults', 'oneResult', 'results', 'seeAll', 'seeAllCount' ), array_keys( $config['i18n'] ) );
 		self::assertStringContainsString( '%d', $config['i18n']['results'] );
+		self::assertStringContainsString( '%s', $config['i18n']['seeAll'] );
+		self::assertStringContainsString( '%1$d', $config['i18n']['seeAllCount'] );
+		self::assertStringContainsString( '%2$s', $config['i18n']['seeAllCount'] );
 	}
 
 	public function test_config_never_contains_the_admin_key(): void {
