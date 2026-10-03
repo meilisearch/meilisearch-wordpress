@@ -146,6 +146,55 @@ final class CliTest extends TestCase {
 		$this->meili( 'DELETE', '/keys/' . (string) get_option( 'meilisearch_connection' )['search_key_uid'] );
 	}
 
+	/**
+	 * Sites whose admin key cannot manage keys provide a search-only key themselves: connect verifies it,
+	 * as saving the Connection screen does, so autocomplete can serve it.
+	 */
+	public function test_connect_verifies_a_manually_provided_search_key(): void {
+		$uid                      = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		$key                      = $this->meili(
+			'POST',
+			'/keys',
+			array(
+				'actions'   => array( 'search' ),
+				'indexes'   => array( $uid ),
+				'expiresAt' => null,
+			)
+		);
+		$connection               = get_option( 'meilisearch_connection' );
+		$connection['search_key'] = (string) $key['key'];
+		update_option( 'meilisearch_connection', $connection, false );
+		$this->keep_connection_as_is();
+
+		$this->cli()->connect( array(), array() );
+
+		self::assertTrue( $this->service( 'options', Options::class )->search_key_is_verified() );
+		self::assertStringContainsString( 'search-only key you provided is verified', implode( "\n", $this->messages( 'success' ) ) );
+		$this->meili( 'DELETE', '/keys/' . (string) $key['uid'] );
+	}
+
+	/**
+	 * A connection that already ran with this host, key and prefix and whose search key is managed by hand:
+	 * connect keeps the key instead of creating one (the test admin key could create keys).
+	 */
+	private function keep_connection_as_is(): void {
+		$options = $this->service( 'options', Options::class );
+		$options->set_state( 'search_key_manual', true );
+		$options->set_state( 'fingerprint', md5( $options->host() . '|' . $options->admin_key() . '|' . $this->service( 'names', IndexNames::class )->prefix() ) );
+	}
+
+	public function test_connect_refuses_to_serve_the_admin_key_as_a_manual_search_key(): void {
+		$connection               = get_option( 'meilisearch_connection' );
+		$connection['search_key'] = self::test_key();
+		update_option( 'meilisearch_connection', $connection, false );
+		$this->keep_connection_as_is();
+
+		$this->cli()->connect( array(), array() );
+
+		self::assertFalse( $this->service( 'options', Options::class )->search_key_is_verified() );
+		self::assertStringContainsString( 'not a search-only key', implode( "\n", $this->messages( 'warning' ) ) );
+	}
+
 	public function test_connect_exits_1_with_a_redacted_message_when_meilisearch_is_unreachable(): void {
 		$connection         = get_option( 'meilisearch_connection' );
 		$connection['host'] = 'http://127.0.0.1:9';

@@ -170,10 +170,33 @@ final class Cli {
 
 		if ( 'created' === $result['key'] ) {
 			WP_CLI::success( 'Created a search-only key for autocomplete.' );
-		} elseif ( 'kept' === $result['key'] ) {
-			WP_CLI::success( 'Kept the existing search-only key.' );
+		} elseif ( 'manual' === $result['key'] || $this->options->state( 'search_key_manual', false ) ) {
+			$this->verify_manual_search_key();
 		} else {
-			WP_CLI::warning( 'The search-only key is managed manually: check it on the Meilisearch > Connection screen.' );
+			WP_CLI::success( 'Kept the existing search-only key.' );
+		}
+	}
+
+	/**
+	 * The admin key cannot create keys, so the search-only key is provided by hand: verify it as saving the
+	 * Connection screen does, and record whether it may be served to visitors (autocomplete).
+	 */
+	private function verify_manual_search_key(): void {
+		if ( '' === $this->options->search_key() ) {
+			WP_CLI::warning( 'The search-only key is managed manually and none is set: autocomplete stays off until a search-only key is saved.' );
+			return;
+		}
+		$verified = null === $this->indexes ? null : $this->indexes->verify_search_key( $this->options->search_key() );
+		if ( false === $verified ) {
+			$this->options->clear_search_key_verified();
+			WP_CLI::warning( 'The search-only key is managed manually and is not a search-only key for this site\'s indexes (it is the admin or master key, Meilisearch does not know it, or it allows more than "search"). It is not sent to visitors.' );
+			return;
+		}
+		$this->options->mark_search_key_verified();
+		if ( true === $verified ) {
+			WP_CLI::success( 'The search-only key you provided is verified.' );
+		} else {
+			WP_CLI::warning( 'The search-only key is managed manually and could not be verified (the admin key cannot read keys). It is served to visitors: make sure it only allows the "search" action.' );
 		}
 	}
 
