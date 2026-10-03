@@ -96,7 +96,7 @@ final class Autocomplete implements Registrable {
 	 * Script configuration. Numbers live in nested arrays because wp_localize_script()
 	 * casts top-level scalars to strings.
 	 *
-	 * @return array{host: string, key: string, indexes: array{content: string, products: ?string}, limits: array{content: int, products: int, minChars: int, debounce: int}, subtitles: array{content: ?string, products: ?string}, selector: string, currency: ?string, locale: string, i18n: array<string, string>}
+	 * @return array{host: string, key: string, indexes: array{content: string, products: ?string}, limits: array{content: int, products: int, minChars: int, debounce: int}, subtitles: array{content: ?string, products: ?string}, selector: string, currency: ?string, locale: string, home: string, i18n: array<string, string>}
 	 */
 	public function config(): array {
 		$selector = apply_filters( 'meilisearch_autocomplete_selector', self::DEFAULT_SELECTOR );
@@ -134,6 +134,7 @@ final class Autocomplete implements Registrable {
 			'selector'  => $selector,
 			'currency'  => $products && function_exists( 'get_woocommerce_currency' ) ? (string) get_woocommerce_currency() : null,
 			'locale'    => str_replace( '_', '-', determine_locale() ),
+			'home'      => home_url( '/' ),
 			'i18n'      => array(
 				'products'    => __( 'Products', 'meilisearch' ),
 				'posts'       => __( 'Posts', 'meilisearch' ),

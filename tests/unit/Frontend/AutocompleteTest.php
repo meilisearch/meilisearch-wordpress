@@ -31,6 +31,7 @@ final class AutocompleteTest extends TestCase {
 		$this->stub_options( self::options() );
 		Functions\when( 'is_admin' )->justReturn( false );
 		Functions\when( 'determine_locale' )->justReturn( 'fr_FR' );
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.test' . $path );
 		Functions\when( 'plugins_url' )->alias(
 			static function ( $path = '', $plugin = '' ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 				return 'https://shop.test/wp-content/plugins/meilisearch/' . $path;
@@ -260,5 +261,11 @@ final class AutocompleteTest extends TestCase {
 			),
 			$this->autocomplete()->config()['subtitles']
 		);
+	}
+
+	public function test_config_contains_the_home_url_for_the_no_form_fallback(): void {
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.test/sub' . $path );
+
+		self::assertSame( 'https://shop.test/sub/', $this->autocomplete()->config()['home'] );
 	}
 }

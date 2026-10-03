@@ -150,4 +150,11 @@ test.describe( 'autocomplete', () => {
 		await input.press( 'Enter' );
 		await expect( page ).toHaveURL( /[?&]s=mountian/ );
 	} );
+
+	test( 'the footer shows the query verbatim, even with $ patterns', async ( { page } ) => {
+		await page.goto( '/search-demo/' );
+		const input = searchInput( page );
+		await input.pressSequentially( 'mountian $&', { delay: 50 } );
+		await expect( page.getByRole( 'option', { name: /See all .*“mountian \$&”/ } ) ).toBeVisible();
+	} );
 } );

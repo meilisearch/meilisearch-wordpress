@@ -189,7 +189,7 @@
 				}
 				return;
 			}
-			window.location.assign( '/?s=' + encodeURIComponent( input.value ) );
+			window.location.assign( ( config.home || '/' ) + '?s=' + encodeURIComponent( input.value ) );
 		}
 
 		function render( groups, total ) {
@@ -266,8 +266,12 @@
 					'data-submit': '1',
 				} );
 				footer.textContent = typeof total === 'number' && total > 0
-					? i18n.seeAllCount.replace( '%1$d', String( total ) ).replace( '%2$s', lastQuery )
-					: i18n.seeAll.replace( '%s', lastQuery );
+					? i18n.seeAllCount.replace( '%1$d', String( total ) ).replace( '%2$s', function () {
+						return lastQuery; // A function replacer: "$&" or "$$" typed by the visitor stay literal.
+					} )
+					: i18n.seeAll.replace( '%s', function () {
+						return lastQuery;
+					} );
 				footer.addEventListener( 'mousedown', function ( event ) {
 					event.preventDefault();
 				} );
