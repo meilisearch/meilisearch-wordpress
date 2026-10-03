@@ -268,7 +268,9 @@ final class RestControllerTest extends TestCase {
 	 * A Meilisearch error is returned with its message.
 	 */
 	public function test_connection_test_returns_meilisearch_error(): void {
-		$this->transport->queue( new ApiError( 'The provided API key is invalid.', 'invalid_api_key', 403 ) );
+		// An invalid key fails /version and the index listing that tells it apart from an index-scoped key.
+		$this->transport->queue( new ApiError( 'The provided API key is invalid.', 'invalid_api_key', 403 ) )
+			->queue( new ApiError( 'The provided API key is invalid.', 'invalid_api_key', 403 ) );
 
 		$response = $this->controller->test_connection();
 

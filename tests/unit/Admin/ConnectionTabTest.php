@@ -449,16 +449,16 @@ final class ConnectionTabTest extends TestCase {
 	public function test_after_save_stores_error_without_leaking_the_key(): void {
 		$_GET['settings-updated'] = 'true';
 		$_GET['tab']              = 'connection';
-		$this->transport->queue(
-			new Response(
-				403,
-				array(
-					'code'    => 'invalid_api_key',
-					'message' => 'The provided API key is invalid.',
-				),
-				''
-			)
+		// An invalid key fails /version and the index listing that tells it apart from an index-scoped key.
+		$invalid = new Response(
+			403,
+			array(
+				'code'    => 'invalid_api_key',
+				'message' => 'The provided API key is invalid.',
+			),
+			''
 		);
+		$this->transport->queue( $invalid )->queue( $invalid );
 
 		$this->tab()->after_save();
 

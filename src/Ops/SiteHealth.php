@@ -29,6 +29,12 @@ use Meilisearch\WordPress\Sync\Queue;
  */
 final class SiteHealth implements Registrable {
 
+	/**
+	 * Version marker when the admin key works but cannot read /version (index-scoped keys).
+	 */
+	public const VERSION_UNREADABLE = 'unreadable';
+
+
 	public const DRIFT_THRESHOLD   = 0.02;
 	public const BACKLOG_THRESHOLD = 500;
 
@@ -112,8 +118,7 @@ final class SiteHealth implements Registrable {
 
 		if ( $configured ) {
 			try {
-				$info    = $this->clients->client()->version();
-				$version = (string) ( $info['pkgVersion'] ?? '' );
+				$version = $this->indexes->server_version() ?? self::VERSION_UNREADABLE;
 			} catch ( \Throwable $e ) {
 				$error = $this->options->redact( $e->getMessage() );
 			}
@@ -122,7 +127,7 @@ final class SiteHealth implements Registrable {
 		$results = array( self::evaluate_connection( $configured, $version, $error, $connection_url ) );
 
 		if ( $configured ) {
-			$usable    = '' === $error && version_compare( $version, IndexManager::MIN_VERSION, '>=' );
+			$usable    = '' === $error && ( self::VERSION_UNREADABLE === $version || version_compare( $version, IndexManager::MIN_VERSION, '>=' ) );
 			$results[] = $this->checked( self::TEST_DOCUMENTS, $usable, fn (): array => self::evaluate_documents( $this->document_counts(), $status_url ) );
 			$results[] = $this->checked( self::TEST_SETTINGS, $usable, fn (): array => self::evaluate_settings( $this->missing_settings(), $connection_url ) );
 			$results[] = $this->checked( self::TEST_SEARCH_KEY, $usable, fn (): array => $this->search_key_result( $connection_url ) );
@@ -168,6 +173,15 @@ final class SiteHealth implements Registrable {
 					$error
 				),
 				$settings_url
+			);
+		}
+
+		if ( self::VERSION_UNREADABLE === $version ) {
+			return self::make(
+				self::TEST_CONNECTION,
+				'good',
+				__( 'Connected to Meilisearch', 'meilisearch' ),
+				__( 'The plugin can reach your Meilisearch instance. The admin key is limited to some indexes, so it cannot read the Meilisearch version: make sure the server runs a supported version.', 'meilisearch' )
 			);
 		}
 

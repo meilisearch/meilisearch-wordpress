@@ -87,7 +87,7 @@ final class Cli {
 		$this->require_configured();
 		$client = $this->clients->client();
 		try {
-			$version = $client->version();
+			$version = null === $this->indexes ? (string) ( $client->version()['pkgVersion'] ?? '' ) : $this->indexes->server_version();
 		} catch ( ApiError $error ) {
 			$this->fail( sprintf( 'Meilisearch is unreachable: %s', $this->message( $error ) ) );
 		}
@@ -95,7 +95,7 @@ final class Cli {
 		$format = isset( $assoc_args['format'] ) ? (string) $assoc_args['format'] : 'table';
 		$human  = 'table' === $format;
 		if ( $human ) {
-			WP_CLI::log( sprintf( 'Meilisearch %1$s, index prefix "%2$s".', (string) ( $version['pkgVersion'] ?? 'unknown' ), $this->names->prefix() ) );
+			WP_CLI::log( sprintf( 'Meilisearch %1$s, index prefix "%2$s".', null === $version ? '(version not readable with this key)' : ( '' === $version ? 'unknown' : $version ), $this->names->prefix() ) );
 		}
 
 		$pending = $this->queue->count( 'pending' );
@@ -166,7 +166,7 @@ final class Cli {
 				'time'    => time(),
 			)
 		);
-		WP_CLI::success( sprintf( 'Connected to Meilisearch %s. Indexes are ready.', $result['version'] ) );
+		WP_CLI::success( sprintf( 'Connected to Meilisearch %s. Indexes are ready.', '' === $result['version'] ? '(version not readable with this key)' : $result['version'] ) );
 
 		if ( 'created' === $result['key'] ) {
 			WP_CLI::success( 'Created a search-only key for autocomplete.' );

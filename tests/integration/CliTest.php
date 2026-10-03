@@ -195,6 +195,31 @@ final class CliTest extends TestCase {
 		self::assertStringContainsString( 'not a search-only key', implode( "\n", $this->messages( 'warning' ) ) );
 	}
 
+	/**
+	 * An admin key scoped to this site's indexes (Meilisearch refuses the global `version` action on such
+	 * keys) still connects: the version is reported as not readable.
+	 */
+	public function test_connect_works_with_an_index_scoped_admin_key(): void {
+		$prefix = $this->service( 'names', IndexNames::class )->prefix();
+		$scoped = $this->meili(
+			'POST',
+			'/keys',
+			array(
+				'actions'   => array( 'search', 'documents.*', 'indexes.*', 'settings.*', 'tasks.*', 'stats.*' ),
+				'indexes'   => array( $prefix . '_*' ),
+				'expiresAt' => null,
+			)
+		);
+		update_option( 'meilisearch_admin_key', (string) $scoped['key'], false );
+
+		$this->cli()->connect( array(), array() );
+
+		self::assertStringContainsString( 'version not readable with this key', implode( "\n", $this->messages( 'success' ) ) );
+		$uid = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		self::assertSame( $uid, $this->meili( 'GET', '/indexes/' . $uid )['uid'] ?? null );
+		$this->meili( 'DELETE', '/keys/' . (string) $scoped['uid'] );
+	}
+
 	public function test_connect_exits_1_with_a_redacted_message_when_meilisearch_is_unreachable(): void {
 		$connection         = get_option( 'meilisearch_connection' );
 		$connection['host'] = 'http://127.0.0.1:9';

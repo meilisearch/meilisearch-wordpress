@@ -50,8 +50,12 @@ final class IndexManager {
 	 * @throws \RuntimeException Message starting with 'unsupported_version' when older than MIN_VERSION.
 	 */
 	public function check_connection(): string {
-		$version = $this->clients->client()->version();
-		$found   = isset( $version['pkgVersion'] ) && is_string( $version['pkgVersion'] ) ? $version['pkgVersion'] : '';
+		$found = $this->server_version();
+		if ( null === $found ) {
+			// The key cannot read the global /version route (an index-scoped key) but works on its indexes:
+			// the version cannot be checked, so it is reported as unknown ('').
+			return '';
+		}
 
 		if ( '' === $found || version_compare( $found, self::MIN_VERSION, '<' ) ) {
 			// phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
@@ -67,6 +71,35 @@ final class IndexManager {
 		}
 
 		return $found;
+	}
+
+	/**
+	 * The server's version (pkgVersion, '' when the response has none), or null when the admin key cannot
+	 * read /version but does work: Meilisearch refuses the global `version` action on index-scoped keys.
+	 * A 403 is ambiguous (invalid key or missing permission), so the index listing decides; when it fails
+	 * too, the original error is thrown.
+	 *
+	 * @return string|null
+	 *
+	 * @throws ApiError On Meilisearch errors other than a scoped key's 403.
+	 */
+	public function server_version(): ?string {
+		$client = $this->clients->client();
+		try {
+			$version = $client->version();
+		} catch ( ApiError $error ) {
+			if ( 403 !== $error->http_status ) {
+				throw $error;
+			}
+			try {
+				$client->list_indexes();
+			} catch ( ApiError $listing ) {
+				throw $error;
+			}
+			return null;
+		}
+
+		return isset( $version['pkgVersion'] ) && is_string( $version['pkgVersion'] ) ? $version['pkgVersion'] : '';
 	}
 
 	/**

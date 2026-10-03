@@ -161,7 +161,8 @@ final class IndexManagerTest extends TestCase {
 	}
 
 	public function test_check_connection_propagates_invalid_key(): void {
-		$this->transport->queue( self::error( 403, 'invalid_api_key' ) );
+		// /version and the index listing both refuse the key: it is invalid.
+		$this->transport->queue( self::error( 403, 'invalid_api_key' ) )->queue( self::error( 403, 'invalid_api_key' ) );
 
 		try {
 			$this->manager()->check_connection();
@@ -170,6 +171,49 @@ final class IndexManagerTest extends TestCase {
 			$this->assertSame( 403, $error->http_status );
 			$this->assertSame( 'invalid_api_key', $error->error_code );
 		}
+	}
+
+	/**
+	 * Index-scoped keys cannot read the global /version route (Meilisearch refuses the `version` action on
+	 * them): the key is accepted when it can list its indexes, and the version is reported as unknown.
+	 */
+	public function test_check_connection_accepts_an_index_scoped_key_that_cannot_read_the_version(): void {
+		$this->transport->queue( self::error( 403, 'invalid_api_key' ) )->queue(
+			self::json(
+				array(
+					'results' => array(),
+					'total'   => 0,
+				)
+			)
+		);
+
+		$this->assertSame( '', $this->manager()->check_connection() );
+		$this->assertSame( array( 'GET /version', 'GET /indexes' ), array_map( static fn ( string $call ): string => strtok( $call, '?' ), $this->calls() ) );
+	}
+
+	public function test_server_version_is_null_for_an_index_scoped_key(): void {
+		$this->transport->queue( self::error( 403, 'invalid_api_key' ) )->queue(
+			self::json(
+				array(
+					'results' => array(),
+					'total'   => 0,
+				)
+			)
+		);
+
+		$this->assertNull( $this->manager()->server_version() );
+	}
+
+	public function test_check_connection_propagates_other_errors_without_a_second_call(): void {
+		$this->transport->queue( self::error( 500, 'internal' ) );
+
+		try {
+			$this->manager()->check_connection();
+			$this->fail( 'Expected ApiError.' );
+		} catch ( ApiError $error ) {
+			$this->assertSame( 500, $error->http_status );
+		}
+		$this->assertSame( array( 'GET /version' ), $this->calls() );
 	}
 
 	public function test_ensure_index_creates_missing_index_with_initial_settings(): void {

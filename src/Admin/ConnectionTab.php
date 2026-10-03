@@ -247,7 +247,7 @@ final class ConnectionTab implements Tab, Registrable {
 		);
 
 		/* translators: %s: Meilisearch version. */
-		$message = sprintf( __( 'Connected to Meilisearch %s. Indexes are ready.', 'meilisearch' ), $result['version'] );
+		$message = sprintf( __( 'Connected to Meilisearch %s. Indexes are ready.', 'meilisearch' ), '' === $result['version'] ? __( '(version not readable with this key)', 'meilisearch' ) : $result['version'] );
 		$type    = 'success';
 		if ( 'created' === $result['key'] ) {
 			$message .= ' ' . __( 'A search-only key was created for autocomplete.', 'meilisearch' );
@@ -359,7 +359,7 @@ final class ConnectionTab implements Tab, Registrable {
 				sprintf(
 					/* translators: %s: Meilisearch version. */
 					__( 'Connected to Meilisearch %s.', 'meilisearch' ),
-					(string) $last['version']
+					'' === (string) $last['version'] ? __( '(version not readable with this key)', 'meilisearch' ) : (string) $last['version']
 				)
 			);
 			if ( '' === $this->options->search_key() ) {
