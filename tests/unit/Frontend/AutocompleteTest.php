@@ -268,4 +268,17 @@ final class AutocompleteTest extends TestCase {
 
 		self::assertSame( 'https://shop.test/sub/', $this->autocomplete()->config()['home'] );
 	}
+
+	public function test_browser_host_is_filterable_for_a_public_url(): void {
+		Filters\expectApplied( 'meilisearch_autocomplete_host' )->once()->andReturn( 'https://search.example.com/' );
+
+		self::assertSame( 'https://search.example.com', $this->autocomplete()->config()['host'] );
+	}
+
+	public function test_browser_host_filter_falls_back_on_unusable_values(): void {
+		$options = new Options();
+		Filters\expectApplied( 'meilisearch_autocomplete_host' )->once()->andReturn( 'ftp://nope' );
+
+		self::assertSame( $options->host(), $this->autocomplete()->config()['host'] );
+	}
 }

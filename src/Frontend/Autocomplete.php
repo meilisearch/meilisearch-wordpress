@@ -118,7 +118,7 @@ final class Autocomplete implements Registrable {
 		}
 
 		return array(
-			'host'      => $this->options->host(),
+			'host'      => $this->browser_host(),
 			'key'       => $this->options->search_key(),
 			'indexes'   => array(
 				'content'  => $this->names->uid( 'content' ),
@@ -149,5 +149,21 @@ final class Autocomplete implements Registrable {
 				'seeAllCount' => __( 'See all %1$d results for “%2$s”', 'meilisearch' ),
 			),
 		);
+	}
+
+	/**
+	 * The Meilisearch URL visitors' browsers use. Defaults to the configured host; a site whose PHP reaches
+	 * Meilisearch on a private address (loopback, internal network) returns the public URL here.
+	 */
+	public function browser_host(): string {
+		$host = $this->options->host();
+		/**
+		 * Filters the Meilisearch URL the autocomplete script calls from the browser.
+		 *
+		 * @param string $host Meilisearch URL (the configured host by default).
+		 */
+		$filtered = apply_filters( 'meilisearch_autocomplete_host', $host );
+		$public   = is_string( $filtered ) ? Options::normalize_host( $filtered ) : '';
+		return '' !== $public ? $public : $host;
 	}
 }

@@ -87,6 +87,10 @@ No. The admin key is stored without autoloading and is never printed in pages. B
 
 Return the name of a top-level document field from the `meilisearch_autocomplete_subtitle_field( ?string $field, string $logical )` filter. `$logical` is `content` or `products`. The field must be in the index's displayed attributes. Its text is shown as plain text under the title.
 
+= WordPress reaches Meilisearch on a private address. How do browsers reach it for autocomplete? =
+
+Autocomplete calls Meilisearch from the visitor's browser with the search-only key, using the configured host by default. If PHP uses a private address (`http://127.0.0.1:7700`, an internal network name), return the public URL from the `meilisearch_autocomplete_host( string $host )` filter.
+
 == External services ==
 
 This plugin connects to a Meilisearch server to index your content and to answer searches. It is required for the plugin to work. The server is chosen by the site administrator: either a self-hosted Meilisearch instance or a Meilisearch Cloud project operated by Meilisearch. No data is sent anywhere until the administrator saves a Meilisearch URL and API key.
