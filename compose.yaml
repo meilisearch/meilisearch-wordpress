@@ -1,0 +1,85 @@
+name: meilisearch-wordpress
+
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: wordpress_test
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uwp -pwp --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  meilisearch:
+    image: getmeili/meilisearch:${MEILI_VERSION:-v1.34}
+    environment:
+      MEILI_MASTER_KEY: masterKey
+      MEILI_ENV: development
+      MEILI_NO_ANALYTICS: "true"
+    ports:
+      - "7700:7700"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  wordpress:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    depends_on:
+      db:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: wordpress_test
+      # Integration tests only touch wptests_* tables; E2E uses its own prefix in the same database.
+      WORDPRESS_TABLE_PREFIX: e2e_
+      WORDPRESS_DEBUG: "1"
+      WORDPRESS_CONFIG_EXTRA: |
+        define( 'WP_DEBUG_DISPLAY', false );
+        define( 'WP_DEBUG_LOG', true );
+        define( 'WP_ENVIRONMENT_TYPE', 'local' );
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost/wp-includes/images/blank.gif"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /opt/meilisearch/src
+        - action: sync
+          path: ./assets
+          target: /opt/meilisearch/assets
+        - action: sync
+          path: ./meilisearch.php
+          target: /opt/meilisearch/meilisearch.php
+        - action: sync
+          path: ./uninstall.php
+          target: /opt/meilisearch/uninstall.php
+        - action: rebuild
+          path: ./composer.json
+        - action: rebuild
+          path: ./composer.lock
+        - action: rebuild
+          path: ./package.json
+        - action: rebuild
+          path: ./package-lock.json

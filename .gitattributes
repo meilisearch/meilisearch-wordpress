@@ -1,0 +1,19 @@
+* text=auto eol=lf
+
+/.claude                      export-ignore
+/.github                      export-ignore
+/.wordpress-org               export-ignore
+/bin                          export-ignore
+/docs                         export-ignore
+/tests                        export-ignore
+/.distignore                  export-ignore
+/.gitattributes               export-ignore
+/.gitignore                   export-ignore
+/compose.yaml                 export-ignore
+/Dockerfile.dev               export-ignore
+/package.json                 export-ignore
+/package-lock.json            export-ignore
+/phpcs.xml.dist               export-ignore
+/phpstan.neon.dist            export-ignore
+/phpunit.xml.dist             export-ignore
+/phpunit-integration.xml.dist export-ignore

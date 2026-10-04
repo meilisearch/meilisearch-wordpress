@@ -1,0 +1,19 @@
+{
+	"name": "meilisearch-wordpress",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Build tooling for the Meilisearch for WordPress plugin.",
+	"license": "GPL-2.0-or-later",
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"build": "terser assets/js/autocomplete.js -c -m -o assets/js/autocomplete.min.js",
+		"test:e2e": "playwright test --config tests/e2e/playwright.config.ts"
+	},
+	"devDependencies": {
+		"@axe-core/playwright": "^4.13.0",
+		"@playwright/test": "^1.63.0",
+		"terser": "5.51.2"
+	}
+}

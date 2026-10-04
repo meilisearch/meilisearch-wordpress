@@ -1,0 +1,17 @@
+/vendor/
+/wordpress/
+/tests/integration/plugins/
+/node_modules/
+/test-results/
+/playwright-report/
+/.phpunit.result.cache
+/.phpcs-cache
+*.zip
+.DS_Store
+assets/js/autocomplete.min.js
+
+# E2E
+/tests/e2e/.auth/
+
+# Distribution build
+/build/

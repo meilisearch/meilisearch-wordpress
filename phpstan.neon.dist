@@ -1,0 +1,23 @@
+includes:
+	- vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+	level: 6
+	phpVersion: 80100
+	paths:
+		- meilisearch.php
+		- uninstall.php
+		- src
+	scanFiles:
+		- vendor/php-stubs/woocommerce-stubs/woocommerce-stubs.php
+		- vendor/woocommerce/action-scheduler/functions.php
+		- vendor/php-stubs/wp-cli-stubs/wp-cli-stubs.php
+	scanDirectories:
+		- vendor/woocommerce/action-scheduler/classes
+	treatPhpDocTypesAsCertain: false
+	ignoreErrors:
+		# WP_CLI\Utils\make_progress_bar() returns cli\progress\Bar, which the stubs declare but do not ship.
+		-
+			message: '#unknown class cli\\progress\\Bar#'
+			identifier: class.notFound
+			path: src/Ops/Cli.php
