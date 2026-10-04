@@ -113,4 +113,40 @@ final class HighlighterTest extends TestCase {
 		self::assertNull( $highlighter->filter_excerpt( null, 5 ) );
 		self::assertSame( array( 'x' ), $highlighter->filter_excerpt( array( 'x' ), 5 ) );
 	}
+
+	/**
+	 * Block themes' Post Excerpt block runs the excerpt through wp_trim_words(), which strips all tags:
+	 * a highlighted excerpt this filter served is returned untrimmed (Meilisearch already cropped it).
+	 */
+	public function test_trim_words_keeps_a_served_highlighted_excerpt(): void {
+		$mapper = new ResultMapper();
+		$mapper->apply(
+			new \WP_Query( array() ),
+			new SearchResult( array(), 1, 1, array( 5 => array( 'content' => '…the <mark>nebula</mark> glows…' ) ) )
+		);
+		$highlighter = new Highlighter( $mapper, new Options() );
+		$served      = $highlighter->filter_excerpt( 'Original', new \WP_Post( array( 'ID' => 5 ) ) );
+
+		self::assertSame( $served, $highlighter->keep_highlighted_excerpt( 'the nebula glows…', 55, '…', $served ) );
+	}
+
+	/**
+	 * Any other text keeps WordPress's trimmed result.
+	 */
+	public function test_trim_words_leaves_other_text_alone(): void {
+		$highlighter = new Highlighter( new ResultMapper(), new Options() );
+
+		self::assertSame( 'trimmed', $highlighter->keep_highlighted_excerpt( 'trimmed', 55, '…', 'some <mark>other</mark> text' ) );
+		self::assertSame( 'trimmed', $highlighter->keep_highlighted_excerpt( 'trimmed', 55, '…', null ) );
+	}
+
+	/**
+	 * The wp_trim_words filter is added with the excerpt filter.
+	 */
+	public function test_register_hooks_trim_words(): void {
+		$highlighter = new Highlighter( new ResultMapper(), new Options() );
+		$highlighter->register();
+
+		self::assertSame( 20, has_filter( 'wp_trim_words', array( $highlighter, 'keep_highlighted_excerpt' ) ) );
+	}
 }

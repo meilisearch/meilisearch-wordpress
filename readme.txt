@@ -65,7 +65,7 @@ Yes, with WooCommerce 8.5 or later (optional). Product search needs a theme with
 
 = My site is very large. How do I index it? =
 
-Use WP-CLI: `wp meilisearch reindex` indexes synchronously with a progress bar and is not limited by PHP time limits. Other commands: `wp meilisearch status`, `wp meilisearch sync <id>...`, `wp meilisearch clear` and `wp meilisearch check`. On shared hosting without shell access, the Reindex button runs the same work in the background.
+Use WP-CLI: `wp meilisearch reindex` indexes synchronously with a progress bar and is not limited by PHP time limits. `wp meilisearch connect` checks the connection, creates the indexes and the browser search key (for sites configured in wp-config.php). Other commands: `wp meilisearch status`, `wp meilisearch sync <id>...`, `wp meilisearch clear` and `wp meilisearch check`. On shared hosting without shell access, the Reindex button runs the same work in the background.
 
 = Can I use it together with another search plugin? =
 
@@ -82,6 +82,14 @@ Search falls back to the normal WordPress database search within 2 seconds and k
 = Is my admin API key exposed? =
 
 No. The admin key is stored without autoloading and is never printed in pages. Browsers only receive a separate key that the plugin creates with the "search" permission on this site's indexes only. A search key pasted by hand is only sent to browsers after a check, and never when it is the admin key, a key Meilisearch does not know (such as the master key) or a key that can do more than search; Site Health reports such a key as critical.
+
+= How do I show a second line under each autocomplete suggestion? =
+
+Return the name of a top-level document field from the `meilisearch_autocomplete_subtitle_field( ?string $field, string $logical )` filter. `$logical` is `content` or `products`. The field must be in the index's displayed attributes. Its text is shown as plain text under the title.
+
+= WordPress reaches Meilisearch on a private address. How do browsers reach it for autocomplete? =
+
+Autocomplete calls Meilisearch from the visitor's browser with the search-only key, using the configured host by default. If PHP uses a private address (`http://127.0.0.1:7700`, an internal network name), return the public URL from the `meilisearch_autocomplete_host( string $host )` filter.
 
 == External services ==
 
@@ -108,6 +116,8 @@ Meilisearch Cloud is provided by Meilisearch: [Terms of use](https://www.meilise
 == Changelog ==
 
 = 1.0.0 =
+* Highlighted excerpts also work with block themes (the Post Excerpt block no longer strips the highlights).
+* Autocomplete: a "See all N results" option submits the search form.
 * First release: content and WooCommerce product indexing with real-time sync, in-place reindex with orphan sweep, theme and WooCommerce search replacement with fallback, optional hybrid search, excerpt highlighting and autocomplete, WP-CLI commands, Site Health checks, privacy policy text and multisite support.
 
 == Upgrade Notice ==

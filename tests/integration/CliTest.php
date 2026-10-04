@@ -65,7 +65,9 @@ final class CliTest extends TestCase {
 			$this->service( 'names', IndexNames::class ),
 			$health,
 			$this->service( 'indexability', Indexability::class ),
-			$this->service( 'queue', Queue::class )
+			$this->service( 'queue', Queue::class ),
+			$this->service( 'options', Options::class ),
+			$this->service( 'index_manager', IndexManager::class )
 		);
 	}
 
@@ -110,6 +112,124 @@ final class CliTest extends TestCase {
 		} catch ( CliExit $exit ) {
 			self::assertSame( $code, $exit->getCode() );
 		}
+	}
+
+	public function test_connect_creates_indexes_and_the_search_key_and_records_last_connect(): void {
+		$options = $this->service( 'options', Options::class );
+		self::assertSame( '', $options->search_key() );
+
+		$this->cli()->connect( array(), array() );
+
+		$success = implode( "\n", $this->messages( 'success' ) );
+		self::assertMatchesRegularExpression( '/Connected to Meilisearch \d+\.\d+/', $success );
+		self::assertStringContainsString( 'search-only key', $success );
+		self::assertNotSame( '', $options->search_key() );
+		self::assertTrue( $options->search_key_is_verified() );
+		$last = $options->state( 'last_connect' );
+		self::assertIsArray( $last );
+		self::assertNotSame( '', (string) ( $last['version'] ?? '' ) );
+		$uid = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		self::assertSame( $uid, $this->meili( 'GET', '/indexes/' . $uid )['uid'] ?? null );
+
+		$this->meili( 'DELETE', '/keys/' . (string) get_option( 'meilisearch_connection' )['search_key_uid'] );
+	}
+
+	public function test_connect_twice_keeps_the_key(): void {
+		$this->cli()->connect( array(), array() );
+		$first = $this->service( 'options', Options::class )->search_key();
+		WP_CLI::reset();
+
+		$this->cli()->connect( array(), array() );
+
+		self::assertSame( $first, $this->service( 'options', Options::class )->search_key() );
+		self::assertStringContainsString( 'Kept', implode( "\n", $this->messages( 'success' ) ) );
+		$this->meili( 'DELETE', '/keys/' . (string) get_option( 'meilisearch_connection' )['search_key_uid'] );
+	}
+
+	/**
+	 * Sites whose admin key cannot manage keys provide a search-only key themselves: connect verifies it,
+	 * as saving the Connection screen does, so autocomplete can serve it.
+	 */
+	public function test_connect_verifies_a_manually_provided_search_key(): void {
+		$uid                      = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		$key                      = $this->meili(
+			'POST',
+			'/keys',
+			array(
+				'actions'   => array( 'search' ),
+				'indexes'   => array( $uid ),
+				'expiresAt' => null,
+			)
+		);
+		$connection               = get_option( 'meilisearch_connection' );
+		$connection['search_key'] = (string) $key['key'];
+		update_option( 'meilisearch_connection', $connection, false );
+		$this->keep_connection_as_is();
+
+		$this->cli()->connect( array(), array() );
+
+		self::assertTrue( $this->service( 'options', Options::class )->search_key_is_verified() );
+		self::assertStringContainsString( 'search-only key you provided is verified', implode( "\n", $this->messages( 'success' ) ) );
+		$this->meili( 'DELETE', '/keys/' . (string) $key['uid'] );
+	}
+
+	/**
+	 * A connection that already ran with this host, key and prefix and whose search key is managed by hand:
+	 * connect keeps the key instead of creating one (the test admin key could create keys).
+	 */
+	private function keep_connection_as_is(): void {
+		$options = $this->service( 'options', Options::class );
+		$options->set_state( 'search_key_manual', true );
+		$options->set_state( 'fingerprint', md5( $options->host() . '|' . $options->admin_key() . '|' . $this->service( 'names', IndexNames::class )->prefix() ) );
+	}
+
+	public function test_connect_refuses_to_serve_the_admin_key_as_a_manual_search_key(): void {
+		$connection               = get_option( 'meilisearch_connection' );
+		$connection['search_key'] = self::test_key();
+		update_option( 'meilisearch_connection', $connection, false );
+		$this->keep_connection_as_is();
+
+		$this->cli()->connect( array(), array() );
+
+		self::assertFalse( $this->service( 'options', Options::class )->search_key_is_verified() );
+		self::assertStringContainsString( 'not a search-only key', implode( "\n", $this->messages( 'warning' ) ) );
+	}
+
+	/**
+	 * An admin key scoped to this site's indexes (Meilisearch refuses the global `version` action on such
+	 * keys) still connects: the version is reported as not readable.
+	 */
+	public function test_connect_works_with_an_index_scoped_admin_key(): void {
+		$prefix = $this->service( 'names', IndexNames::class )->prefix();
+		$scoped = $this->meili(
+			'POST',
+			'/keys',
+			array(
+				'actions'   => array( 'search', 'documents.*', 'indexes.*', 'settings.*', 'tasks.*', 'stats.*' ),
+				'indexes'   => array( $prefix . '_*' ),
+				'expiresAt' => null,
+			)
+		);
+		update_option( 'meilisearch_admin_key', (string) $scoped['key'], false );
+
+		$this->cli()->connect( array(), array() );
+
+		self::assertStringContainsString( 'version not readable with this key', implode( "\n", $this->messages( 'success' ) ) );
+		$uid = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		self::assertSame( $uid, $this->meili( 'GET', '/indexes/' . $uid )['uid'] ?? null );
+		$this->meili( 'DELETE', '/keys/' . (string) $scoped['uid'] );
+	}
+
+	public function test_connect_exits_1_with_a_redacted_message_when_meilisearch_is_unreachable(): void {
+		$connection         = get_option( 'meilisearch_connection' );
+		$connection['host'] = 'http://127.0.0.1:9';
+		update_option( 'meilisearch_connection', $connection, false );
+
+		$this->expect_exit( fn () => $this->cli()->connect( array(), array() ), 1 );
+
+		$error = $this->messages( 'error' )[0] ?? '';
+		self::assertStringContainsString( 'Could not connect to Meilisearch', $error );
+		self::assertStringNotContainsString( self::test_key(), $error );
 	}
 
 	public function test_reindex_indexes_published_posts_and_reports_progress(): void {

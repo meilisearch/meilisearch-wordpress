@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { MEILI_KEY, syncUntilHits, wp } from './utils';
@@ -118,5 +119,42 @@ test.describe( 'autocomplete', () => {
 
 		await input.press( 'Enter' );
 		await page.waitForURL( /[?&]s=mountian/ );
+	} );
+
+	test( 'a filtered subtitle field renders under the title', async ( { page } ) => {
+		// wp-content/mu-plugins is root-owned, so the throwaway plugin is written as root.
+		const muPlugin = '/var/www/html/wp-content/mu-plugins/e2e-subtitle.php';
+		const filter = '<?php add_filter( "meilisearch_autocomplete_subtitle_field", fn( $f, $l ) => "content" === $l ? "excerpt" : $f, 10, 2 );';
+		execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'sh', '-c', `mkdir -p "$(dirname ${ muPlugin })" && printf '%s' '${ filter }' > ${ muPlugin }` ] );
+		try {
+			await page.goto( '/search-demo/' );
+			const input = searchInput( page );
+			await input.pressSequentially( 'mountian', { delay: 50 } );
+			const option = page.getByRole( 'option', { name: /Mountain Photography Tips/ } );
+			await expect( option.locator( '.meilisearch-ac__subtitle' ) ).toContainText( 'Golden hour' );
+		} finally {
+			execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'rm', '-f', muPlugin ] );
+		}
+	} );
+
+	test( 'the footer shows the total and submits the search form', async ( { page } ) => {
+		await page.goto( '/search-demo/' );
+		const input = searchInput( page );
+		await input.pressSequentially( 'mountian', { delay: 50 } );
+		const footer = page.getByRole( 'option', { name: /See all \d+ results for “mountian”/ } );
+		await expect( footer ).toBeVisible();
+
+		// Keyboard: the footer is the last option.
+		await input.press( 'ArrowUp' );
+		await expect( footer ).toHaveAttribute( 'aria-selected', 'true' );
+		await input.press( 'Enter' );
+		await expect( page ).toHaveURL( /[?&]s=mountian/ );
+	} );
+
+	test( 'the footer shows the query verbatim, even with $ patterns', async ( { page } ) => {
+		await page.goto( '/search-demo/' );
+		const input = searchInput( page );
+		await input.pressSequentially( 'mountian $&', { delay: 50 } );
+		await expect( page.getByRole( 'option', { name: /See all .*“mountian \$&”/ } ) ).toBeVisible();
 	} );
 } );

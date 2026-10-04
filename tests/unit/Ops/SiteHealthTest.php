@@ -32,6 +32,13 @@ final class SiteHealthTest extends TestCase {
 		self::assertStringContainsString( 'tab=connection', $result['actions'] );
 	}
 
+	public function test_a_key_that_cannot_read_the_version_is_connected(): void {
+		$result = SiteHealth::evaluate_connection( true, SiteHealth::VERSION_UNREADABLE, '', self::URL );
+
+		self::assertSame( 'good', $result['status'] );
+		self::assertStringContainsString( 'cannot read the Meilisearch version', $result['description'] );
+	}
+
 	public function test_unreachable_meilisearch_is_critical(): void {
 		$result = SiteHealth::evaluate_connection( true, '', 'cURL error 7: Failed to connect', self::URL );
 

@@ -31,6 +31,7 @@ final class AutocompleteTest extends TestCase {
 		$this->stub_options( self::options() );
 		Functions\when( 'is_admin' )->justReturn( false );
 		Functions\when( 'determine_locale' )->justReturn( 'fr_FR' );
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.test' . $path );
 		Functions\when( 'plugins_url' )->alias(
 			static function ( $path = '', $plugin = '' ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 				return 'https://shop.test/wp-content/plugins/meilisearch/' . $path;
@@ -207,8 +208,11 @@ final class AutocompleteTest extends TestCase {
 		self::assertSame( Autocomplete::DEFAULT_SELECTOR, $config['selector'] );
 		self::assertNull( $config['currency'] );
 		self::assertSame( 'fr-FR', $config['locale'] );
-		self::assertSame( array( 'products', 'posts', 'listLabel', 'noResults', 'oneResult', 'results' ), array_keys( $config['i18n'] ) );
+		self::assertSame( array( 'products', 'posts', 'listLabel', 'noResults', 'oneResult', 'results', 'seeAll', 'seeAllCount' ), array_keys( $config['i18n'] ) );
 		self::assertStringContainsString( '%d', $config['i18n']['results'] );
+		self::assertStringContainsString( '%s', $config['i18n']['seeAll'] );
+		self::assertStringContainsString( '%1$d', $config['i18n']['seeAllCount'] );
+		self::assertStringContainsString( '%2$s', $config['i18n']['seeAllCount'] );
 	}
 
 	public function test_config_never_contains_the_admin_key(): void {
@@ -221,5 +225,60 @@ final class AutocompleteTest extends TestCase {
 
 		Filters\expectApplied( 'meilisearch_autocomplete_selector' )->once()->andReturn( array( 'not', 'a', 'string' ) );
 		self::assertSame( Autocomplete::DEFAULT_SELECTOR, $this->autocomplete()->config()['selector'] );
+	}
+
+	public function test_subtitles_default_to_null(): void {
+		self::assertSame(
+			array(
+				'content'  => null,
+				'products' => null,
+			),
+			$this->autocomplete()->config()['subtitles']
+		);
+	}
+
+	public function test_subtitle_field_is_filterable_per_index_and_validated(): void {
+		Filters\expectApplied( 'meilisearch_autocomplete_subtitle_field' )->twice()->andReturnUsing(
+			static fn ( $field, string $logical ) => 'content' === $logical ? 'demo_subtitle' : 'bad field;'
+		);
+
+		self::assertSame(
+			array(
+				'content'  => 'demo_subtitle',
+				'products' => null,
+			),
+			$this->autocomplete()->config()['subtitles']
+		);
+	}
+
+	public function test_subtitle_field_ignores_non_strings(): void {
+		Filters\expectApplied( 'meilisearch_autocomplete_subtitle_field' )->twice()->andReturn( array( 'title' ) );
+
+		self::assertSame(
+			array(
+				'content'  => null,
+				'products' => null,
+			),
+			$this->autocomplete()->config()['subtitles']
+		);
+	}
+
+	public function test_config_contains_the_home_url_for_the_no_form_fallback(): void {
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.test/sub' . $path );
+
+		self::assertSame( 'https://shop.test/sub/', $this->autocomplete()->config()['home'] );
+	}
+
+	public function test_browser_host_is_filterable_for_a_public_url(): void {
+		Filters\expectApplied( 'meilisearch_autocomplete_host' )->once()->andReturn( 'https://search.example.com/' );
+
+		self::assertSame( 'https://search.example.com', $this->autocomplete()->config()['host'] );
+	}
+
+	public function test_browser_host_filter_falls_back_on_unusable_values(): void {
+		$options = new Options();
+		Filters\expectApplied( 'meilisearch_autocomplete_host' )->once()->andReturn( 'ftp://nope' );
+
+		self::assertSame( $options->host(), $this->autocomplete()->config()['host'] );
 	}
 }

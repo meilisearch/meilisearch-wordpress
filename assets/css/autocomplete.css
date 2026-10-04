@@ -101,3 +101,19 @@
 		outline-color: Highlight;
 	}
 }
+
+.meilisearch-ac__subtitle {
+	font-size: 0.85em;
+	opacity: 0.7;
+}
+
+.meilisearch-ac__footer {
+	border-top: 1px solid currentColor;
+	border-top-color: color-mix(in srgb, currentColor 20%, transparent);
+	font-size: 0.9em;
+	padding: 0.5em 0.75em;
+	cursor: pointer;
+}
+.meilisearch-ac__footer.is-active {
+	text-decoration: underline;
+}

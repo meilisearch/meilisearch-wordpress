@@ -379,6 +379,7 @@ When enabled, intercepted searches add `attributesToCrop: ["content:30"]`, `attr
 - Attaches to `form[role=search] input[name=s]` and `input[name=s]` (selector filterable via `meilisearch_autocomplete_selector`).
 - On input (debounced 150 ms, ≥ 2 chars): one `POST /multi-search` (non-federated) with two queries — content (`limit` 5) and products (`limit` 5, if enabled) — `attributesToRetrieve` limited to display fields (`id,title,permalink,post_type,thumbnail_url` + `price` for products), `attributesToHighlight: ["title"]` with pre/post tags `\u0002`/`\u0003`.
 - Renders grouped results ("Products", "Posts") as links; DOM built with `createElement`/`textContent`; highlight markers split in JS into `<mark>` elements — no index HTML is ever inserted.
+- A last option, "See all N results for “q”", submits the form (or goes to `/?s=q` when the input has no form); N is the sum of `estimatedTotalHits`, and the label drops the count when it is unknown.
 - Enter with an active option navigates to that result; Enter without one submits the original form (theme results page is canonical).
 - Accessibility: WAI-ARIA combobox pattern (`role=combobox`, `aria-expanded`, `aria-controls`, `aria-activedescendant`), arrow/Escape/Enter keys, `aria-live=polite` result count, visible focus styles, respects `prefers-reduced-motion`. Minimal CSS using `currentColor` so it inherits the theme.
 - Config via `wp_localize_script`: host, scoped key, index UIDs, limits, translated strings.
@@ -395,6 +396,7 @@ When enabled, intercepted searches add `attributesToCrop: ["content:30"]`, `attr
 
 | Command | Purpose |
 |---|---|
+| `connect` | Check the connection, create the indexes and the browser search key (for sites configured in wp-config.php) |
 | `status` | Connection, version, per-index doc count vs indexable count, pending/failed actions |
 | `reindex [--index=<content\|products>] [--batch-size=<n>]` | Synchronous in-place reindex + orphan sweep with progress bar |
 | `sync <id>...` | Reconcile specific posts now |
@@ -473,6 +475,8 @@ Connect and reindex from admin; theme search served by Meilisearch; autocomplete
 | `meilisearch_search_timeout` | filter | search timeout (s) |
 | `meilisearch_reindex_batch_size` | filter | reindex batch size |
 | `meilisearch_autocomplete_selector` | filter | inputs autocomplete attaches to |
+| `meilisearch_autocomplete_subtitle_field( ?string $field, string $logical )` | filter | document field shown under each suggestion (`content` or `products`) |
+| `meilisearch_autocomplete_host( string $host )` | filter | Meilisearch URL the browser calls (default: the configured host); for sites whose PHP uses a private address |
 
 ## 15. Open questions
 
