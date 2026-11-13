@@ -14,6 +14,9 @@
 	if ( ! config || ! config.host || ! config.key || ! config.indexes || ! window.fetch || ! window.AbortController ) {
 		return;
 	}
+	if ( ! config.indexes.content && ! config.indexes.products ) {
+		return; // No index holds a post type of the site search.
+	}
 
 	const PRE_TAG = '\u0002';
 	const POST_TAG = '\u0003';
@@ -34,6 +37,8 @@
 		},
 		config.i18n || {}
 	);
+	// Limits content suggestions to the post types the results page lists (built and escaped in PHP).
+	const contentFilter = config.filters && typeof config.filters.content === 'string' && config.filters.content !== '' ? config.filters.content : null;
 	const endpoint = String( config.host ).replace( /\/+$/, '' ) + '/multi-search';
 	let instances = 0;
 	let priceFormatter = null;
@@ -91,8 +96,8 @@
 		return subtitles[ key ] ? base.concat( [ subtitles[ key ] ] ) : base;
 	}
 
-	function buildQuery( indexUid, q, limit, fields ) {
-		return {
+	function buildQuery( indexUid, q, limit, fields, filter ) {
+		const query = {
 			indexUid: indexUid,
 			q: q,
 			limit: limit,
@@ -101,6 +106,10 @@
 			highlightPreTag: PRE_TAG,
 			highlightPostTag: POST_TAG,
 		};
+		if ( filter ) {
+			query.filter = filter;
+		}
+		return query;
 	}
 
 	function attach( input ) {
@@ -332,7 +341,9 @@
 			if ( config.indexes.products ) {
 				groups.push( { key: 'products', label: i18n.products, hits: hitsByIndex[ config.indexes.products ] || [] } );
 			}
-			groups.push( { key: 'content', label: i18n.posts, hits: hitsByIndex[ config.indexes.content ] || [] } );
+			if ( config.indexes.content ) {
+				groups.push( { key: 'content', label: i18n.posts, hits: hitsByIndex[ config.indexes.content ] || [] } );
+			}
 			return {
 				groups: groups.filter( function ( group ) {
 					return group.hits.length > 0;
@@ -352,7 +363,9 @@
 			if ( config.indexes.products ) {
 				queries.push( buildQuery( config.indexes.products, q, limits.products, fieldsFor( 'products', PRODUCT_FIELDS ) ) );
 			}
-			queries.push( buildQuery( config.indexes.content, q, limits.content, fieldsFor( 'content', CONTENT_FIELDS ) ) );
+			if ( config.indexes.content ) {
+				queries.push( buildQuery( config.indexes.content, q, limits.content, fieldsFor( 'content', CONTENT_FIELDS ), contentFilter ) );
+			}
 
 			const current = new AbortController();
 			controller = current;

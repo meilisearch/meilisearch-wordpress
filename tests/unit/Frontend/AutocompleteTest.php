@@ -31,6 +31,7 @@ final class AutocompleteTest extends TestCase {
 		$this->stub_options( self::options() );
 		Functions\when( 'is_admin' )->justReturn( false );
 		Functions\when( 'determine_locale' )->justReturn( 'fr_FR' );
+		$this->stub_searchable_types( array( 'post', 'page', 'attachment' ) );
 		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.test' . $path );
 		Functions\when( 'plugins_url' )->alias(
 			static function ( $path = '', $plugin = '' ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
@@ -56,6 +57,22 @@ final class AutocompleteTest extends TestCase {
 		$options = self::OPTIONS;
 		$options[ Options::STATE ]['search_key_verified'] = Options::key_fingerprint( 'search-key-value' );
 		return $options;
+	}
+
+	/**
+	 * Post types WordPress includes in a default site search (exclude_from_search = false).
+	 *
+	 * @param list<string> $types Post type names.
+	 */
+	private function stub_searchable_types( array $types ): void {
+		Functions\when( 'get_post_types' )->alias(
+			static function ( $args = array() ) use ( $types ) {
+				if ( array( 'exclude_from_search' => false ) !== $args ) {
+					return array();
+				}
+				return array_combine( $types, $types );
+			}
+		);
 	}
 
 	private function autocomplete(): Autocomplete {
@@ -213,6 +230,47 @@ final class AutocompleteTest extends TestCase {
 		self::assertStringContainsString( '%s', $config['i18n']['seeAll'] );
 		self::assertStringContainsString( '%1$d', $config['i18n']['seeAllCount'] );
 		self::assertStringContainsString( '%2$s', $config['i18n']['seeAllCount'] );
+	}
+
+	public function test_content_query_is_limited_to_the_indexed_types_of_the_site_search(): void {
+		$options                     = self::options();
+		$options[ Options::CONTENT ] = array( 'post_types' => array( 'post', 'page', 'secret_doc' ) );
+		$this->stub_options( $options );
+
+		$config = $this->autocomplete()->config();
+
+		// 'secret_doc' is indexed but registered with exclude_from_search: the results page never lists it.
+		self::assertSame( array( 'content' => 'post_type IN ["post", "page"]' ), $config['filters'] );
+		self::assertSame( 'wp_test_content', $config['indexes']['content'] );
+	}
+
+	public function test_content_index_is_not_queried_when_no_indexed_type_is_in_the_site_search(): void {
+		$options                     = self::options();
+		$options[ Options::CONTENT ] = array( 'post_types' => array( 'secret_doc' ) );
+		$this->stub_options( $options );
+
+		$config = $this->autocomplete()->config();
+
+		self::assertNull( $config['indexes']['content'] );
+		self::assertSame( array( 'content' => null ), $config['filters'] );
+	}
+
+	/**
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_products_index_follows_the_site_search_too(): void {
+		require_once dirname( __DIR__ ) . '/Support/woocommerce-active.php';
+		$options                         = self::options();
+		$options[ Options::WOOCOMMERCE ] = array( 'enabled' => true );
+		$this->stub_options( $options );
+
+		$this->stub_searchable_types( array( 'post', 'page', 'product' ) );
+		self::assertSame( 'wp_test_products', $this->autocomplete()->config()['indexes']['products'] );
+
+		// The store took products out of the site search: the results page would not list them.
+		$this->stub_searchable_types( array( 'post', 'page' ) );
+		self::assertNull( $this->autocomplete()->config()['indexes']['products'] );
 	}
 
 	public function test_config_never_contains_the_admin_key(): void {

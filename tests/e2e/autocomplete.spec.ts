@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { MEILI_KEY, syncUntilHits, wp } from './utils';
+import { CONTENT_INDEX, MEILI_KEY, syncUntilHits, wp } from './utils';
 
 test.use( { storageState: { cookies: [], origins: [] } } );
 
@@ -230,6 +230,51 @@ test.describe( 'autocomplete', () => {
 			expect( gap ).toBeLessThan( 16 );
 		} finally {
 			wp( 'post', 'delete', id, '--force' );
+			execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'rm', '-f', muPlugin ] );
+		}
+	} );
+
+	test( 'an indexed post type that is excluded from the site search is not suggested', async ( { page } ) => {
+		const muPlugin = '/var/www/html/wp-content/mu-plugins/e2e-hidden-type.php';
+		const code = '<?php add_action( "init", fn() => register_post_type( "e2e_hidden", array( "public" => true, "exclude_from_search" => true ) ) );';
+		const postTypes = wp( 'option', 'pluck', 'meilisearch_content', 'post_types', '--format=json' );
+		execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'sh', '-c', `mkdir -p "$(dirname ${ muPlugin })" && printf '%s' '${ code }' > ${ muPlugin }` ] );
+		let id = '';
+		try {
+			wp( 'option', 'patch', 'update', 'meilisearch_content', 'post_types', '["post","page","e2e_hidden"]', '--format=json' );
+			id = wp(
+				'post', 'create', '--post_type=e2e_hidden', '--post_status=publish', '--porcelain',
+				'--post_title=Wombatlark hidden record', '--post_content=Indexed, but not part of the site search.'
+			);
+			await syncUntilHits( 'wombatlark', 1 ); // The document is in the content index.
+
+			await page.goto( '/search-demo/' );
+			const input = searchInput( page );
+			const listId = await input.getAttribute( 'aria-controls' );
+			const sent = page.waitForRequest( '**/multi-search' );
+			const answered = page.waitForResponse( '**/multi-search' );
+			await input.fill( 'wombatlark' );
+
+			const queries = ( ( await sent ).postDataJSON() as { queries: { indexUid: string; filter?: string }[] } ).queries;
+			const content = queries.find( ( query ) => query.indexUid === CONTENT_INDEX );
+			expect( content?.filter ).toMatch( /^post_type IN \[/ );
+			expect( content?.filter ).toContain( '"post"' );
+			expect( content?.filter ).not.toContain( 'e2e_hidden' );
+
+			await answered;
+			await expect( page.locator( `[id="${ listId?.replace( /-listbox$/, '-status' ) }"]` ) ).toHaveText( 'No suggestions found.' );
+			await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+
+			// The results page agrees: it does not list the post either.
+			await input.press( 'Enter' );
+			await page.waitForURL( /[?&]s=wombatlark/ );
+			await expect( page.getByText( 'Wombatlark hidden record' ) ).toHaveCount( 0 );
+		} finally {
+			if ( id ) {
+				wp( 'post', 'delete', id, '--force' );
+				await syncUntilHits( 'wombatlark', 0 );
+			}
+			wp( 'option', 'patch', 'update', 'meilisearch_content', 'post_types', postTypes, '--format=json' );
 			execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'rm', '-f', muPlugin ] );
 		}
 	} );
