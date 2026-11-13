@@ -1,0 +1,11 @@
+# Workflow actions are pinned to full commit SHAs (with the release in a trailing comment), so a moved
+# tag cannot change what the release job runs. Dependabot keeps the SHA and the comment up to date.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
