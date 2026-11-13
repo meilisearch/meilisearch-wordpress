@@ -9,3 +9,11 @@ updates:
     groups:
       actions:
         patterns: ['*']
+
+  # The integration suites test the WooCommerce version in composer.lock: keep it on the current release.
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: wpackagist-plugin/woocommerce

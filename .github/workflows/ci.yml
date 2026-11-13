@@ -135,14 +135,12 @@ jobs:
             "roots/wordpress-no-content:${constraint}" "wp-phpunit/wp-phpunit:${constraint}"
           composer show roots/wordpress-no-content | grep -E '^versions'
 
-      - name: Install WooCommerce for the integration suite
+      # The woocommerce suites run against the WooCommerce version in composer.lock, which "composer install"
+      # placed in tests/integration/plugins/woocommerce (Dependabot proposes the updates). The latest release
+      # is covered by the E2E job; the declared minimum (readme.txt) is not run by any job.
+      - name: WooCommerce version under test
         if: endsWith(matrix.suite, 'woocommerce')
-        run: |
-          if [ ! -d tests/integration/plugins/woocommerce ]; then
-            mkdir -p tests/integration/plugins
-            curl -fsSL -o "$RUNNER_TEMP/woocommerce.zip" https://downloads.wordpress.org/plugin/woocommerce.latest-stable.zip
-            unzip -q "$RUNNER_TEMP/woocommerce.zip" -d tests/integration/plugins
-          fi
+        run: composer show wpackagist-plugin/woocommerce | grep -E '^versions'
 
       - name: Integration tests
         run: composer test:integration
