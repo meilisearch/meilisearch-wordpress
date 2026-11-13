@@ -362,7 +362,7 @@ final class ConnectionTabTest extends TestCase {
 	 * @dataProvider search_key_statuses
 	 */
 	public function test_status_reports_ok_only_for_a_verified_search_key( ?string $verified_for, string $expected, string $absent ): void {
-		$this->option_store[ Options::STATE ] = array( 'last_connect' => array( 'version' => '1.53.1' ) );
+		$this->option_store[ Options::STATE ] = array( 'last_connect' => $this->last_connect() );
 		if ( null !== $verified_for ) {
 			$this->option_store[ Options::STATE ]['search_key_verified'] = Options::key_fingerprint( $verified_for );
 		}
@@ -387,6 +387,106 @@ final class ConnectionTabTest extends TestCase {
 			'never verified'     => array( null, 'Search key: not verified', 'Search key: OK.' ),
 			'verified other key' => array( 'another-key', 'Search key: not verified', 'Search key: OK.' ),
 		);
+	}
+
+	/**
+	 * State written by a successful connection with the credentials stored in set_up().
+	 *
+	 * @return array{version: string, time: int, fingerprint: string}
+	 */
+	private function last_connect(): array {
+		$options = new Options();
+
+		return array(
+			'version'     => '1.53.1',
+			'time'        => 1,
+			'fingerprint' => $options->connection_fingerprint( ( new IndexNames( $options ) )->prefix() ),
+		);
+	}
+
+	private function render_status(): string {
+		Functions\when( 'settings_fields' )->justReturn( null );
+		Functions\when( 'submit_button' )->justReturn( null );
+		Functions\when( 'checked' )->justReturn( '' );
+		ob_start();
+		$this->tab()->render();
+		$html = (string) ob_get_clean();
+		$this->assertSame( 1, preg_match( '#<p class="meilisearch-status">(.*?)</p>#s', $html, $match ) );
+
+		return $match[1];
+	}
+
+	public function test_status_stops_saying_connected_after_a_failed_attempt(): void {
+		$this->option_store[ Options::STATE ] = array(
+			'last_connect'        => $this->last_connect(),
+			'search_key_verified' => Options::key_fingerprint( 'stored-search-key' ),
+		);
+		$this->assertStringContainsString( 'Connected to Meilisearch 1.53.1', $this->render_status(), 'precondition: connected' );
+
+		// The key was revoked in Meilisearch; the admin saves the same credentials again.
+		$_GET['settings-updated'] = 'true';
+		$invalid                  = new Response(
+			403,
+			array(
+				'code'    => 'invalid_api_key',
+				'message' => 'The provided API key is invalid.',
+			),
+			''
+		);
+		$this->transport->queue( $invalid )->queue( $invalid );
+
+		$this->tab()->after_save();
+
+		$this->assertSame( 'error', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
+		$status = $this->render_status();
+		$this->assertStringNotContainsString( 'Connected to Meilisearch', $status );
+		$this->assertStringContainsString( 'not verified yet', $status );
+	}
+
+	/**
+	 * @dataProvider provide_changed_credentials
+	 *
+	 * @param string $option Option name.
+	 * @param mixed  $value  New value, written without running the connection flow.
+	 */
+	public function test_status_is_not_connected_for_credentials_that_were_never_tested( string $option, mixed $value ): void {
+		$this->option_store[ Options::STATE ] = array( 'last_connect' => $this->last_connect() );
+		$this->option_store[ $option ]        = $value;
+
+		$status = $this->render_status();
+
+		$this->assertStringNotContainsString( 'Connected to Meilisearch', $status );
+		$this->assertStringContainsString( 'not verified yet', $status );
+	}
+
+	/**
+	 * @return array<string, array{string, mixed}>
+	 */
+	public static function provide_changed_credentials(): array {
+		$connection = array(
+			'host'                => 'https://stored.example',
+			'prefix'              => '',
+			'search_key'          => 'stored-search-key',
+			'search_key_uid'      => 'stored-uid',
+			'delete_on_uninstall' => true,
+		);
+
+		return array(
+			'admin key' => array( Options::ADMIN_KEY, 'another-admin-key' ),
+			'host'      => array( Options::CONNECTION, array_merge( $connection, array( 'host' => 'https://other.example' ) ) ),
+			'prefix'    => array( Options::CONNECTION, array_merge( $connection, array( 'prefix' => 'other' ) ) ),
+		);
+	}
+
+	public function test_status_of_a_connection_recorded_without_fingerprint_is_not_verified(): void {
+		$this->option_store[ Options::STATE ] = array(
+			'last_connect' => array(
+				'version' => '1.53.1',
+				'time'    => 1,
+			),
+		);
+
+		$this->assertStringContainsString( 'not verified yet', $this->render_status() );
 	}
 
 	public function test_after_save_does_nothing_without_settings_updated(): void {
@@ -457,6 +557,7 @@ final class ConnectionTabTest extends TestCase {
 		$this->assertStringContainsString( '1.53.1', $result['message'] );
 		$this->assertStringContainsString( 'search-only key was created', $result['message'] );
 		$this->assertSame( '1.53.1', ( new Options() )->state( 'last_connect' )['version'] );
+		$this->assertStringContainsString( 'Connected to Meilisearch 1.53.1', $this->render_status(), 'The status row reports the connection that just succeeded.' );
 	}
 
 	public function test_after_save_stores_error_without_leaking_the_key(): void {

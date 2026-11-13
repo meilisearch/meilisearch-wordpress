@@ -210,6 +210,20 @@ final class Options {
 	}
 
 	/**
+	 * Identifies the connection a successful attempt was made with: host, admin key and index prefix.
+	 *
+	 * Stored in the `last_connect` state so the Connection screen says "Connected" only while
+	 * the configuration is still the one that was tested (constants and direct option writes
+	 * change it without running the connection flow).
+	 *
+	 * @param string $prefix Index prefix in use (IndexNames::prefix()).
+	 * @return string
+	 */
+	public function connection_fingerprint( string $prefix ): string {
+		return md5( $this->host() . '|' . $this->admin_key() . '|' . $prefix );
+	}
+
+	/**
 	 * Admin-entered index prefix, restricted to [a-z0-9_].
 	 *
 	 * @return string '' when unset.

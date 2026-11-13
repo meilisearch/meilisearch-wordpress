@@ -156,14 +156,17 @@ final class Cli {
 		try {
 			$result = $this->indexes->connect();
 		} catch ( \Throwable $error ) {
+			// The Connection screen must not keep reporting an earlier success for credentials that were just rejected.
+			$this->options->set_state( 'last_connect', null );
 			$this->fail( sprintf( 'Could not connect to Meilisearch: %s', $this->message( $error ) ) );
 		}
 
 		$this->options->set_state(
 			'last_connect',
 			array(
-				'version' => $result['version'],
-				'time'    => time(),
+				'version'     => $result['version'],
+				'time'        => time(),
+				'fingerprint' => $this->options->connection_fingerprint( $this->names->prefix() ),
 			)
 		);
 		WP_CLI::success( sprintf( 'Connected to Meilisearch %s. Indexes are ready.', '' === $result['version'] ? '(version not readable with this key)' : $result['version'] ) );

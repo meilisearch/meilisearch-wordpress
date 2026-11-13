@@ -227,6 +227,8 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 		try {
 			$result = $this->indexes->connect();
 		} catch ( \Throwable $error ) {
+			// The Status row must not keep reporting an earlier success for credentials that were just rejected.
+			$this->options->set_state( 'last_connect', null );
 			$this->store_result(
 				'error',
 				sprintf(
@@ -241,8 +243,9 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 		$this->options->set_state(
 			'last_connect',
 			array(
-				'version' => $result['version'],
-				'time'    => time(),
+				'version'     => $result['version'],
+				'time'        => time(),
+				'fingerprint' => $this->options->connection_fingerprint( $this->names->prefix() ),
 			)
 		);
 
@@ -354,7 +357,8 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 		echo '<tr><th scope="row">' . esc_html__( 'Status', 'meilisearch' ) . '</th><td><p class="meilisearch-status">';
 		if ( ! $this->options->is_configured() ) {
 			echo esc_html__( 'Not connected.', 'meilisearch' );
-		} elseif ( is_array( $last ) && isset( $last['version'] ) ) {
+		} elseif ( is_array( $last ) && isset( $last['version'] ) && $this->options->connection_fingerprint( $this->names->prefix() ) === ( $last['fingerprint'] ?? null ) ) {
+			// Only for the host, key and prefix that were tested: constants and direct option writes change them without a save here.
 			echo esc_html(
 				sprintf(
 					/* translators: %s: Meilisearch version. */

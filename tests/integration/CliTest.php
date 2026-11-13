@@ -114,6 +114,31 @@ final class CliTest extends TestCase {
 		}
 	}
 
+	public function test_failed_connect_forgets_the_last_successful_connection(): void {
+		if ( defined( 'MEILISEARCH_ADMIN_KEY' ) ) {
+			self::markTestSkipped( 'The admin key is defined as a constant.' );
+		}
+		$options = $this->service( 'options', Options::class );
+		$options->set_state(
+			'last_connect',
+			array(
+				'version' => '1.0.0',
+				'time'    => 1,
+			)
+		);
+		$original = (string) get_option( Options::ADMIN_KEY, '' );
+		update_option( Options::ADMIN_KEY, 'not-a-valid-key' );
+
+		try {
+			$this->expect_exit( fn() => $this->cli()->connect( array(), array() ), 1 );
+		} finally {
+			update_option( Options::ADMIN_KEY, $original );
+		}
+
+		self::assertStringContainsString( 'Could not connect to Meilisearch', implode( "\n", $this->messages( 'error' ) ) );
+		self::assertNull( $options->state( 'last_connect' ), 'A rejected attempt must not leave "Connected" on the Connection screen.' );
+	}
+
 	public function test_connect_creates_indexes_and_the_search_key_and_records_last_connect(): void {
 		$options = $this->service( 'options', Options::class );
 		self::assertSame( '', $options->search_key() );
@@ -128,6 +153,7 @@ final class CliTest extends TestCase {
 		$last = $options->state( 'last_connect' );
 		self::assertIsArray( $last );
 		self::assertNotSame( '', (string) ( $last['version'] ?? '' ) );
+		self::assertSame( $options->connection_fingerprint( $this->service( 'names', IndexNames::class )->prefix() ), $last['fingerprint'] ?? null, 'The Connection screen shows "Connected" only for the credentials that were tested.' );
 		$uid = $this->service( 'names', IndexNames::class )->uid( 'content' );
 		self::assertSame( $uid, $this->meili( 'GET', '/indexes/' . $uid )['uid'] ?? null );
 
