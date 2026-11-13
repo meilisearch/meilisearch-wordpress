@@ -124,6 +124,29 @@ final class WooCommerceSyncTest extends TestCase {
 		$this->assertSame( 3, $this->product_document( $product->get_id() )['stock_quantity'] );
 	}
 
+	public function test_order_updates_total_sales_of_a_product_without_managed_stock(): void {
+		$product = $this->create_simple_product( 'Meili Sales Ebook', '12' );
+		$this->assertFalse( $product->get_manage_stock() );
+		$this->sync_products();
+		$this->assertSame( 0, $this->product_document( $product->get_id() )['total_sales'] );
+
+		$order = wc_create_order();
+		$order->add_product( wc_get_product( $product->get_id() ), 7 );
+		$order->calculate_totals();
+		$order->save();
+		$order->update_status( 'processing' );
+		$this->assertSame( 7, (int) wc_get_product( $product->get_id() )->get_total_sales(), 'Database total_sales.' );
+		$this->sync_products();
+
+		$this->assertSame( 7, $this->product_document( $product->get_id() )['total_sales'], 'Indexed total_sales after the order.' );
+
+		$order->update_status( 'cancelled' );
+		$this->assertSame( 0, (int) wc_get_product( $product->get_id() )->get_total_sales(), 'Database total_sales after cancelling.' );
+		$this->sync_products();
+
+		$this->assertSame( 0, $this->product_document( $product->get_id() )['total_sales'], 'Indexed total_sales after cancelling.' );
+	}
+
 	public function test_trashed_product_is_removed(): void {
 		$product = $this->create_simple_product( 'Meili Trash Tee', '12' );
 		$this->sync_products();
