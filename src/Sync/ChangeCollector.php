@@ -59,6 +59,7 @@ final class ChangeCollector implements Registrable {
 		add_action( 'transition_post_status', array( $this, 'on_transition_post_status' ), 10, 3 );
 		add_action( 'before_delete_post', array( $this, 'on_before_delete_post' ), 10, 1 );
 		add_action( 'set_object_terms', array( $this, 'on_set_object_terms' ), 10, 1 );
+		add_action( 'deleted_term_relationships', array( $this, 'on_deleted_term_relationships' ), 10, 1 );
 		add_action( 'added_post_meta', array( $this, 'on_meta_change' ), 10, 3 );
 		add_action( 'updated_post_meta', array( $this, 'on_meta_change' ), 10, 3 );
 		add_action( 'deleted_post_meta', array( $this, 'on_meta_change' ), 10, 3 );
@@ -103,6 +104,16 @@ final class ChangeCollector implements Registrable {
 	 * @param mixed $object_id Object ID.
 	 */
 	public function on_set_object_terms( mixed $object_id ): void {
+		$this->add( (int) $object_id );
+	}
+
+	/**
+	 * Callback for deleted_term_relationships( int $object_id, array $tt_ids, string $taxonomy ).
+	 * wp_remove_object_terms() fires this and never set_object_terms.
+	 *
+	 * @param mixed $object_id Object ID.
+	 */
+	public function on_deleted_term_relationships( mixed $object_id ): void {
 		$this->add( (int) $object_id );
 	}
 

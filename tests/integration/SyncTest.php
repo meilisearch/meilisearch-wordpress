@@ -214,6 +214,26 @@ final class SyncTest extends TestCase {
 	}
 
 	/**
+	 * A term removed with wp_remove_object_terms() (which never fires set_object_terms) leaves the document.
+	 */
+	public function test_removed_object_term_leaves_the_document(): void {
+		$keep = self::factory()->category->create( array( 'name' => 'Keepme' ) );
+		$gone = self::factory()->category->create( array( 'name' => 'Newsroom' ) );
+		$id   = self::factory()->post->create();
+		wp_set_object_terms( $id, array( $keep, $gone ), 'category' );
+		$this->sync();
+		$this->assertContains( 'Newsroom', $this->index_documents( $this->uid )[0]['tax_category'] );
+
+		$this->assertTrue( wp_remove_object_terms( $id, array( $gone ), 'category' ) );
+		$this->assertSame( array( 'content' => array( $id ) ), $this->collector()->pending() );
+		$this->sync();
+
+		$document = $this->index_documents( $this->uid )[0];
+		$this->assertSame( array( 'Keepme' ), $document['tax_category'] );
+		$this->assertSame( array( $keep ), $document['tax_category_ids'] );
+	}
+
+	/**
 	 * Edit-lock heartbeats never enqueue a job.
 	 */
 	public function test_edit_lock_update_enqueues_nothing(): void {

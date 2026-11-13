@@ -94,13 +94,14 @@ final class ChangeCollectorTest extends TestCase {
 		Actions\expectAdded( 'transition_post_status' )->once()->with( array( $this->collector, 'on_transition_post_status' ), 10, 3 );
 		Actions\expectAdded( 'before_delete_post' )->once()->with( array( $this->collector, 'on_before_delete_post' ), 10, 1 );
 		Actions\expectAdded( 'set_object_terms' )->once()->with( array( $this->collector, 'on_set_object_terms' ), 10, 1 );
+		Actions\expectAdded( 'deleted_term_relationships' )->once()->with( array( $this->collector, 'on_deleted_term_relationships' ), 10, 1 );
 		Actions\expectAdded( 'added_post_meta' )->once()->with( array( $this->collector, 'on_meta_change' ), 10, 3 );
 		Actions\expectAdded( 'updated_post_meta' )->once()->with( array( $this->collector, 'on_meta_change' ), 10, 3 );
 		Actions\expectAdded( 'deleted_post_meta' )->once()->with( array( $this->collector, 'on_meta_change' ), 10, 3 );
 		Actions\expectAdded( 'shutdown' )->once()->with( array( $this->collector, 'flush' ), 10, 0 );
 
 		$this->collector->register();
-		$this->addToAssertionCount( 8 );
+		$this->addToAssertionCount( 9 );
 	}
 
 	/**
@@ -139,6 +140,15 @@ final class ChangeCollectorTest extends TestCase {
 		$this->collector->on_set_object_terms( 10 );
 
 		$this->assertSame( array( 'content' => array( 10 ) ), $this->collector->pending() );
+	}
+
+	/**
+	 * The deleted_term_relationships hook (wp_remove_object_terms()) collects the object.
+	 */
+	public function test_deleted_term_relationships_collects_id(): void {
+		$this->collector->on_deleted_term_relationships( '11' );
+
+		$this->assertSame( array( 'content' => array( 11 ) ), $this->collector->pending() );
 	}
 
 	/**
