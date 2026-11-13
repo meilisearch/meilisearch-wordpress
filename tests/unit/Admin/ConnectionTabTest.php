@@ -117,7 +117,7 @@ final class ConnectionTabTest extends TestCase {
 		$tab->register();
 
 		$this->assertNotFalse( has_filter( 'option_page_capability_meilisearch_connection', array( $tab, 'capability' ) ) );
-		$this->assertNotFalse( has_action( 'load-toplevel_page_meilisearch', array( $tab, 'after_save' ) ) );
+		$this->assertFalse( has_action( 'load-toplevel_page_meilisearch', array( $tab, 'after_save' ) ), 'Menu runs after_save() for the tab that is current.' );
 	}
 
 	public function test_multisite_requires_network_capability(): void {
@@ -398,13 +398,26 @@ final class ConnectionTabTest extends TestCase {
 		$this->assertSame( array(), $this->transients );
 	}
 
-	public function test_after_save_does_nothing_on_other_tabs(): void {
+	public function test_after_save_connects_from_menu_url_without_tab(): void {
+		// The menu link is admin.php?page=meilisearch: the Connection tab renders without ?tab=, and
+		// options.php redirects back to that same URL. Menu decides which tab is current.
+		$_GET['settings-updated']                            = 'true';
+		$this->option_store[ Options::CONNECTION ]['prefix'] = 'wp_unit';
+		$this->transport->queue( new Response( 200, array( 'pkgVersion' => '1.53.1' ), '' ) );
+
+		$this->tab()->after_save();
+
+		$this->assertNotSame( array(), $this->transport->requests(), 'no connection attempt on the tab-less menu URL' );
+	}
+
+	public function test_after_save_does_nothing_when_the_tab_is_not_visible(): void {
 		$_GET['settings-updated'] = 'true';
-		$_GET['tab']              = 'content';
+		Functions\when( 'current_user_can' )->justReturn( false );
 
 		$this->tab()->after_save();
 
 		$this->assertSame( array(), $this->transport->requests() );
+		$this->assertSame( array(), $this->transients );
 	}
 
 	public function test_after_save_connects_and_stores_success(): void {

@@ -20,7 +20,7 @@ defined( 'ABSPATH' ) || exit;
  * Option group `meilisearch_connection` holds exactly two options:
  * Options::CONNECTION and Options::ADMIN_KEY.
  */
-final class ConnectionTab implements Tab, Registrable {
+final class ConnectionTab implements Tab, Registrable, HandlesSave {
 
 	public const GROUP       = 'meilisearch_connection';
 	public const PLACEHOLDER = '•••••••• (saved)';
@@ -50,7 +50,6 @@ final class ConnectionTab implements Tab, Registrable {
 	 */
 	public function register(): void {
 		add_filter( 'option_page_capability_' . self::GROUP, array( $this, 'capability' ) );
-		add_action( 'load-' . Menu::HOOK_SUFFIX, array( $this, 'after_save' ) );
 	}
 
 	/**
@@ -206,16 +205,17 @@ final class ConnectionTab implements Tab, Registrable {
 
 	/**
 	 * Runs the connection flow after the Settings API redirect back to this tab
-	 * (load-toplevel_page_meilisearch) and stores the result for Notices.
+	 * and stores the result for Notices.
+	 *
+	 * Menu::after_save() calls this when this tab is the one being shown, which
+	 * includes the menu link (no `?tab=` in the URL).
 	 *
 	 * @return void
 	 */
 	public function after_save(): void {
-		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- options.php verified the nonce before redirecting here; nothing is read from the request but these flags.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- options.php verified the nonce before redirecting here; nothing is read from the request but this flag.
 		$updated = isset( $_GET['settings-updated'] ) && 'true' === sanitize_key( wp_unslash( $_GET['settings-updated'] ) );
-		$tab     = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : '';
-		// phpcs:enable WordPress.Security.NonceVerification.Recommended
-		if ( ! $updated || $this->slug() !== $tab || ! $this->is_visible() ) {
+		if ( ! $updated || ! $this->is_visible() ) {
 			return;
 		}
 
