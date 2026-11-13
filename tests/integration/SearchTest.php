@@ -268,6 +268,57 @@ final class SearchTest extends TestCase {
 	}
 
 	/**
+	 * Meilisearch counts every match but serves only the first pagination.maxTotalHits (1000) of
+	 * an index. The totals stop there: every advertised page has posts, and a query for all posts
+	 * reports the number it returns.
+	 */
+	public function test_totals_stop_at_the_hits_the_engine_serves(): void {
+		for ( $i = 1; $i <= 1020; $i++ ) {
+			self::factory()->post->create(
+				array(
+					'post_title'   => 'Quasar note ' . $i,
+					'post_content' => 'x',
+				)
+			);
+		}
+		Plugin::instance()->get( 'reindexer' )->run_sync(
+			'content',
+			500,
+			static function (): void {}
+		);
+		$this->wait_for_tasks();
+
+		$this->go_to( home_url( '/?s=quasar' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 1000, $this->main_query()->found_posts );
+		self::assertSame( 100, $this->main_query()->max_num_pages );
+		self::assertCount( 10, $this->main_query()->posts );
+
+		$this->go_to( home_url( '/?s=quasar&paged=100' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 100, $this->main_query()->max_num_pages );
+		self::assertCount( 10, $this->main_query()->posts, 'The last advertised page has posts.' );
+		self::assertFalse( is_404() );
+
+		$all = new \WP_Query(
+			array(
+				's'                   => 'quasar',
+				'posts_per_page'      => -1,
+				'meilisearch'         => true,
+				'post_type'           => 'post',
+				'ignore_sticky_posts' => true,
+			)
+		);
+
+		self::assertTrue( $all->get( Interceptor::QUERY_FLAG ) );
+		self::assertCount( 1000, $all->posts );
+		self::assertSame( 1000, $all->found_posts );
+		self::assertSame( 1, $all->max_num_pages );
+	}
+
+	/**
 	 * URL taxonomy vars (cat) reach Meilisearch through $query->tax_query.
 	 */
 	public function test_category_query_var_filters_results(): void {

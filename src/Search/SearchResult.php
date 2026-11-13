@@ -20,8 +20,8 @@ final class SearchResult {
 	 * Constructor.
 	 *
 	 * @param int[]                            $ids         Post IDs in ranking order.
-	 * @param int                              $total_hits  Total number of hits (found_posts).
-	 * @param int                              $total_pages Total number of pages (max_num_pages).
+	 * @param int                              $total_hits  Hits reachable through pagination (found_posts).
+	 * @param int                              $total_pages Pages that have hits (max_num_pages).
 	 * @param array<int, array<string, mixed>> $formatted   Post ID => hit._formatted.
 	 */
 	public function __construct(
