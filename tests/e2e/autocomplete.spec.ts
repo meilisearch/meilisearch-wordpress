@@ -192,6 +192,48 @@ test.describe( 'autocomplete', () => {
 		await expect( listbox ).toBeHidden();
 	} );
 
+	test( 'the classic search form keeps its label as the accessible name while suggestions are open', async ( { page } ) => {
+		// Core's HTML5 get_search_form() markup wraps the input in its <label>; the block form does not.
+		const muPlugin = '/var/www/html/wp-content/mu-plugins/e2e-classic-search.php';
+		const code = '<?php add_filter( "search_form_format", fn() => "html5" ); add_shortcode( "e2e_classic_search", fn() => get_search_form( array( "echo" => false ) ) );';
+		execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'sh', '-c', `mkdir -p "$(dirname ${ muPlugin })" && printf '%s' '${ code }' > ${ muPlugin }` ] );
+		const id = wp(
+			'post', 'create', '--post_type=page', '--post_status=publish', '--porcelain',
+			'--post_name=classic-search-demo', '--post_title=Classic search demo', '--post_content=[e2e_classic_search]'
+		);
+		try {
+			await page.goto( '/classic-search-demo/' );
+			const input = page.locator( 'main label input[name="s"]' ).first();
+			await expect( input ).toHaveRole( 'combobox' );
+			const label = page.locator( 'main label' ).filter( { has: input } );
+			const name = ( await label.innerText() ).trim();
+			expect( name ).not.toBe( '' );
+			await expect( input ).toHaveAccessibleName( name );
+
+			await input.pressSequentially( 'mountian', { delay: 50 } );
+			const listbox = page.locator( `[id="${ await input.getAttribute( 'aria-controls' ) }"]` );
+			await expect( listbox ).toBeVisible();
+			await expect( listbox.getByRole( 'option', { name: /Mountain Photography Tips/ } ) ).toBeVisible();
+
+			// Neither the list nor the status region is label content, so the name is unchanged.
+			await expect( input ).toHaveAccessibleName( name );
+			await expect( label.locator( '.meilisearch-ac, .meilisearch-ac__status' ) ).toHaveCount( 0 );
+
+			// The list still opens right under the field.
+			const inputBox = await input.boundingBox();
+			const listBox = await listbox.boundingBox();
+			expect( inputBox ).not.toBeNull();
+			expect( listBox ).not.toBeNull();
+			expect( Math.abs( ( listBox?.x ?? 0 ) - ( inputBox?.x ?? 0 ) ) ).toBeLessThan( 4 );
+			const gap = ( listBox?.y ?? 0 ) - ( ( inputBox?.y ?? 0 ) + ( inputBox?.height ?? 0 ) );
+			expect( gap ).toBeGreaterThanOrEqual( 0 );
+			expect( gap ).toBeLessThan( 16 );
+		} finally {
+			wp( 'post', 'delete', id, '--force' );
+			execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'rm', '-f', muPlugin ] );
+		}
+	} );
+
 	test( 'a filtered subtitle field renders under the title', async ( { page } ) => {
 		// wp-content/mu-plugins is root-owned, so the throwaway plugin is written as root.
 		const muPlugin = '/var/www/html/wp-content/mu-plugins/e2e-subtitle.php';

@@ -119,7 +119,9 @@
 
 		panel.hidden = true;
 		panel.appendChild( listbox );
-		input.insertAdjacentElement( 'afterend', panel );
+		// Core's HTML5 search form wraps the input in its <label>: inserted there, the panel and the status
+		// region would become part of the field's accessible name (and are not valid label content).
+		( input.closest( 'label' ) || input ).insertAdjacentElement( 'afterend', panel );
 		panel.insertAdjacentElement( 'afterend', status );
 
 		input.setAttribute( 'data-meilisearch-autocomplete', '1' );
@@ -133,10 +135,17 @@
 			status.textContent = text;
 		}
 
+		// Places the (displayed) panel under the input. The two may not share an offset parent, so the
+		// offset is measured: where the panel lands at 0,0 (its margins aside) against where the input is.
 		function position() {
-			panel.style.top = input.offsetTop + input.offsetHeight + 'px';
-			panel.style.left = input.offsetLeft + 'px';
-			panel.style.minWidth = input.offsetWidth + 'px';
+			panel.style.top = '0px';
+			panel.style.left = '0px';
+			const margins = window.getComputedStyle( panel );
+			const origin = panel.getBoundingClientRect();
+			const box = input.getBoundingClientRect();
+			panel.style.top = box.bottom - origin.top + ( parseFloat( margins.marginTop ) || 0 ) + 'px';
+			panel.style.left = box.left - origin.left + ( parseFloat( margins.marginLeft ) || 0 ) + 'px';
+			panel.style.minWidth = box.width + 'px';
 		}
 
 		function setActive( index ) {
@@ -157,8 +166,8 @@
 		}
 
 		function open() {
-			position();
 			panel.hidden = false;
+			position();
 			input.setAttribute( 'aria-expanded', 'true' );
 		}
 
