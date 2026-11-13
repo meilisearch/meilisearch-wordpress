@@ -121,6 +121,41 @@ test.describe( 'autocomplete', () => {
 		await page.waitForURL( /[?&]s=mountian/ );
 	} );
 
+	test( 'a response that arrives after the visitor left the field does not open the list', async ( { page } ) => {
+		// Slow Meilisearch down so the visitor can leave while the request is in flight.
+		await page.route( '**/multi-search', async ( route ) => {
+			await new Promise( ( resolve ) => setTimeout( resolve, 500 ) );
+			await route.continue().catch( () => undefined ); // Already aborted by the page.
+		} );
+		await page.goto( '/search-demo/' );
+		const input = searchInput( page );
+		const listbox = page.locator( `[id="${ await input.getAttribute( 'aria-controls' ) }"]` );
+
+		// Tab away while the request is in flight: it is aborted and nothing opens.
+		const sent = page.waitForRequest( '**/multi-search' );
+		const aborted = page.waitForEvent( 'requestfailed', ( request ) => request.url().endsWith( '/multi-search' ) );
+		await input.fill( 'mountian' );
+		await sent;
+		await input.press( 'Tab' );
+		await aborted;
+		await expect( input ).not.toBeFocused();
+		await page.waitForTimeout( 1_000 ); // Longer than the delayed response.
+		await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+		await expect( listbox ).toBeHidden();
+
+		// Tab away within the debounce delay: the search is never sent.
+		let requests = 0;
+		page.on( 'request', ( request ) => {
+			requests += request.url().endsWith( '/multi-search' ) ? 1 : 0;
+		} );
+		await input.fill( 'mountain' );
+		await input.press( 'Tab' );
+		await page.waitForTimeout( 1_000 );
+		expect( requests ).toBe( 0 );
+		await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+		await expect( listbox ).toBeHidden();
+	} );
+
 	test( 'a filtered subtitle field renders under the title', async ( { page } ) => {
 		// wp-content/mu-plugins is root-owned, so the throwaway plugin is written as root.
 		const muPlugin = '/var/www/html/wp-content/mu-plugins/e2e-subtitle.php';

@@ -174,13 +174,21 @@
 			}
 		}
 
-		function go( url ) {
+		// The visitor left or dismissed the suggestions: a search still waiting on the debounce timer or on
+		// the network must not reopen the panel when it answers.
+		function dismiss() {
+			window.clearTimeout( timer );
+			abort();
 			close();
+		}
+
+		function go( url ) {
+			dismiss();
 			window.location.assign( url );
 		}
 
 		function submitSearch() {
-			close();
+			dismiss();
 			if ( input.form ) {
 				if ( typeof input.form.requestSubmit === 'function' ) {
 					input.form.requestSubmit();
@@ -399,8 +407,8 @@
 				case 'Escape':
 					if ( expanded ) {
 						event.preventDefault();
-						close();
 					}
+					dismiss();
 					break;
 				case 'Enter':
 					if ( expanded && active >= 0 ) {
@@ -411,20 +419,20 @@
 							go( options[ active ].url );
 						}
 					} else {
-						close(); // Normal form submission: the theme results page is canonical.
+						dismiss(); // Normal form submission: the theme results page is canonical.
 					}
 					break;
 				case 'Tab':
-					close();
+					dismiss();
 					break;
 			}
 		} );
 
-		input.addEventListener( 'blur', close );
+		input.addEventListener( 'blur', dismiss );
 
 		document.addEventListener( 'mousedown', function ( event ) {
 			if ( event.target !== input && ! panel.contains( event.target ) ) {
-				close();
+				dismiss();
 			}
 		} );
 	}
