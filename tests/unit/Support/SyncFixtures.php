@@ -195,11 +195,13 @@ trait SyncFixtures {
 	}
 
 	/**
-	 * Installs a $wpdb double: get_col() returns the given pages in order, get_var() the given count.
+	 * Installs a $wpdb double: each query (query() or get_col( $sql )) consumes the next page, get_var()
+	 * returns the given count. A page of `false` is a failed query, as the real wpdb reports it: query()
+	 * returns false, last_error is set and get_col() returns an empty array.
 	 * Every prepare() call is recorded in $GLOBALS['wpdb']->prepared as [query, args].
 	 *
-	 * @param list<list<int|string>> $pages Result of each successive get_col() call.
-	 * @param string                 $count Result of get_var().
+	 * @param list<list<int|string>|false> $pages Result of each successive query.
+	 * @param string                       $count Result of get_var().
 	 * @return object
 	 */
 	protected function install_wpdb( array $pages, string $count = '0' ): object {
@@ -212,6 +214,13 @@ trait SyncFixtures {
 			public string $posts = 'wp_posts';
 
 			/**
+			 * Error of the last query, '' when it succeeded.
+			 *
+			 * @var string
+			 */
+			public string $last_error = '';
+
+			/**
 			 * Recorded prepare() calls.
 			 *
 			 * @var list<array{0: string, 1: array<int, mixed>}>
@@ -219,10 +228,17 @@ trait SyncFixtures {
 			public array $prepared = array();
 
 			/**
+			 * Rows of the last query.
+			 *
+			 * @var list<int|string>
+			 */
+			private array $last_result = array();
+
+			/**
 			 * Constructor.
 			 *
-			 * @param list<list<int|string>> $pages Pages.
-			 * @param string                 $count Count.
+			 * @param list<list<int|string>|false> $pages Pages.
+			 * @param string                       $count Count.
 			 */
 			public function __construct( private array $pages, private string $count ) {}
 
@@ -242,12 +258,33 @@ trait SyncFixtures {
 			}
 
 			/**
-			 * Next page (the query argument is ignored).
+			 * Runs the next page as a query (the SQL is ignored).
 			 *
+			 * @return int|false Number of rows, false when the query failed.
+			 */
+			public function query(): int|false {
+				$page = array_shift( $this->pages ) ?? array();
+				if ( false === $page ) {
+					$this->last_result = array();
+					$this->last_error  = "Table 'wp.wp_posts' doesn't exist";
+					return false;
+				}
+				$this->last_result = $page;
+				$this->last_error  = '';
+				return count( $page );
+			}
+
+			/**
+			 * First column of the given query, or of the last query when none is given.
+			 *
+			 * @param string|null $query SQL.
 			 * @return list<int|string>
 			 */
-			public function get_col(): array {
-				return array_shift( $this->pages ) ?? array();
+			public function get_col( ?string $query = null ): array {
+				if ( null !== $query ) {
+					$this->query();
+				}
+				return $this->last_result;
 			}
 
 			/**

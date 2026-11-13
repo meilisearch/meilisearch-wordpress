@@ -13,6 +13,7 @@ use Brain\Monkey\Actions;
 use Brain\Monkey\Filters;
 use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Api\ApiError;
+use Meilisearch\WordPress\Indexing\DatabaseReadError;
 use Meilisearch\WordPress\Indexing\Reindexer;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\ErrorLog;
@@ -543,6 +544,81 @@ final class ReindexerTest extends TestCase {
 		$state = $this->state();
 		$this->assertSame( 'failed', $state['status'] );
 		$this->assertSame( 'cURL error 28', $state['error'] );
+	}
+
+	/**
+	 * A failed candidate query during the sweep is not "no rows": nothing is deleted and the run fails.
+	 */
+	public function test_failed_sweep_query_deletes_nothing_and_fails_run(): void {
+		$this->seed_run( array( 'phase' => 'sweep' ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->add_post( array( 'ID' => 11 ) );
+		$this->install_wpdb( array( false ) );
+		$this->transport->queue(
+			self::json_response(
+				200,
+				array(
+					'results' => array( array( 'id' => 10 ), array( 'id' => 11 ) ),
+					'offset'  => 0,
+					'limit'   => 1000,
+					'total'   => 2,
+				)
+			)
+		);
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		try {
+			$this->handle();
+			$this->fail( 'The database error must be rethrown.' );
+		} catch ( DatabaseReadError $e ) {
+			$this->assertStringNotContainsString( 'wp_posts', $e->getMessage(), 'The SQL error is not exposed.' );
+		}
+
+		$this->assertCount( 1, $this->transport->requests(), 'No delete request may be sent.' );
+		$state = $this->state();
+		$this->assertSame( 'failed', $state['status'] );
+		$this->assertSame( 'sweep', $state['phase'] );
+		$this->assertSame( 0, $state['deleted'] );
+		$this->assertTrue( $this->options->needs_reindex( 'content' ) );
+	}
+
+	/**
+	 * A failed scan query during the upsert phase is not "exhausted": the run fails instead of moving on to the sweep.
+	 */
+	public function test_failed_scan_query_fails_run_instead_of_ending_the_upsert_phase(): void {
+		$this->seed_run( array( 'last_id' => 5 ) );
+		$this->install_wpdb( array( false ) );
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		try {
+			$this->handle();
+			$this->fail( 'The database error must be rethrown.' );
+		} catch ( DatabaseReadError $e ) {
+			$this->addToAssertionCount( 1 );
+		}
+
+		$this->assertSame( array(), $this->transport->requests() );
+		$state = $this->state();
+		$this->assertSame( 'failed', $state['status'] );
+		$this->assertSame( 'upsert', $state['phase'] );
+		$this->assertSame( 5, $state['last_id'] );
+		$this->assertFalse( $this->options->is_populated( 'content' ) );
+	}
+
+	/**
+	 * The public helpers report a failed query instead of an empty answer.
+	 */
+	public function test_non_indexable_and_scan_throw_on_a_failed_query(): void {
+		$this->install_wpdb( array( false, false ) );
+
+		try {
+			$this->reindexer()->non_indexable( 'content', array( 10 ) );
+			$this->fail( 'Expected a database error.' );
+		} catch ( DatabaseReadError $e ) {
+			$this->addToAssertionCount( 1 );
+		}
+		$this->expectException( DatabaseReadError::class );
+		$this->reindexer()->indexable_ids_after( 'content', 0, 10 );
 	}
 
 	/**

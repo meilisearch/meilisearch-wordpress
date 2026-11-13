@@ -217,6 +217,7 @@ final class Reindexer implements Registrable {
 	 * @param string $logical 'content' or 'products'.
 	 * @param int[]  $ids     Document IDs.
 	 * @return list<int>
+	 * @throws DatabaseReadError When the candidate query failed (the IDs must not be read as stale).
 	 */
 	public function non_indexable( string $logical, array $ids ): array {
 		$ids = array_values( array_unique( array_filter( array_map( 'intval', $ids ), static fn ( int $id ): bool => $id > 0 ) ) );
@@ -232,14 +233,13 @@ final class Reindexer implements Registrable {
 		$id_placeholders   = implode( ', ', array_fill( 0, count( $ids ), '%d' ) );
 		$type_placeholders = implode( ', ', array_fill( 0, count( $types ), '%s' ) );
 		// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
-		$rows = $wpdb->get_col(
+		$candidates = self::select_ids(
 			$wpdb->prepare(
 				"SELECT ID FROM {$wpdb->posts} WHERE ID IN ({$id_placeholders}) AND post_type IN ({$type_placeholders}) AND post_status = 'publish' AND post_password = ''",
 				array_merge( $ids, $types )
 			)
 		);
 		// phpcs:enable
-		$candidates = array_map( 'intval', (array) $rows );
 
 		$keep = array();
 		if ( array() !== $candidates ) {
@@ -264,6 +264,7 @@ final class Reindexer implements Registrable {
 	 * @param int    $last_id Cursor.
 	 * @param int    $limit   Rows to scan.
 	 * @return list<int>
+	 * @throws DatabaseReadError When the scan query failed.
 	 */
 	public function indexable_ids_after( string $logical, int $last_id, int $limit ): array {
 		return $this->scan( $logical, $last_id, $limit )['ids'];
@@ -565,6 +566,7 @@ final class Reindexer implements Registrable {
 	 * @param int    $last_id Cursor.
 	 * @param int    $limit   Rows to scan.
 	 * @return array{ids: list<int>, last_scanned: int, exhausted: bool}
+	 * @throws DatabaseReadError When the scan query failed (it must not be read as "no posts left").
 	 */
 	private function scan( string $logical, int $last_id, int $limit ): array {
 		global $wpdb;
@@ -579,14 +581,13 @@ final class Reindexer implements Registrable {
 
 		$placeholders = implode( ', ', array_fill( 0, count( $types ), '%s' ) );
 		// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
-		$rows = $wpdb->get_col(
+		$rows = self::select_ids(
 			$wpdb->prepare(
 				"SELECT ID FROM {$wpdb->posts} WHERE post_type IN ({$placeholders}) AND post_status = 'publish' AND post_password = '' AND ID > %d ORDER BY ID ASC LIMIT %d",
 				array_merge( $types, array( $last_id, $limit ) )
 			)
 		);
 		// phpcs:enable
-		$rows = array_map( 'intval', (array) $rows );
 		if ( array() === $rows ) {
 			return array(
 				'ids'          => array(),
@@ -611,6 +612,27 @@ final class Reindexer implements Registrable {
 			'last_scanned' => max( $rows ),
 			'exhausted'    => count( $rows ) < $limit,
 		);
+	}
+
+	/**
+	 * Runs a prepared SELECT of post IDs. wpdb::get_col() answers a failed query with an empty array,
+	 * which the sweep would read as "every document is stale" and the upsert phase as "no posts left",
+	 * so the query is run directly and its result checked. The message stays generic: the wpdb error
+	 * can contain SQL.
+	 *
+	 * @param string|null $sql Prepared query (null when wpdb::prepare() rejected it).
+	 * @return list<int>
+	 * @throws DatabaseReadError When the query failed or could not be run.
+	 */
+	private static function select_ids( ?string $sql ): array {
+		global $wpdb;
+		// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- Prepared by the callers; get_col( null ) reads the rows of the query just run.
+		if ( null === $sql || '' === $sql || false === $wpdb->query( $sql ) ) {
+			throw new DatabaseReadError( 'The WordPress database did not answer a query of the reindex. Nothing was changed for this step.' );
+		}
+		$rows = $wpdb->get_col( null );
+		// phpcs:enable
+		return array_values( array_map( 'intval', (array) $rows ) );
 	}
 
 	/**
