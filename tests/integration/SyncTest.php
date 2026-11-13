@@ -327,9 +327,15 @@ final class SyncTest extends TestCase {
 			)
 		);
 
+		$options = Plugin::instance()->get( 'options' );
+		assert( $options instanceof Options );
+		$options->flag_reindex( 'content', false );
+
 		\ActionScheduler::runner()->process_action( $action_id, 'SyncTest' );
 
 		$this->assertSame( \ActionScheduler_Store::STATUS_FAILED, \ActionScheduler::store()->get_status( $action_id ) );
+		// The dropped change is only recovered by a full reindex, so one is requested.
+		$this->assertTrue( $options->needs_reindex( 'content' ) );
 		$log = Plugin::instance()->get( 'error_log' );
 		assert( $log instanceof ErrorLog );
 		$this->assertStringContainsString( 'after 6 attempt(s)', $log->all()[0]['message'] );

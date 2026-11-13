@@ -18,6 +18,7 @@ use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Registrable;
 use Meilisearch\WordPress\Settings\IndexNames;
+use Meilisearch\WordPress\Settings\Options;
 
 /**
  * Handles Queue::SYNC_POSTS {index, ids, attempt} (spec § 6.2).
@@ -28,7 +29,8 @@ use Meilisearch\WordPress\Settings\IndexNames;
  * A missing live index is created through IndexManager before the first upsert, so Meilisearch
  * never auto-creates it with default settings.
  * Failures are rescheduled with BACKOFF[attempt - 1] and, when attempt MAX_ATTEMPTS fails,
- * logged and rethrown so Action Scheduler marks the action failed.
+ * logged and rethrown so Action Scheduler marks the action failed. The index is then flagged as
+ * needing a reindex: nothing else replays the dropped changes (removals included).
  */
 final class SyncJob implements Registrable {
 
@@ -52,6 +54,7 @@ final class SyncJob implements Registrable {
 	 * @param Queue                          $queue        Action Scheduler wrapper.
 	 * @param ErrorLog                       $log          Error log.
 	 * @param IndexManager                   $indexes      Index manager.
+	 * @param Options                        $options      Options.
 	 */
 	public function __construct(
 		private readonly ClientFactory $clients,
@@ -60,7 +63,8 @@ final class SyncJob implements Registrable {
 		private readonly array $builders,
 		private readonly Queue $queue,
 		private readonly ErrorLog $log,
-		private readonly IndexManager $indexes
+		private readonly IndexManager $indexes,
+		private readonly Options $options
 	) {}
 
 	/**
@@ -111,6 +115,9 @@ final class SyncJob implements Registrable {
 					return;
 				}
 			}
+			// The changes of this job are dropped here (last attempt, or the retry could not be stored).
+			// Only a full reindex brings the index back in line, so ask for one.
+			$this->options->flag_reindex( $logical, true );
 			$this->log->add(
 				'sync',
 				sprintf( 'Syncing %1$d post(s) to the %2$s index failed after %3$d attempt(s): %4$s', count( $ids ), $logical, $attempt, $e->getMessage() )

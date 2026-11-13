@@ -99,7 +99,8 @@ final class SyncJobTest extends TestCase {
 			array( 'content' => $builder ),
 			new Queue(),
 			$this->log,
-			new IndexManager( $clients, $names, new SettingsBuilder( array( 'content' => new ContentSchema( $this->options ) ) ), $this->options )
+			new IndexManager( $clients, $names, new SettingsBuilder( array( 'content' => new ContentSchema( $this->options ) ) ), $this->options ),
+			$this->options
 		);
 	}
 
@@ -446,9 +447,36 @@ final class SyncJobTest extends TestCase {
 	}
 
 	/**
-	 * After the last attempt the error is logged and rethrown so Action Scheduler marks the action failed.
+	 * After the last attempt the error is logged and rethrown so Action Scheduler marks the action failed,
+	 * and the index is flagged for a reindex: nothing else replays the dropped changes.
 	 */
-	public function test_last_attempt_logs_and_rethrows(): void {
+	public function test_last_attempt_logs_flags_reindex_and_rethrows(): void {
+		$this->transport->queue( ApiError::transport( 'timeout' ) );
+		Functions\expect( 'as_schedule_single_action' )->never();
+		$this->assertFalse( $this->options->needs_reindex( 'content' ) );
+
+		try {
+			$this->job()->handle(
+				array(
+					'index'   => 'content',
+					'ids'     => array( 10 ),
+					'attempt' => SyncJob::MAX_ATTEMPTS,
+				)
+			);
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( 'transport_error', $e->error_code );
+		}
+
+		$this->assertStringContainsString( 'after 6 attempt(s)', $this->log->all()[0]['message'] );
+		$this->assertTrue( $this->options->needs_reindex( 'content' ), 'The dropped change left no needs-reindex flag.' );
+	}
+
+	/**
+	 * A removal dropped after the last attempt (the post left "publish") flags the reindex whose sweep removes it.
+	 */
+	public function test_dropped_removal_flags_reindex(): void {
+		$this->posts[10]->post_status = 'draft';
 		$this->transport->queue( ApiError::transport( 'timeout' ) );
 		Functions\expect( 'as_schedule_single_action' )->never();
 
@@ -465,7 +493,26 @@ final class SyncJobTest extends TestCase {
 			$this->assertSame( 'transport_error', $e->error_code );
 		}
 
-		$this->assertStringContainsString( 'after 6 attempt(s)', $this->log->all()[0]['message'] );
+		$this->assertStringContainsString( '/documents/delete-batch', $this->transport->requests()[0]['url'] );
+		$this->assertTrue( $this->options->needs_reindex( 'content' ), 'The dropped removal left no needs-reindex flag.' );
+	}
+
+	/**
+	 * A failure that will be retried does not flag a reindex.
+	 */
+	public function test_retried_failure_does_not_flag_reindex(): void {
+		$this->transport->queue( ApiError::transport( 'timeout' ) );
+		Functions\expect( 'as_schedule_single_action' )->once()->andReturn( 12 );
+
+		$this->job()->handle(
+			array(
+				'index'   => 'content',
+				'ids'     => array( 10 ),
+				'attempt' => SyncJob::MAX_ATTEMPTS - 1,
+			)
+		);
+
+		$this->assertFalse( $this->options->needs_reindex( 'content' ) );
 	}
 
 	/**
@@ -501,20 +548,26 @@ final class SyncJobTest extends TestCase {
 	}
 
 	/**
-	 * If the retry cannot be stored, the job fails loudly instead of dropping the change.
+	 * If the retry cannot be stored, the job fails loudly and flags a reindex instead of dropping the change.
 	 */
-	public function test_unschedulable_retry_rethrows(): void {
+	public function test_unschedulable_retry_flags_reindex_and_rethrows(): void {
 		$this->transport->queue( ApiError::transport( 'timeout' ) );
 		Functions\expect( 'as_schedule_single_action' )->once()->andReturn( 0 );
 
-		$this->expectException( ApiError::class );
-		$this->job()->handle(
-			array(
-				'index'   => 'content',
-				'ids'     => array( 10 ),
-				'attempt' => 1,
-			)
-		);
+		try {
+			$this->job()->handle(
+				array(
+					'index'   => 'content',
+					'ids'     => array( 10 ),
+					'attempt' => 1,
+				)
+			);
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( 'transport_error', $e->error_code );
+		}
+
+		$this->assertTrue( $this->options->needs_reindex( 'content' ) );
 	}
 
 	/**
