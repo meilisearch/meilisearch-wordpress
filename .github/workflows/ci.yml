@@ -216,6 +216,9 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Translation template is up to date with the source
+        run: bash bin/make-pot.sh --check
+
       - name: Build the distributable
         run: bash bin/build-zip.sh
 
