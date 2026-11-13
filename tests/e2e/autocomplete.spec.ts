@@ -156,6 +156,42 @@ test.describe( 'autocomplete', () => {
 		await expect( listbox ).toBeHidden();
 	} );
 
+	test( 'the arrow keys only reopen suggestions that answer the current text', async ( { page } ) => {
+		await page.goto( '/search-demo/' );
+		const input = searchInput( page );
+		const listbox = page.locator( `[id="${ await input.getAttribute( 'aria-controls' ) }"]` );
+
+		// Same text: Escape then ArrowDown reopens the list.
+		await input.pressSequentially( 'mountian', { delay: 50 } );
+		await expect( listbox ).toBeVisible();
+		await input.press( 'Escape' );
+		await expect( listbox ).toBeHidden();
+		await input.press( 'ArrowDown' );
+		await expect( listbox ).toBeVisible();
+		await expect( input ).toHaveAttribute( 'aria-activedescendant', /-option-0$/ );
+
+		// Shortened below the minimum length: the old suggestions are gone for good.
+		await input.fill( 'm' );
+		await expect( listbox ).toBeHidden();
+		await input.press( 'ArrowDown' );
+		await input.press( 'ArrowUp' );
+		await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+		await expect( listbox ).toBeHidden();
+		await expect( listbox.getByRole( 'option', { includeHidden: true } ) ).toHaveCount( 0 );
+
+		// A failed request also drops the suggestions of the previous query.
+		await input.fill( 'mountian' );
+		await expect( listbox ).toBeVisible();
+		await page.route( '**/multi-search', ( route ) => route.fulfill( { status: 503, contentType: 'application/json', body: '{}' } ) );
+		const failed = page.waitForResponse( '**/multi-search' );
+		await input.fill( 'mountian tips' );
+		await failed;
+		await expect( listbox ).toBeHidden();
+		await input.press( 'ArrowDown' );
+		await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+		await expect( listbox ).toBeHidden();
+	} );
+
 	test( 'a filtered subtitle field renders under the title', async ( { page } ) => {
 		// wp-content/mu-plugins is root-owned, so the throwaway plugin is written as root.
 		const muPlugin = '/var/www/html/wp-content/mu-plugins/e2e-subtitle.php';

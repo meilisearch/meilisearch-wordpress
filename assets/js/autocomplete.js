@@ -115,6 +115,7 @@
 		let timer = null;
 		let controller = null;
 		let lastQuery = '';
+		let shownQuery = ''; // The query the current options answer.
 
 		panel.hidden = true;
 		panel.appendChild( listbox );
@@ -167,6 +168,15 @@
 			input.setAttribute( 'aria-expanded', 'false' );
 		}
 
+		// Drops the suggestions: they no longer answer what the field contains, so the arrow keys
+		// must not bring them back. close() alone keeps them for a reopen after Escape or blur.
+		function reset() {
+			close();
+			listbox.textContent = '';
+			options = [];
+			shownQuery = '';
+		}
+
 		function abort() {
 			if ( controller ) {
 				controller.abort();
@@ -203,6 +213,7 @@
 		function render( groups, total ) {
 			listbox.textContent = '';
 			options = [];
+			shownQuery = lastQuery;
 			groups.forEach( function ( group, groupIndex ) {
 				const labelId = prefix + '-group-' + groupIndex;
 				const groupNode = element( 'div', { class: 'meilisearch-ac__group', role: 'group', 'aria-labelledby': labelId, 'data-index': group.key } );
@@ -325,7 +336,7 @@
 			abort();
 			lastQuery = q;
 			if ( q.length < limits.minChars ) {
-				close();
+				reset();
 				return;
 			}
 			const queries = [];
@@ -355,7 +366,7 @@
 				render( result.groups, result.total );
 			} catch ( error ) {
 				if ( ! current.signal.aborted ) {
-					close(); // Network or API error: hide silently, the form keeps working.
+					reset(); // Network or API error: hide silently, the form keeps working.
 				}
 			} finally {
 				if ( controller === current ) {
@@ -370,7 +381,7 @@
 			if ( q.length < limits.minChars ) {
 				abort();
 				lastQuery = q;
-				close();
+				reset();
 				return;
 			}
 			timer = window.setTimeout( function () {
@@ -383,6 +394,9 @@
 				return;
 			}
 			const expanded = ! panel.hidden;
+			if ( ! expanded && options.length > 0 && shownQuery !== input.value.trim() ) {
+				reset(); // Dismissed while a newer query was pending: the kept list is for older text.
+			}
 			switch ( event.key ) {
 				case 'ArrowDown':
 					if ( options.length === 0 ) {
