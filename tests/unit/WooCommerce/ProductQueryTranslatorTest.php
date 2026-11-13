@@ -377,4 +377,30 @@ final class ProductQueryTranslatorTest extends TestCase {
 
 		self::assertSame( array(), $this->translator()->constraints( $this->query() )['filters'] );
 	}
+
+	/**
+	 * @dataProvider non_finite_prices
+	 */
+	public function test_non_finite_price_bound_is_not_translated( array $get ): void {
+		$_GET = $get;
+
+		self::assertNull( $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) ) );
+	}
+
+	/**
+	 * @return array<string, array{0: array<string, string>}>
+	 */
+	public static function non_finite_prices(): array {
+		return array(
+			'min overflow'             => array( array( 'min_price' => '1e999' ) ),
+			'max overflow'             => array( array( 'max_price' => '1e999' ) ),
+			'negative overflow'        => array( array( 'min_price' => '-1e999' ) ),
+			'finite min, overflow max' => array(
+				array(
+					'min_price' => '10',
+					'max_price' => '1e999',
+				),
+			),
+		);
+	}
 }

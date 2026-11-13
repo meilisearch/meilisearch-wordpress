@@ -79,8 +79,12 @@ final class ProductQueryTranslator implements ProductTranslator {
 			if ( null === $layered ) {
 				return null;
 			}
+			$price = $this->price_filter();
+			if ( null === $price ) {
+				return null;
+			}
 			$filters   = array_merge( $filters, $layered );
-			$filters[] = $this->price_filter();
+			$filters[] = $price;
 		}
 
 		return array(
@@ -325,12 +329,17 @@ final class ProductQueryTranslator implements ProductTranslator {
 
 	/**
 	 * `min_price` / `max_price` → price range on the indexed display price ('' when absent).
+	 * A bound that overflows a float (`1e999`) cannot be written as a filter: null, so the
+	 * database answers that request as it would without the plugin.
 	 */
-	private function price_filter(): string {
+	private function price_filter(): ?string {
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Cast to float, as in WC_Query.
 		$min = isset( $_GET['min_price'] ) ? (float) wc_clean( wp_unslash( $_GET['min_price'] ) ) : null;
 		$max = isset( $_GET['max_price'] ) ? (float) wc_clean( wp_unslash( $_GET['max_price'] ) ) : null;
 		// phpcs:enable WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( ( null !== $min && ! is_finite( $min ) ) || ( null !== $max && ! is_finite( $max ) ) ) {
+			return null;
+		}
 		if ( null !== $min && null !== $max ) {
 			return FilterBuilder::between( 'price', $min, $max );
 		}

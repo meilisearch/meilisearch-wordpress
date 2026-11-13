@@ -135,4 +135,22 @@ final class ProductSearchTest extends TestCase {
 		$this->assertSame( '', (string) $query->get( 'wc_query' ) );
 		$this->assertEqualsCanonicalizing( array_values( $this->ids ), array_map( 'intval', wp_list_pluck( $query->posts, 'ID' ) ) );
 	}
+
+	public function test_non_finite_price_bound_falls_back_to_mysql(): void {
+		global $wpdb;
+		// WooCommerce writes the overflowing bound into its own SQL as INF, which MySQL rejects.
+		$suppressed = $wpdb->suppress_errors( true );
+		try {
+			$this->search(
+				array(
+					's'         => 'Meili Shirt',
+					'min_price' => '1e999',
+				)
+			);
+		} finally {
+			$wpdb->suppress_errors( $suppressed );
+		}
+
+		$this->assertNotTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ) );
+	}
 }
