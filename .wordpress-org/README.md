@@ -1,8 +1,12 @@
 # wordpress.org assets
 
-Files in this directory are published to the plugin's SVN `assets/` directory by the release workflow
-(10up/action-wordpress-plugin-deploy, `ASSETS_DIR: .wordpress-org`). They are not part of the plugin zip.
+The images in this directory are published to the plugin's SVN `assets/` directory by the release workflow
+(10up/action-wordpress-plugin-deploy). They are not part of the plugin zip, and this file is not published.
 The images are supplied by the design team; they are the only release input not produced from this repository.
+
+`bin/check-assets.sh` runs first in the release: a tag does not deploy unless every file below is present, and
+no other file is in this directory. SVN `assets/` mirrors this directory, so an image uploaded straight to SVN
+is removed by the next release: commit it here instead.
 
 | File | Size (px) | Use |
 |---|---|---|
@@ -20,6 +24,6 @@ The images are supplied by the design team; they are the only release input not 
 Rules:
 
 - PNG or JPG, sRGB, no transparency in banners, file names exactly as above (lowercase).
-- Screenshot numbers and captions must match `== Screenshots ==` in `readme.txt`.
+- Screenshot numbers and captions must match `== Screenshots ==` in `readme.txt`: one `screenshot-<n>` per numbered caption.
 - Take screenshots on the E2E site (`bin/e2e-setup.sh`) with a default theme; no personal data or real keys on screen.
 - No other Meilisearch-unrelated trademarks in the images.
