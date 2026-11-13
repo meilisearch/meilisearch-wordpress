@@ -12,7 +12,11 @@ namespace Meilisearch\WordPress\Tests\Unit\Sync;
 use Brain\Monkey\Actions;
 use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Api\ApiError;
+use Meilisearch\WordPress\Api\Response;
+use Meilisearch\WordPress\Indexing\ContentSchema;
 use Meilisearch\WordPress\Indexing\Indexability;
+use Meilisearch\WordPress\Indexing\IndexManager;
+use Meilisearch\WordPress\Indexing\SettingsBuilder;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\ErrorLog;
@@ -86,14 +90,26 @@ final class SyncJobTest extends TestCase {
 					'title' => (string) $post->post_title,
 				)
 		);
+		$clients = $this->make_clients( $this->options, $this->transport );
+		$names   = new IndexNames( $this->options );
 		return new SyncJob(
-			$this->make_clients( $this->options, $this->transport ),
-			new IndexNames( $this->options ),
+			$clients,
+			$names,
 			new Indexability( $this->options ),
 			array( 'content' => $builder ),
 			new Queue(),
-			$this->log
+			$this->log,
+			new IndexManager( $clients, $names, new SettingsBuilder( array( 'content' => new ContentSchema( $this->options ) ) ), $this->options )
 		);
+	}
+
+	/**
+	 * A GET /indexes/{uid} response for the existing live index.
+	 *
+	 * @return Response
+	 */
+	private static function index_response(): Response {
+		return self::json_response( 200, array( 'uid' => 'wp_test_content' ) );
 	}
 
 	/**
@@ -111,7 +127,7 @@ final class SyncJobTest extends TestCase {
 	 * An indexable post is upserted and a missing post is deleted, in one call each.
 	 */
 	public function test_indexable_post_is_upserted_and_missing_post_deleted(): void {
-		$this->transport->queue( self::task_response( 1 ) )->queue( self::task_response( 2 ) );
+		$this->transport->queue( self::task_response( 1 ) )->queue( self::index_response() )->queue( self::task_response( 2 ) );
 
 		$result = $this->job()->reconcile( 'content', array( 10, 99 ) );
 
@@ -124,12 +140,15 @@ final class SyncJobTest extends TestCase {
 			$result
 		);
 		$requests = $this->transport->requests();
-		$this->assertCount( 2, $requests );
+		$this->assertCount( 3, $requests );
 		// Deletes go first, so a persistently failing upsert never holds back a delete.
 		$this->assertStringContainsString( '/indexes/wp_test_content/documents/delete-batch', $requests[0]['url'] );
 		$this->assertSame( array( 99 ), $requests[0]['body'] );
-		$this->assertSame( 'POST', $requests[1]['method'] );
-		$this->assertStringEndsWith( '/indexes/wp_test_content/documents?primaryKey=id', $requests[1]['url'] );
+		// The index is looked up before the upsert, which would otherwise create a missing one with default settings.
+		$this->assertSame( 'GET', $requests[1]['method'] );
+		$this->assertStringEndsWith( '/indexes/wp_test_content', $requests[1]['url'] );
+		$this->assertSame( 'POST', $requests[2]['method'] );
+		$this->assertStringEndsWith( '/indexes/wp_test_content/documents?primaryKey=id', $requests[2]['url'] );
 		$this->assertSame(
 			array(
 				array(
@@ -137,8 +156,65 @@ final class SyncJobTest extends TestCase {
 					'title' => 'Post 10',
 				),
 			),
-			$requests[1]['body']
+			$requests[2]['body']
 		);
+	}
+
+	/**
+	 * A missing live index is created with the plugin's initial settings before the upsert, so
+	 * Meilisearch never auto-creates it with every field searchable.
+	 */
+	public function test_missing_index_is_created_with_initial_settings_before_the_upsert(): void {
+		$not_found = self::json_response(
+			404,
+			array(
+				'message' => 'Index `wp_test_content` not found.',
+				'code'    => 'index_not_found',
+				'type'    => 'invalid_request',
+			)
+		);
+		$this->transport
+			->queue( $not_found )
+			->queue( $not_found )
+			->queue( self::task_response( 1 ) )
+			->queue( self::succeeded_task( 1 ) )
+			->queue( self::task_response( 2 ) )
+			->queue( self::succeeded_task( 2 ) )
+			->queue( self::task_response( 3 ) );
+
+		$result = $this->job()->reconcile( 'content', array( 10 ) );
+
+		$this->assertSame( 1, $result['upserted'] );
+		$requests = $this->transport->requests();
+		$this->assertSame(
+			array(
+				'GET /indexes/wp_test_content',
+				'GET /indexes/wp_test_content',
+				'POST /indexes',
+				'GET /tasks/1',
+				'PATCH /indexes/wp_test_content/settings',
+				'GET /tasks/2',
+				'POST /indexes/wp_test_content/documents?primaryKey=id',
+			),
+			array_map(
+				static fn ( array $request ): string => $request['method'] . ' ' . substr( $request['url'], strlen( 'http://meili.test' ) ),
+				$requests
+			)
+		);
+		$this->assertSame( array( 'title', 'tax_category', 'excerpt', 'content', 'meta_price' ), $requests[4]['body']['searchableAttributes'] );
+	}
+
+	/**
+	 * A job with nothing to upsert does not look the index up: deleting from a missing index creates nothing.
+	 */
+	public function test_delete_only_job_does_not_look_up_the_index(): void {
+		$this->transport->queue( self::task_response( 1 ) );
+
+		$this->job()->reconcile( 'content', array( 99 ) );
+
+		$requests = $this->transport->requests();
+		$this->assertCount( 1, $requests );
+		$this->assertStringContainsString( '/documents/delete-batch', $requests[0]['url'] );
 	}
 
 	/**
@@ -147,6 +223,7 @@ final class SyncJobTest extends TestCase {
 	public function test_delete_is_sent_before_a_persistently_failing_upsert(): void {
 		$this->transport
 			->queue( self::task_response( 1 ) )
+			->queue( self::index_response() )
 			->queue( new ApiError( 'Payload too large', 'payload_too_large', 413 ) );
 		Functions\expect( 'as_schedule_single_action' )->never();
 
@@ -164,10 +241,10 @@ final class SyncJobTest extends TestCase {
 		}
 
 		$requests = $this->transport->requests();
-		$this->assertCount( 2, $requests );
+		$this->assertCount( 3, $requests );
 		$this->assertStringContainsString( '/documents/delete-batch', $requests[0]['url'] );
 		$this->assertSame( array( 99 ), $requests[0]['body'] );
-		$this->assertStringEndsWith( '/documents?primaryKey=id', $requests[1]['url'] );
+		$this->assertStringEndsWith( '/documents?primaryKey=id', $requests[2]['url'] );
 	}
 
 	/**
@@ -243,7 +320,7 @@ final class SyncJobTest extends TestCase {
 			'id'    => 12,
 			'title' => "Legacy \xB1\x31 import",
 		);
-		$this->transport->queue( self::task_response( 1 ) )->queue( self::task_response( 2 ) );
+		$this->transport->queue( self::task_response( 1 ) )->queue( self::index_response() )->queue( self::task_response( 2 ) );
 
 		$result = $this->job()->reconcile( 'content', array( 10, 12, 11 ) );
 
@@ -257,7 +334,7 @@ final class SyncJobTest extends TestCase {
 		);
 		$requests = $this->transport->requests();
 		$this->assertSame( array( 12 ), $requests[0]['body'] );
-		$this->assertSame( array( 10, 11 ), array_column( $requests[1]['body'], 'id' ) );
+		$this->assertSame( array( 10, 11 ), array_column( $requests[2]['body'], 'id' ) );
 		$entries = $this->log->all();
 		$this->assertCount( 1, $entries );
 		$this->assertSame( 'sync', $entries[0]['context'] );
@@ -270,7 +347,7 @@ final class SyncJobTest extends TestCase {
 	 */
 	public function test_unbuildable_post_is_skipped_logged_and_deleted(): void {
 		$this->documents[11] = null;
-		$this->transport->queue( self::task_response( 1 ) )->queue( self::task_response( 2 ) );
+		$this->transport->queue( self::task_response( 1 ) )->queue( self::index_response() )->queue( self::task_response( 2 ) );
 
 		$result = $this->job()->reconcile( 'content', array( 10, 11 ) );
 
@@ -291,7 +368,7 @@ final class SyncJobTest extends TestCase {
 				return $this->posts[ (int) $id ] ?? null;
 			}
 		);
-		$this->transport->queue( self::task_response( 1 ) );
+		$this->transport->queue( self::index_response() )->queue( self::task_response( 1 ) );
 
 		$this->job()->handle(
 			array(

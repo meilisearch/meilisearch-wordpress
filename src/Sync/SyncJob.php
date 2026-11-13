@@ -15,6 +15,7 @@ use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Indexing\DocumentBuilder;
 use Meilisearch\WordPress\Indexing\Indexability;
+use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Registrable;
 use Meilisearch\WordPress\Settings\IndexNames;
 
@@ -24,6 +25,8 @@ use Meilisearch\WordPress\Settings\IndexNames;
  * For each ID the current post is re-read: indexable posts are upserted, everything else
  * (missing, unpublished, password-protected, vetoed, unbuildable) is deleted. The job never
  * waits on Meilisearch tasks and writes to the live index only (a full reindex runs in place).
+ * A missing live index is created through IndexManager before the first upsert, so Meilisearch
+ * never auto-creates it with default settings.
  * Failures are rescheduled with BACKOFF[attempt - 1] and, when attempt MAX_ATTEMPTS fails,
  * logged and rethrown so Action Scheduler marks the action failed.
  */
@@ -48,6 +51,7 @@ final class SyncJob implements Registrable {
 	 * @param array<string, DocumentBuilder> $builders     Logical index => builder.
 	 * @param Queue                          $queue        Action Scheduler wrapper.
 	 * @param ErrorLog                       $log          Error log.
+	 * @param IndexManager                   $indexes      Index manager.
 	 */
 	public function __construct(
 		private readonly ClientFactory $clients,
@@ -55,7 +59,8 @@ final class SyncJob implements Registrable {
 		private readonly Indexability $indexability,
 		private readonly array $builders,
 		private readonly Queue $queue,
-		private readonly ErrorLog $log
+		private readonly ErrorLog $log,
+		private readonly IndexManager $indexes
 	) {}
 
 	/**
@@ -169,6 +174,12 @@ final class SyncJob implements Registrable {
 			$client->delete_documents( $uid, $deletes );
 		}
 		if ( array() !== $upserts ) {
+			// Adding documents to a missing index makes Meilisearch create it with default settings
+			// (every field searchable), which later settings syncs deliberately leave alone. Create it
+			// with the plugin's settings instead. Deletes need no index: there is nothing to remove.
+			if ( ! $client->index_exists( $uid ) ) {
+				$this->indexes->ensure_index( $logical );
+			}
 			$client->add_documents( $uid, $upserts );
 		}
 
