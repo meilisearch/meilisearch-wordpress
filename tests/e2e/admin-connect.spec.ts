@@ -105,6 +105,8 @@ test.describe( 'admin', () => {
 
 		// The next attempts go through: progress resumes, then the end re-enables the button.
 		await expect( text ).toHaveText( /5 of 10/, { timeout: 10_000 } );
+		// Same status and phase as before the failure: screen readers still hear the "Retrying…" was resolved.
+		await expect( page.locator( '#meilisearch-live' ) ).toHaveText( /5 of 10/ );
 		await expect( button ).toBeEnabled( { timeout: 10_000 } );
 		await expect( text ).toHaveText( /10/ );
 		expect( answered ).toBe( 3 );

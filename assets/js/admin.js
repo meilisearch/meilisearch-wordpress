@@ -170,8 +170,10 @@
 				abandoned[ index ] = !! flags[ index ];
 			}
 			var status = state ? state.status + ':' + state.phase + ':' + ( abandoned[ index ] ? 'x' : '' ) : null;
+			// A "could not refresh" message was announced: the recovery must be too, even on an unchanged status.
+			var recovered = undefined !== replaced[ index ];
 			render( index, state );
-			if ( state && undefined !== lastStatus[ index ] && lastStatus[ index ] !== status ) {
+			if ( state && ( recovered || ( undefined !== lastStatus[ index ] && lastStatus[ index ] !== status ) ) ) {
 				announce( describe( state, index ) );
 			}
 			lastStatus[ index ] = status;
