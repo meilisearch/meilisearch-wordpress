@@ -104,6 +104,23 @@ final class SyncTest extends TestCase {
 	}
 
 	/**
+	 * Sorted tax_category_ids of a post's document.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return list<int>
+	 */
+	private function term_ids_of( int $post_id ): array {
+		foreach ( $this->index_documents( $this->uid ) as $document ) {
+			if ( (int) $document['id'] === $post_id ) {
+				$ids = array_map( 'intval', $document['tax_category_ids'] );
+				sort( $ids );
+				return $ids;
+			}
+		}
+		$this->fail( sprintf( 'Post %d has no document.', $post_id ) );
+	}
+
+	/**
 	 * Publishing a post indexes it.
 	 */
 	public function test_published_post_is_indexed(): void {
@@ -193,6 +210,25 @@ final class SyncTest extends TestCase {
 	}
 
 	/**
+	 * Saving a draft that was never published collects nothing; publishing it later indexes it.
+	 */
+	public function test_never_published_draft_is_not_collected_until_published(): void {
+		$id = self::factory()->post->create( array( 'post_status' => 'draft' ) );
+		wp_update_post(
+			array(
+				'ID'           => $id,
+				'post_content' => 'Autosaved body',
+			)
+		);
+		$this->assertSame( array(), $this->collector()->pending() );
+
+		wp_publish_post( $id );
+		$this->sync();
+
+		$this->assertSame( array( $id ), $this->indexed_ids() );
+	}
+
+	/**
 	 * Adding a password removes the post.
 	 */
 	public function test_password_protected_post_is_removed(): void {
@@ -253,6 +289,129 @@ final class SyncTest extends TestCase {
 		$this->sync();
 
 		$this->assertSame( array( 'Beta' ), $this->index_documents( $this->uid )[0]['tax_category'] );
+	}
+
+	/**
+	 * Deleting a parent term re-parents its children with a direct UPDATE (no edited_term): the posts
+	 * of the child terms lose the deleted ancestor from their ancestor-inclusive IDs.
+	 */
+	public function test_parent_term_delete_resyncs_posts_of_child_terms(): void {
+		$parent        = self::factory()->category->create( array( 'name' => 'Clothing' ) );
+		$child         = self::factory()->category->create(
+			array(
+				'name'   => 'Shirts',
+				'parent' => $parent,
+			)
+		);
+		$grandchild    = self::factory()->category->create(
+			array(
+				'name'   => 'Polos',
+				'parent' => $child,
+			)
+		);
+		$in_child      = self::factory()->post->create( array( 'post_category' => array( $child ) ) );
+		$in_grandchild = self::factory()->post->create( array( 'post_category' => array( $grandchild ) ) );
+		$this->sync();
+		$this->assertSame( array( $parent, $child ), $this->term_ids_of( $in_child ) );
+		$this->assertSame( array( $parent, $child, $grandchild ), $this->term_ids_of( $in_grandchild ) );
+
+		wp_delete_term( $parent, 'category' );
+		$this->sync();
+
+		$this->assertSame( array( $child ), $this->term_ids_of( $in_child ) );
+		$this->assertSame( array( $child, $grandchild ), $this->term_ids_of( $in_grandchild ) );
+	}
+
+	/**
+	 * Document of a post.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return array<string, mixed>
+	 */
+	private function document_of( int $post_id ): array {
+		foreach ( $this->index_documents( $this->uid ) as $document ) {
+			if ( (int) $document['id'] === $post_id ) {
+				return $document;
+			}
+		}
+		$this->fail( sprintf( 'Post %d has no document.', $post_id ) );
+	}
+
+	/**
+	 * Deleting a user and attributing their posts to another one (a direct UPDATE, no save_post)
+	 * updates the author fields of those posts.
+	 */
+	public function test_user_delete_with_reassign_updates_the_author_of_their_posts(): void {
+		require_once ABSPATH . 'wp-admin/includes/user.php';
+		$old = self::factory()->user->create(
+			array(
+				'role'         => 'author',
+				'display_name' => 'Old Author',
+			)
+		);
+		$new = self::factory()->user->create(
+			array(
+				'role'         => 'author',
+				'display_name' => 'New Author',
+			)
+		);
+		$id  = self::factory()->post->create( array( 'post_author' => $old ) );
+		$this->sync();
+		$this->assertSame( $old, (int) $this->document_of( $id )['author_id'] );
+
+		wp_delete_user( $old, $new );
+		$this->sync();
+
+		$document = $this->document_of( $id );
+		$this->assertSame( $new, (int) $document['author_id'] );
+		$this->assertSame( 'New Author', $document['author_name'] );
+	}
+
+	/**
+	 * A new display name reaches the author_name of the user's posts.
+	 */
+	public function test_display_name_change_updates_the_author_name_of_their_posts(): void {
+		$user  = self::factory()->user->create(
+			array(
+				'role'         => 'author',
+				'display_name' => 'Before Name',
+			)
+		);
+		$id    = self::factory()->post->create( array( 'post_author' => $user ) );
+		$other = self::factory()->post->create();
+		$this->sync();
+		$this->assertSame( 'Before Name', $this->document_of( $id )['author_name'] );
+
+		wp_update_user(
+			array(
+				'ID'           => $user,
+				'display_name' => 'After Name',
+			)
+		);
+		$this->sync();
+
+		$this->assertSame( 'After Name', $this->document_of( $id )['author_name'] );
+		$this->assertNotSame( 'After Name', $this->document_of( $other )['author_name'] );
+	}
+
+	/**
+	 * A term removed with wp_remove_object_terms() (which never fires set_object_terms) leaves the document.
+	 */
+	public function test_removed_object_term_leaves_the_document(): void {
+		$keep = self::factory()->category->create( array( 'name' => 'Keepme' ) );
+		$gone = self::factory()->category->create( array( 'name' => 'Newsroom' ) );
+		$id   = self::factory()->post->create();
+		wp_set_object_terms( $id, array( $keep, $gone ), 'category' );
+		$this->sync();
+		$this->assertContains( 'Newsroom', $this->index_documents( $this->uid )[0]['tax_category'] );
+
+		$this->assertTrue( wp_remove_object_terms( $id, array( $gone ), 'category' ) );
+		$this->assertSame( array( 'content' => array( $id ) ), $this->collector()->pending() );
+		$this->sync();
+
+		$document = $this->index_documents( $this->uid )[0];
+		$this->assertSame( array( 'Keepme' ), $document['tax_category'] );
+		$this->assertSame( array( $keep ), $document['tax_category_ids'] );
 	}
 
 	/**

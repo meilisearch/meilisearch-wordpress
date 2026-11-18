@@ -160,6 +160,7 @@ final class Plugin {
 		$this->add( 'reindexer', $reindexer );
 		$this->add( 'sync_job', $sync_job );
 		$this->add( 'term_job', new Sync\TermJob( $collector, $queue, $options ) );
+		$this->add( 'author_job', new Sync\AuthorJob( $collector, $queue, $options ) );
 
 		// Tasks 15-18, Task 22 — search.
 		$product_translator = $options->products_enabled() ? new WooCommerce\ProductQueryTranslator( $options ) : null;

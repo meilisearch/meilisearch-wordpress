@@ -59,6 +59,7 @@ final class ChangeCollector implements Registrable {
 		add_action( 'transition_post_status', array( $this, 'on_transition_post_status' ), 10, 3 );
 		add_action( 'before_delete_post', array( $this, 'on_before_delete_post' ), 10, 1 );
 		add_action( 'set_object_terms', array( $this, 'on_set_object_terms' ), 10, 1 );
+		add_action( 'deleted_term_relationships', array( $this, 'on_deleted_term_relationships' ), 10, 1 );
 		add_action( 'added_post_meta', array( $this, 'on_meta_change' ), 10, 3 );
 		add_action( 'updated_post_meta', array( $this, 'on_meta_change' ), 10, 3 );
 		add_action( 'deleted_post_meta', array( $this, 'on_meta_change' ), 10, 3 );
@@ -71,20 +72,27 @@ final class ChangeCollector implements Registrable {
 	 * @param mixed $post_id Post ID.
 	 */
 	public function on_save_post( mixed $post_id ): void {
-		$this->add( (int) $post_id );
+		$this->add_changed( (int) $post_id );
 	}
 
 	/**
 	 * Callback for transition_post_status( string $new_status, string $old_status, WP_Post $post ).
 	 *
-	 * @param mixed $new_status New status (unused: the job re-reads the post).
-	 * @param mixed $old_status Old status (unused).
+	 * A post leaving publish is always collected; otherwise the job re-reads the post.
+	 *
+	 * @param mixed $new_status New status (unused).
+	 * @param mixed $old_status Old status.
 	 * @param mixed $post       Post object.
 	 */
 	public function on_transition_post_status( mixed $new_status, mixed $old_status, mixed $post ): void {
-		if ( $post instanceof \WP_Post ) {
-			$this->add( (int) $post->ID );
+		if ( ! $post instanceof \WP_Post ) {
+			return;
 		}
+		if ( 'publish' === $old_status ) {
+			$this->add( (int) $post->ID );
+			return;
+		}
+		$this->add_changed( (int) $post->ID );
 	}
 
 	/**
@@ -103,7 +111,17 @@ final class ChangeCollector implements Registrable {
 	 * @param mixed $object_id Object ID.
 	 */
 	public function on_set_object_terms( mixed $object_id ): void {
-		$this->add( (int) $object_id );
+		$this->add_changed( (int) $object_id );
+	}
+
+	/**
+	 * Callback for deleted_term_relationships( int $object_id, array $tt_ids, string $taxonomy ).
+	 * wp_remove_object_terms() fires this and never set_object_terms.
+	 *
+	 * @param mixed $object_id Object ID.
+	 */
+	public function on_deleted_term_relationships( mixed $object_id ): void {
+		$this->add_changed( (int) $object_id );
 	}
 
 	/**
@@ -119,7 +137,27 @@ final class ChangeCollector implements Registrable {
 		if ( ! is_string( $meta_key ) || ! in_array( $meta_key, $this->options->all_meta_keys(), true ) ) {
 			return;
 		}
-		$this->add( (int) $object_id );
+		$this->add_changed( (int) $object_id );
+	}
+
+	/**
+	 * Adds a post changed by a post hook, unless it is a draft or pending post that was never
+	 * published. Such a post has a floating date (post_date_gmt stays zero until it is published or
+	 * dated) and can have no document, while every block-editor autosave of a draft saves the post
+	 * itself. A post that was published before keeps its date, so it is still collected and a
+	 * failed delete of its document is retried on its next save.
+	 *
+	 * @param int $post_id Post ID.
+	 */
+	private function add_changed( int $post_id ): void {
+		$post = $post_id > 0 ? get_post( $post_id ) : null;
+		if ( $post instanceof \WP_Post
+			&& in_array( $post->post_status, array( 'draft', 'pending', 'auto-draft' ), true )
+			&& in_array( (string) $post->post_date_gmt, array( '', '0000-00-00 00:00:00' ), true )
+		) {
+			return;
+		}
+		$this->add( $post_id );
 	}
 
 	/**
@@ -166,7 +204,8 @@ final class ChangeCollector implements Registrable {
 	 * Enqueues Queue::SYNC_POSTS jobs in chunks of CHUNK IDs, skipping IDs that already
 	 * have a job waiting (transient meilisearch_pending_{blog_id}_{id}), then empties the set.
 	 * IDs collected on another blog are scheduled while that blog is current, so they land in
-	 * its Action Scheduler tables and use its markers.
+	 * its Action Scheduler tables and use its markers. A site without a host and an admin key
+	 * gets no job: there is nowhere to sync to, and connecting it later needs a full reindex.
 	 */
 	public function flush(): void {
 		$all           = $this->pending;
@@ -194,6 +233,9 @@ final class ChangeCollector implements Registrable {
 	 * @param array<string, list<int>> $pending Logical index => sorted post IDs.
 	 */
 	private function flush_blog( int $blog_id, array $pending ): void {
+		if ( ! $this->options->is_configured() ) {
+			return;
+		}
 		foreach ( $pending as $logical => $ids ) {
 			$fresh = array();
 			foreach ( $ids as $post_id ) {
