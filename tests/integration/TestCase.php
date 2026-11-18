@@ -93,13 +93,38 @@ abstract class TestCase extends WP_UnitTestCase {
 	/**
 	 * Boots a fresh Plugin (e.g. after options changed which services exist), remembering the
 	 * bootstrapped instance so tear_down() can put it back next to the hooks WP_UnitTestCase restores.
+	 *
+	 * The previous instance's hooks are detached first: otherwise both instances answer, and the one
+	 * registered first (not Plugin::instance()) intercepts searches and holds their state.
 	 */
 	protected function reboot_plugin(): void {
 		if ( null === $this->bootstrapped_plugin ) {
 			$this->bootstrapped_plugin = Plugin::instance();
 		}
+		$this->detach_plugin_hooks();
 		Plugin::reset();
 		Plugin::boot();
+	}
+
+	/**
+	 * Removes every callback bound to a plugin object (services and the objects they register, such
+	 * as admin tabs). _restore_hooks() brings the bootstrapped instance's back at tear_down.
+	 */
+	private function detach_plugin_hooks(): void {
+		foreach ( $GLOBALS['wp_filter'] as $hook_name => $hook ) {
+			foreach ( $hook->callbacks as $priority => $callbacks ) {
+				foreach ( $callbacks as $callback ) {
+					$function = $callback['function'];
+					if ( ! is_array( $function ) || ! is_object( $function[0] ) ) {
+						continue;
+					}
+					$class = get_class( $function[0] );
+					if ( str_starts_with( $class, 'Meilisearch\\WordPress\\' ) && ! str_starts_with( $class, 'Meilisearch\\WordPress\\Tests\\' ) ) {
+						remove_filter( $hook_name, $function, $priority );
+					}
+				}
+			}
+		}
 	}
 
 	/**
