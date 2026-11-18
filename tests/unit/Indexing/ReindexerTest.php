@@ -394,6 +394,7 @@ final class ReindexerTest extends TestCase {
 		$this->assertSame( 'upsert', $state['phase'] );
 		$this->assertSame( 2, $state['settings_task'] );
 		$this->assertCount( 5, $this->transport->requests(), 'One poll per task, no waiting.' );
+		$this->assertSame( $this->options->content_signature(), $state['content_signature'], 'The content settings the run is built with.' );
 	}
 
 	/**
@@ -546,6 +547,45 @@ final class ReindexerTest extends TestCase {
 		$this->assertTrue( $this->options->needs_reindex( 'content' ), 'A flag raised mid-run must survive finalization.' );
 		$this->assertTrue( (bool) $this->options->state( 'first_reindex_done' ) );
 		$this->assertTrue( $this->options->is_populated( 'content' ), 'A done run populates the index.' );
+	}
+
+	/**
+	 * The content settings changed while the run was sending documents (a post type, taxonomy or meta key
+	 * added mid-run): the posts sent before the change lack it, so the run does not mark the index populated.
+	 */
+	public function test_finalize_does_not_populate_when_the_content_settings_changed_mid_run(): void {
+		$this->seed_run(
+			array(
+				'phase'             => 'finalizing',
+				'task_uids'         => array( 7 ),
+				'content_signature' => $this->options->content_signature(),
+			)
+		);
+		$this->option_store[ Options::CONTENT ]['post_types'][] = 'book';
+		$this->transport->queue( self::tasks_response( array() ) )->queue( self::tasks_response( array() ) );
+
+		$this->handle();
+
+		$this->assertSame( 'done', $this->state()['status'] );
+		$this->assertFalse( $this->options->is_populated( 'content' ), 'Built with two configurations: not populated.' );
+	}
+
+	/**
+	 * Settings unchanged since the run started: the index is populated.
+	 */
+	public function test_finalize_populates_when_the_content_settings_are_those_of_the_run(): void {
+		$this->seed_run(
+			array(
+				'phase'             => 'finalizing',
+				'task_uids'         => array( 7 ),
+				'content_signature' => $this->options->content_signature(),
+			)
+		);
+		$this->transport->queue( self::tasks_response( array() ) )->queue( self::tasks_response( array() ) );
+
+		$this->handle();
+
+		$this->assertTrue( $this->options->is_populated( 'content' ) );
 	}
 
 	/**

@@ -35,7 +35,7 @@ use Meilisearch\WordPress\Sync\Queue;
  *    finalizing phase) until the recorded settings task has succeeded; a failed one fails the run.
  * 4. Phase "finalizing": wait until no recorded task is enqueued/processing; a failed or canceled
  *    task fails the run, otherwise the run is done and the index is marked populated (search is
- *    intercepted only for populated indexes).
+ *    intercepted only for populated indexes), unless the content settings changed while it ran.
  *
  * A step that hits a transient error (no response, HTTP 408, 429 or 5xx) is retried: the background
  * run reschedules it after RETRY_BACKOFF[n] seconds (the counter, "retries", is kept in the state and
@@ -452,6 +452,10 @@ final class Reindexer implements Registrable {
 		if ( null !== $settings_task ) {
 			$state['settings_task'] = $settings_task;
 		}
+		if ( 'content' === $logical ) {
+			// Compared at finalize: posts sent before a mid-run settings change were built without it.
+			$state['content_signature'] = $this->options->content_signature();
+		}
 		// Flags raised from now on (settings changed mid-run) survive the run: finalize does not clear them.
 		$this->options->flag_reindex( $logical, false );
 		$this->options->set_reindex_state( $logical, $state );
@@ -627,7 +631,9 @@ final class Reindexer implements Registrable {
 		$state['error']  = '';
 		$state           = $this->save( $logical, $state );
 		$this->options->set_state( 'first_reindex_done', true );
-		$this->options->set_populated( $logical, true );
+		if ( ! isset( $state['content_signature'] ) || $state['content_signature'] === $this->options->content_signature() ) {
+			$this->options->set_populated( $logical, true );
+		}
 		return $state;
 	}
 

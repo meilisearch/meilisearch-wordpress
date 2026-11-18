@@ -424,6 +424,28 @@ final class Options {
 	}
 
 	/**
+	 * Identifies what the content index is built with: the enabled post types and the taxonomies and meta
+	 * keys of each, in any order. A reindex records it when it starts so that a change made while it runs
+	 * is not reported as indexed.
+	 *
+	 * @return string
+	 */
+	public function content_signature(): string {
+		$types = $this->enabled_post_types();
+		sort( $types );
+		$fields = array();
+		foreach ( $types as $post_type ) {
+			$taxonomies = $this->taxonomies_for( $post_type );
+			$meta_keys  = $this->meta_keys_for( $post_type );
+			sort( $taxonomies );
+			sort( $meta_keys );
+			$fields[ $post_type ] = array( $taxonomies, $meta_keys );
+		}
+
+		return md5( (string) wp_json_encode( $fields ) );
+	}
+
+	/**
 	 * WooCommerce settings.
 	 *
 	 * @return array{enabled: bool, attributes: ?list<string>, custom_attributes: bool, variation_skus: bool}

@@ -221,6 +221,58 @@ final class SearchTest extends TestCase {
 	}
 
 	/**
+	 * Ticking a post type and a taxonomy in the Content tab: Meilisearch holds neither the existing posts
+	 * of the type nor the taxonomy field until a full reindex, so MySQL answers until one has completed.
+	 */
+	public function test_newly_indexed_type_and_taxonomy_are_answered_by_mysql_until_reindexed(): void {
+		register_post_type( 'meili_book', array( 'public' => true ) );
+		try {
+			$tagged = $this->matching[0];
+			wp_set_post_tags( $tagged, array( 'scifi' ) );
+			$book = self::factory()->post->create(
+				array(
+					'post_title' => 'Quasar atlas',
+					'post_type'  => 'meili_book',
+				)
+			);
+
+			update_option(
+				Options::CONTENT,
+				array(
+					'post_types' => array( 'post', 'page', 'meili_book' ),
+					'taxonomies' => array(
+						'post'       => array( 'category', 'post_tag' ),
+						'meili_book' => array(),
+					),
+					'meta_keys'  => array(),
+				)
+			);
+			$this->wait_for_tasks();
+			$this->search_requests = 0;
+
+			$this->go_to( home_url( '/?s=quasar' ) );
+			self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ), 'The index holds no book yet.' );
+			self::assertContains( $book, $this->result_ids() );
+
+			$this->go_to( home_url( '/?s=nebula&tag=scifi&post_type=post' ) );
+			self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ), 'No document has the tag field yet.' );
+			self::assertContains( $tagged, $this->result_ids() );
+			self::assertSame( 0, $this->search_requests );
+
+			Plugin::instance()->get( 'reindexer' )->run_sync( 'content', 200, static function (): void {} );
+
+			$this->go_to( home_url( '/?s=nebula&tag=scifi&post_type=post' ) );
+			self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+			self::assertSame( array( $tagged ), $this->result_ids() );
+			$this->go_to( home_url( '/?s=quasar' ) );
+			self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+			self::assertContains( $book, $this->result_ids() );
+		} finally {
+			unregister_post_type( 'meili_book' );
+		}
+	}
+
+	/**
 	 * Theme search results come from Meilisearch, in its ranking order.
 	 */
 	public function test_results_come_from_meilisearch_in_ranking_order(): void {
