@@ -385,20 +385,27 @@ final class ProductQueryTranslator implements ProductTranslator {
 
 		$chosen = array();
 		foreach ( $this->block_taxonomy_params() as $taxonomy => $param ) {
-			$values = $this->block_values( $query, $param );
-			if ( null === $values ) {
+			// WooCommerce chooses a taxonomy whenever its trimmed parameter is not empty, even when no
+			// slug survives (`,`): it then looks up an empty slug list, which get_terms() answers with
+			// every term of the taxonomy. Only an absent or blank parameter is skipped.
+			$value = $query->get( $param );
+			if ( ! is_string( $value ) ) {
+				if ( empty( $value ) ) {
+					continue;
+				}
 				return null;
 			}
-			if ( array() === $values ) {
+			$value = trim( $value );
+			if ( empty( $value ) ) {
 				continue;
 			}
-			$slugs = array_values( array_unique( array_filter( array_map( 'sanitize_title', $values ) ) ) );
+			$slugs = array_values( array_unique( array_filter( array_map( 'sanitize_title', explode( ',', $value ) ) ) ) );
 			$field = self::BLOCK_TAXONOMY_FIELDS[ $taxonomy ] ?? null;
 			if ( array() === $slugs || null === $field || ! in_array( $field, $filterable, true ) ) {
 				return null;
 			}
 			$chosen[ $taxonomy ] = $slugs;
-		}
+		}//end foreach
 		if ( array() === $chosen ) {
 			return $filters;
 		}
@@ -430,8 +437,8 @@ final class ProductQueryTranslator implements ProductTranslator {
 	}
 
 	/**
-	 * Comma-separated values of a product filter block query var: [] when the parameter is absent
-	 * or empty (WooCommerce skips it), null when it is not a string.
+	 * Comma-separated values of the stock status filter block query var: [] when the parameter is
+	 * absent or has no value (WooCommerce skips it), null when it is not a string.
 	 *
 	 * @param \WP_Query $query Query.
 	 * @param string    $param Query var.

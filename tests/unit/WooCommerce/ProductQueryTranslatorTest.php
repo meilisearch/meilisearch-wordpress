@@ -571,6 +571,9 @@ final class ProductQueryTranslatorTest extends TestCase {
 				),
 			),
 			'slugs that sanitize away'  => array( array( 'categories' => '!!!' ) ),
+			// WooCommerce looks up an empty slug list, which get_terms() answers with every term.
+			'only separators'           => array( array( 'categories' => ',' ) ),
+			'separators and spaces'     => array( array( 'tags' => ' , ' ) ),
 			'array instead of a string' => array( array( 'categories' => array( 'tees' ) ) ),
 			'array of stock statuses'   => array( array( 'filter_stock_status' => array( 'instock' ) ) ),
 		);
@@ -582,6 +585,7 @@ final class ProductQueryTranslatorTest extends TestCase {
 				array(
 					'filter_stock_status' => '',
 					'categories'          => '',
+					'tags'                => '  ',
 					'brands'              => '',
 					'filter_collection'   => '0',
 					'filter_category'     => 'news',
