@@ -169,7 +169,7 @@ final class SiteHealth implements Registrable {
 				__( 'Meilisearch cannot be reached', 'meilisearch' ),
 				sprintf(
 					/* translators: %s: error message returned by Meilisearch or by the HTTP request. */
-					__( 'The last request to Meilisearch failed: %s. Search falls back to the WordPress database and content changes wait in the queue until the connection works again.', 'meilisearch' ),
+					__( 'The last request to Meilisearch failed: %s. Search falls back to the WordPress database. Content changes are retried for several hours; if the connection is not back by then, the plugin asks for a full reindex.', 'meilisearch' ),
 					$error
 				),
 				$settings_url

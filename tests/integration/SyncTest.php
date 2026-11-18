@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Meilisearch\WordPress\Tests\Integration;
 
 use Meilisearch\WordPress\Indexing\IndexManager;
+use Meilisearch\WordPress\Indexing\SettingsBuilder;
 use Meilisearch\WordPress\Plugin;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
@@ -112,6 +113,47 @@ final class SyncTest extends TestCase {
 
 		$this->assertSame( array( $id ), $this->indexed_ids() );
 		$this->assertSame( 'Hello Meilisearch', $this->index_documents( $this->uid )[0]['title'] );
+	}
+
+	/**
+	 * A sync job never lets Meilisearch auto-create the index with default settings: when the live index
+	 * is missing (never created, or deleted on the server) the job creates it with the plugin's settings first.
+	 */
+	public function test_sync_creates_a_missing_index_with_the_plugin_settings(): void {
+		$this->meili( 'DELETE', '/indexes/' . $this->uid );
+		$this->wait_for_tasks();
+		$this->assertArrayHasKey( 'code', $this->meili( 'GET', '/indexes/' . $this->uid ), 'The index must not exist.' );
+
+		$id = self::factory()->post->create( array( 'post_title' => 'Hello Meilisearch' ) );
+		$this->sync();
+
+		$this->assertSame( array(), $this->action_failures );
+		$this->assertSame( array( $id ), $this->indexed_ids() );
+		$builder = Plugin::instance()->get( 'settings_builder' );
+		assert( $builder instanceof SettingsBuilder );
+		$settings = $this->meili( 'GET', '/indexes/' . $this->uid . '/settings' );
+		$this->assertSame( $builder->initial( 'content' )['searchableAttributes'], $settings['searchableAttributes'] );
+	}
+
+	/**
+	 * A job that only removes posts does not create a missing index, and does not fail on it.
+	 */
+	public function test_delete_only_job_leaves_a_missing_index_missing(): void {
+		$this->meili( 'DELETE', '/indexes/' . $this->uid );
+		$this->wait_for_tasks();
+
+		$job = Plugin::instance()->get( 'sync_job' );
+		assert( $job instanceof SyncJob );
+		$job->handle(
+			array(
+				'index'   => 'content',
+				'ids'     => array( 987654 ),
+				'attempt' => 1,
+			)
+		);
+		$this->wait_for_tasks();
+
+		$this->assertArrayHasKey( 'code', $this->meili( 'GET', '/indexes/' . $this->uid ) );
 	}
 
 	/**
@@ -285,9 +327,15 @@ final class SyncTest extends TestCase {
 			)
 		);
 
+		$options = Plugin::instance()->get( 'options' );
+		assert( $options instanceof Options );
+		$options->flag_reindex( 'content', false );
+
 		\ActionScheduler::runner()->process_action( $action_id, 'SyncTest' );
 
 		$this->assertSame( \ActionScheduler_Store::STATUS_FAILED, \ActionScheduler::store()->get_status( $action_id ) );
+		// The dropped change is only recovered by a full reindex, so one is requested.
+		$this->assertTrue( $options->needs_reindex( 'content' ) );
 		$log = Plugin::instance()->get( 'error_log' );
 		assert( $log instanceof ErrorLog );
 		$this->assertStringContainsString( 'after 6 attempt(s)', $log->all()[0]['message'] );
