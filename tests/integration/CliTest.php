@@ -363,7 +363,8 @@ final class CliTest extends TestCase {
 		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
 		delete_transient( CircuitBreaker::TRANSIENT );
 		$options = $this->service( 'options', Options::class );
-		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+		// Fill every active index: with WooCommerce a plain ?s= search spans content and products, and is only intercepted once both are populated.
+		$this->cli()->reindex( array(), array() );
 
 		$this->go_to( home_url( '/?s=Clitestfoxtrot' ) );
 		self::assertTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ), 'Precondition: Meilisearch answers.' );
