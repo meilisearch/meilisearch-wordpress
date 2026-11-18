@@ -122,7 +122,6 @@ final class SearcherTest extends TestCase {
 	public function test_single_index_with_highlight_and_hybrid(): void {
 		$formatted = array(
 			'id'      => '12',
-			'title'   => '<mark>Nebula</mark> report',
 			'content' => '…the <mark>nebula</mark> was…',
 		);
 		$this->transport->queue(
@@ -131,8 +130,6 @@ final class SearcherTest extends TestCase {
 					'hits'       => array(
 						array(
 							'id'         => 12,
-							'title'      => 'Nebula report',
-							'content'    => 'x',
 							'_formatted' => $formatted,
 						),
 					),
@@ -166,9 +163,9 @@ final class SearcherTest extends TestCase {
 					'embedder'      => 'default',
 					'semanticRatio' => 0.7,
 				),
-				'attributesToRetrieve'  => array( 'id', 'title', 'content' ),
+				'attributesToRetrieve'  => array( 'id' ),
 				'attributesToCrop'      => array( 'content:30' ),
-				'attributesToHighlight' => array( 'title', 'content' ),
+				'attributesToHighlight' => array( 'content' ),
 				'highlightPreTag'       => '<mark>',
 				'highlightPostTag'      => '</mark>',
 			),

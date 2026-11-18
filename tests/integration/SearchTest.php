@@ -374,6 +374,32 @@ final class SearchTest extends TestCase {
 	}
 
 	/**
+	 * Highlighting retrieves only the IDs; the cropped, highlighted content still comes back in _formatted.
+	 */
+	public function test_highlighted_search_returns_only_the_cropped_content(): void {
+		update_option(
+			Options::SEARCH,
+			array_merge(
+				Options::defaults()[ Options::SEARCH ],
+				array(
+					'replace'   => true,
+					'highlight' => true,
+				)
+			)
+		);
+
+		$this->go_to( home_url( '/?s=clouds' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		$ids = $this->result_ids();
+		self::assertNotEmpty( $ids );
+		$formatted = Plugin::instance()->get( 'result_mapper' )->formatted( $ids[0] );
+		self::assertIsArray( $formatted );
+		self::assertStringContainsString( '<mark>clouds</mark>', (string) $formatted['content'] );
+		self::assertArrayNotHasKey( 'title', $formatted );
+	}
+
+	/**
 	 * Mixed author inclusion and exclusion: like core, only the exclusion applies.
 	 */
 	public function test_author_exclusion_wins_over_inclusion_like_mysql(): void {

@@ -110,13 +110,14 @@ final class Searcher {
 		if ( null !== $request->hybrid ) {
 			$params['hybrid'] = $request->hybrid;
 		}
+		// Only the ID and the cropped _formatted.content are read; Meilisearch returns _formatted for
+		// cropped/highlighted attributes even when they are not retrieved.
+		$params['attributesToRetrieve'] = array( 'id' );
 		if ( ! $request->highlight ) {
-			$params['attributesToRetrieve'] = array( 'id' );
 			return $params;
 		}
-		$params['attributesToRetrieve']  = array( 'id', 'title', 'content' );
 		$params['attributesToCrop']      = array( 'content:30' );
-		$params['attributesToHighlight'] = array( 'title', 'content' );
+		$params['attributesToHighlight'] = array( 'content' );
 		$params['highlightPreTag']       = self::PRE_TAG;
 		$params['highlightPostTag']      = self::POST_TAG;
 		return $params;
