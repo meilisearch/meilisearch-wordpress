@@ -816,7 +816,11 @@ final class QueryTranslator {
 	}
 
 	/**
-	 * One first-order meta clause, with WP_Meta_Query semantics.
+	 * One first-order meta clause, with WP_Meta_Query's clause structure but the index's value
+	 * semantics: numeric values are compared as numbers whatever the clause type, so range compares
+	 * (<, <=, >, >=, BETWEEN) are numeric even untyped or CHAR (where MySQL compares strings), and
+	 * NUMERIC is not truncated to an integer like MySQL's CAST AS SIGNED. Results can then differ
+	 * from the database fallback for non-numeric or untyped CHAR values.
 	 *
 	 * @param array<string, mixed> $clause        Clause.
 	 * @param string[]             $content_types Requested content post types.
