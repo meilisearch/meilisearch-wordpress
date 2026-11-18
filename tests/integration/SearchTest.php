@@ -422,7 +422,9 @@ final class SearchTest extends TestCase {
 			200,
 			static function (): void {}
 		);
-		$url = home_url( '/?s=nebula&author=' . $a . ',-' . $b );
+		// Restricted to posts: products have no author_id, so a default search with an author
+		// constraint is answered by MySQL whenever products are indexed (QueryTranslator).
+		$url = home_url( '/?s=nebula&post_type=post&author=' . $a . ',-' . $b );
 
 		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => false ) ) );
 		$this->go_to( $url );
