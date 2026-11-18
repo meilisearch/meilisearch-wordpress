@@ -221,4 +221,69 @@ final class SiteHealthTest extends TestCase {
 		self::assertSame( 'recommended', $result['status'] );
 		self::assertStringContainsString( 'meili_event', $result['description'] );
 	}
+
+	public function test_index_displaying_every_attribute_is_reported_when_autocomplete_is_on(): void {
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'autocomplete' => true ) ) );
+		$uid = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		// An index created before the plugin listed public fields: Meilisearch displays everything.
+		$this->meili(
+			'POST',
+			'/indexes',
+			array(
+				'uid'        => $uid,
+				'primaryKey' => 'id',
+			)
+		);
+		$this->wait_for_tasks();
+		$this->service( 'index_manager', IndexManager::class )->connect();
+		$this->wait_for_tasks();
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_DISPLAYED ];
+		self::assertSame( 'recommended', $result['status'], $result['description'] );
+		self::assertStringContainsString( $uid . ': id, post_type, title', $result['description'] );
+		self::assertSame( array( '*' ), $this->meili( 'GET', '/indexes/' . $uid . '/settings' )['displayedAttributes'], 'The existing index is not changed.' );
+
+		// Recreated by the plugin (delete + reindex), it only displays public fields.
+		$this->meili( 'DELETE', '/indexes/' . $uid );
+		$this->wait_for_tasks();
+		$this->reindex_content();
+		self::assertSame( 'good', array_column( $this->fresh_health()->run_all(), 'status', 'test' )[ SiteHealth::TEST_DISPLAYED ] );
+	}
+
+	/**
+	 * Stock WordPress and WooCommerce attach nothing the check reports (both test variants run this).
+	 */
+	public function test_stock_sql_filter_callbacks_are_not_reported(): void {
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		// The front end attaches WooCommerce's product query and filter callbacks.
+		$this->go_to( home_url( '/?s=anything' ) );
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_SQL ];
+
+		self::assertSame( 'good', $result['status'], $result['description'] );
+	}
+
+	public function test_other_code_on_the_sql_filters_is_reported_when_search_is_replaced(): void {
+		$restrict = static fn ( $where ) => $where . ' AND 1 = 1';
+		add_filter( 'posts_where', $restrict );
+		add_filter( 'posts_clauses_request', array( $this, 'keep_clauses' ) );
+
+		$off = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_SQL ];
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		$on = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_SQL ];
+
+		self::assertSame( 'good', $off['status'], 'Nothing to report while WordPress answers every search.' );
+		self::assertSame( 'recommended', $on['status'] );
+		self::assertStringContainsString( 'posts_where: closure', $on['description'] );
+		self::assertStringContainsString( 'posts_clauses_request: ' . self::class . '::keep_clauses', $on['description'] );
+		self::assertStringContainsString( 'meilisearch_should_intercept', $on['description'] );
+	}
+
+	/**
+	 * @param array<string, string> $clauses
+	 * @return array<string, string>
+	 */
+	public function keep_clauses( array $clauses ): array {
+		return $clauses;
+	}
 }

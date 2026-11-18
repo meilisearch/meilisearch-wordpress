@@ -50,6 +50,9 @@ final class SettingsSyncTest extends TestCase {
 			public function searchable(): array {
 				return array( 'title' );
 			}
+			public function displayed(): array {
+				return array( 'id', 'title' );
+			}
 		};
 
 		return new SettingsSync( $clients, new IndexManager( $clients, $names, new SettingsBuilder( array( 'content' => $schema ) ), $options ), $names, $options, new ErrorLog() );

@@ -11,6 +11,7 @@ namespace Meilisearch\WordPress\WooCommerce;
 
 defined( 'ABSPATH' ) || exit;
 
+use Meilisearch\WordPress\Indexing\ContentSchema;
 use Meilisearch\WordPress\Indexing\Schema;
 use Meilisearch\WordPress\Settings\Options;
 
@@ -73,6 +74,28 @@ final class ProductSchema implements Schema {
 				)
 			)
 		);
+	}
+
+	/**
+	 * Indexed product fields WooCommerce does not publish (lifetime sales, exact stock, author ID).
+	 */
+	public const PRIVATE_FIELDS = array( 'total_sales', 'stock_quantity', 'author_id' );
+
+	/**
+	 * Product fields shown on the product page or in the catalogue, besides those the plugin searches,
+	 * filters or sorts on.
+	 */
+	public const PUBLIC_FIELDS = array( 'sku', 'product_type', 'featured', 'price', 'regular_price', 'sale_price', 'price_min', 'price_max', 'on_sale', 'in_stock', 'stock_status', 'rating_average', 'rating_count', 'categories', 'variations', 'variation_skus', 'tax_product_cat', 'tax_product_cat_ids', 'tax_product_tag', 'tax_product_tag_ids' );
+
+	/**
+	 * Public attributes: the content core public fields, the product public fields and every field
+	 * the plugin searches, filters or sorts on, except PRIVATE_FIELDS.
+	 *
+	 * @return list<string>
+	 */
+	public function displayed(): array {
+		$fields = array_merge( ContentSchema::PUBLIC_FIELDS, self::PUBLIC_FIELDS, $this->searchable(), $this->filterable(), $this->sortable() );
+		return array_values( array_diff( array_unique( $fields ), self::PRIVATE_FIELDS ) );
 	}
 
 	/**

@@ -125,14 +125,7 @@ final class Autocomplete implements Registrable {
 
 		$subtitles = array();
 		foreach ( array( 'content', 'products' ) as $logical ) {
-			/**
-			 * Filters the document field shown as a second line under each autocomplete suggestion.
-			 *
-			 * @param string|null $field   Field name (top-level, [A-Za-z0-9_.]), or null for none.
-			 * @param string      $logical 'content' | 'products'.
-			 */
-			$field                 = apply_filters( 'meilisearch_autocomplete_subtitle_field', null, $logical );
-			$subtitles[ $logical ] = is_string( $field ) && 1 === preg_match( '/^[A-Za-z0-9_.]+$/', $field ) ? $field : null;
+			$subtitles[ $logical ] = self::subtitle_field( $logical );
 		}
 
 		return array(
@@ -173,11 +166,54 @@ final class Autocomplete implements Registrable {
 	}
 
 	/**
+	 * Why visitors' browsers cannot use the browser host (BrowserHost::warning()), or null when they can or
+	 * autocomplete is off. The site's URL is home_url(), which visitors open.
+	 *
+	 * @param Options $options Plugin options.
+	 * @return string|null Plain text.
+	 */
+	public static function host_warning( Options $options ): ?string {
+		if ( ! $options->search()['autocomplete'] || ! $options->is_configured() ) {
+			return null;
+		}
+
+		return BrowserHost::warning( self::browser_host_for( $options ), home_url( '/' ) );
+	}
+
+	/**
+	 * The field shown under each suggestion of an index, or null for none. SettingsBuilder adds it to the
+	 * displayed attributes of the indexes the plugin creates, so the browser key can read it.
+	 *
+	 * @param string $logical 'content' | 'products'.
+	 * @return string|null
+	 */
+	public static function subtitle_field( string $logical ): ?string {
+		/**
+		 * Filters the document field shown as a second line under each autocomplete suggestion.
+		 *
+		 * @param string|null $field   Field name (top-level, [A-Za-z0-9_.]), or null for none.
+		 * @param string      $logical 'content' | 'products'.
+		 */
+		$field = apply_filters( 'meilisearch_autocomplete_subtitle_field', null, $logical );
+		return is_string( $field ) && 1 === preg_match( '/^[A-Za-z0-9_.]+$/', $field ) ? $field : null;
+	}
+
+	/**
 	 * The Meilisearch URL visitors' browsers use. Defaults to the configured host; a site whose PHP reaches
 	 * Meilisearch on a private address (loopback, internal network) returns the public URL here.
 	 */
 	public function browser_host(): string {
-		$host = $this->options->host();
+		return self::browser_host_for( $this->options );
+	}
+
+	/**
+	 * The Meilisearch URL visitors' browsers use, for the given options (see browser_host()).
+	 *
+	 * @param Options $options Plugin options.
+	 * @return string
+	 */
+	public static function browser_host_for( Options $options ): string {
+		$host = $options->host();
 		/**
 		 * Filters the Meilisearch URL the autocomplete script calls from the browser.
 		 *

@@ -59,4 +59,14 @@ final class ProductSchemaTest extends TestCase {
 			$schema->searchable()
 		);
 	}
+
+	public function test_displayed_lists_public_and_plugin_used_fields_but_no_private_ones(): void {
+		$displayed = $this->schema( array( 'pa_color' ) )->displayed();
+
+		foreach ( array( 'id', 'title', 'permalink', 'post_type', 'thumbnail_url', 'price', 'price_min', 'price_max', 'regular_price', 'sale_price', 'sku', 'variations', 'attr_color', 'tax_product_cat', 'rating_average' ) as $field ) {
+			self::assertContains( $field, $displayed );
+		}
+		self::assertSame( array(), array_values( array_intersect( array( 'total_sales', 'stock_quantity', 'author_id' ), $displayed ) ) );
+		self::assertSame( array_values( array_unique( $displayed ) ), $displayed );
+	}
 }

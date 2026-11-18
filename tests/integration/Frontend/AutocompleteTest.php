@@ -142,4 +142,29 @@ final class AutocompleteTest extends TestCase {
 		$this->assertSame( Plugin::instance()->get( 'names' )->uid( 'products' ), $config['indexes']['products'] );
 		$this->assertSame( get_woocommerce_currency(), $config['currency'] );
 	}
+
+	public function test_host_warning_follows_the_filtered_host_and_the_site_url(): void {
+		$this->enable_autocomplete();
+		$options = Plugin::instance()->get( 'options' );
+		$site    = static fn (): string => 'https://shop.example.com';
+		add_filter( 'pre_option_home', $site );
+		try {
+			$public = static fn (): string => 'https://search.example.com';
+			add_filter( 'meilisearch_autocomplete_host', $public );
+			$this->assertNull( Autocomplete::host_warning( $options ), 'A public https URL works for visitors.' );
+			remove_filter( 'meilisearch_autocomplete_host', $public );
+
+			$loopback = static fn (): string => 'http://127.0.0.1:7700';
+			add_filter( 'meilisearch_autocomplete_host', $loopback );
+			$this->assertStringContainsString( 'http://127.0.0.1:7700', (string) Autocomplete::host_warning( $options ) );
+			remove_filter( 'meilisearch_autocomplete_host', $loopback );
+
+			$http = static fn (): string => 'http://search.example.com';
+			add_filter( 'meilisearch_autocomplete_host', $http );
+			$this->assertStringContainsString( 'mixed content', (string) Autocomplete::host_warning( $options ) );
+			remove_filter( 'meilisearch_autocomplete_host', $http );
+		} finally {
+			remove_filter( 'pre_option_home', $site );
+		}
+	}
 }

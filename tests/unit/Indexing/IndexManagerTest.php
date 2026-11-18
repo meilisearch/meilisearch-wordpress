@@ -63,6 +63,9 @@ final class IndexManagerTest extends TestCase {
 			public function searchable(): array {
 				return array( 'title', 'content' );
 			}
+			public function displayed(): array {
+				return array( 'id', 'title', 'content' );
+			}
 		};
 
 		return new IndexManager(
@@ -243,6 +246,7 @@ final class IndexManagerTest extends TestCase {
 				'searchableAttributes' => array( 'title', 'content' ),
 				'filterableAttributes' => array( 'post_type', 'date' ),
 				'sortableAttributes'   => array( 'date' ),
+				'displayedAttributes'  => array( 'id', 'title', 'content' ),
 			),
 			$requests[3]['body']
 		);
