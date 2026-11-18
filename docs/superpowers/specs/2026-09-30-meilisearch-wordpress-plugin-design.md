@@ -122,7 +122,7 @@ Each unit is small and single-purpose; builders and translators are pure (inputs
 
 ### 5.1 Index names
 
-- **Prefix:** `wp_{h}` on single-site, `wp_{h}_{blog_id}` on multisite, where `{h}` = first 6 hex chars of `md5(network_home_url())` (single-site: `home_url()`). Editable in Connection tab; changing it after indexing requires a reindex.
+- **Prefix:** `wp_{h}` on single-site, `wp_{h}_{blog_id}` on multisite, where `{h}` = first 6 hex chars of `md5()` of the site address stored in the database, without trailing slash, not the URL of the current request: single-site, the `home` option (`WP_HOME` still applies); multisite, the network's domain + path with the scheme of the main site's stored `home`. The uid is therefore identical in wp-admin, the front end, WP-CLI and cron; the `home_url` / `network_home_url` filters do not affect it. Changing the stored site address (including http → https) changes the default prefix. Editable in Connection tab; changing it after indexing requires a reindex.
 - **Indexes:** `{prefix}_content`, and `{prefix}_products` when WooCommerce indexing is on.
 - Prefix contains only `[a-z0-9_]`, so all UIDs satisfy Meilisearch's `[a-zA-Z0-9_-]` rule.
 - Distinct prefixes per site mean staging and production can share one Cloud project safely.
@@ -183,18 +183,21 @@ Content index required settings:
 |---|---|
 | `save_post`, `transition_post_status` | collect post ID |
 | `before_delete_post` | collect post ID |
-| `set_object_terms` | collect object ID |
+| `set_object_terms`, `deleted_term_relationships` | collect object ID |
 | `added_post_meta`, `updated_post_meta`, `deleted_post_meta` | collect only if meta key is an indexed key (so `_edit_lock`, `_edit_last` etc. never trigger) |
 | `edited_term`, `delete_term` (enabled taxonomies) | enqueue `meilisearch_sync_term` |
+| `pre_delete_term` (tracked hierarchical taxonomies) | enqueue `meilisearch_sync_term` for each direct child of the deleted term |
+| `delete_user`, `remove_user_from_blog` (with a reassign target) | collect the user's published posts |
+| `profile_update` with a changed `display_name` | enqueue `meilisearch_sync_author` (paged, current site only) |
 | WooCommerce hooks | § 8.4 |
 
-Revisions, autosaves and non-enabled post types are ignored at collection time. `ChangeCollector` keeps a per-request set keyed by `(blog_id, index)`. On `shutdown` it enqueues `meilisearch_sync_posts` in chunks of 100 IDs via `as_schedule_single_action(time() + 5, ...)` in group `meilisearch`. The 5 s delay lets REST saves finish writing terms/meta after `save_post`.
+Revisions, autosaves and non-enabled post types are ignored at collection time. Post hooks also skip drafts, pending and auto-draft posts that were never published (floating date, `post_date_gmt` zero); a post leaving `publish` is always collected. No sync job is scheduled while the site has no host or admin key (connecting later requires a full reindex). `ChangeCollector` keeps a per-request set keyed by `(blog_id, index)`. On `shutdown` it enqueues `meilisearch_sync_posts` in chunks of 100 IDs via `as_schedule_single_action(time() + 5, ...)` in group `meilisearch`. The 5 s delay lets REST saves finish writing terms/meta after `save_post`.
 
 ### 6.2 Reconciliation job (`meilisearch_sync_posts`)
 
 Args: `{index, ids[], attempt}`. For each ID: reload the post; if indexable → build document; else → mark for deletion. Then one `documents` add-or-replace call and one `documents/delete-batch` call. The job reads current state, so ordering and duplicate jobs are harmless.
 
-- On `ApiError` or transport failure: reschedule the same payload with `attempt + 1` after 1 m, 5 m, 30 m, 2 h, 6 h. After attempt 5, record in `ErrorLog` and throw so AS marks the action failed.
+- On `ApiError` or transport failure: reschedule the same payload with `attempt + 1` after 1 m, 5 m, 30 m, 2 h, 6 h. When attempt 6 fails (or the retry cannot be stored), record in `ErrorLog`, flag the index as needing a full reindex, and throw so AS marks the action failed.
 - Jobs do not wait on Meilisearch tasks (fire-and-forget); failed tasks surface through Site Health drift and the Status tab's "recent failed tasks" (`GET /tasks?statuses=failed&indexUids=...`).
 
 `meilisearch_sync_term` args `{taxonomy, term_id, page}`: queries 500 post IDs with that term, feeds them to `ChangeCollector`, chains the next page.
@@ -203,12 +206,13 @@ Args: `{index, ids[], attempt}`. For each ID: reload the post; if indexable → 
 
 Full reindex runs **in place** against the live index and never reads or writes index settings beyond § 5.4's required set. (A temp-index + swap design was rejected: `GET /settings` redacts embedder `apiKey` values, so copied settings would break hybrid search, and a fresh index re-embeds every document.)
 
-1. `IndexManager::ensure_index()` for the logical index (creates it and applies required settings if missing).
+1. `IndexManager::ensure_index()` for the logical index (creates it and applies required settings if missing). The start does not wait for a settings task Meilisearch is still applying: the sweep phase waits for it, and a failed settings task fails the run. A settings task still pending for the same patch is reused, not sent again.
 2. Record run state in `meilisearch_state` (`run`, `phase`, `last_id`, `sent`, `deleted`, `total`, `task_uids`, `started_at`, `status`, `error`).
 3. **Upsert phase:** indexable posts with `ID > last_id` ordered by `ID`, 200 per batch (filter `meilisearch_reindex_batch_size`), sent with add-or-replace to the live index. Real-time sync keeps writing to the same index meanwhile; both write current state, so they never conflict.
 4. **Sweep phase:** page through the index's documents with `POST /indexes/{uid}/documents/fetch` (`filter: id > last`, `sort: ["id:asc"]`, `fields: ["id"]`, `limit: 1000`); for each page, delete the ids whose post no longer exists or is not indexable.
 5. **Finalize:** wait for all recorded task UIDs; if any failed → status `failed` with the error, logged; otherwise status `done`, clear the "needs reindex" flag, set `first_reindex_done`.
-6. Admin-triggered runs chain `meilisearch_reindex_batch` Action Scheduler actions (one batch or sweep page per action); CLI runs loop synchronously with a progress bar. Only one run per index at a time; a new request while running is rejected with the current progress.
+6. A step that hits a transient error (no response, HTTP 408, 429 or 5xx) is retried: background runs reschedule it after 30 s, 2 min and 10 min, CLI runs retry in place after 1, 5 and 15 s; each retry is logged. Any other error, or the last retry failing, fails the run.
+7. Admin-triggered runs chain `meilisearch_reindex_batch` Action Scheduler actions (one batch or sweep page per action); CLI runs loop synchronously with a progress bar. Only one run per index at a time; a new request while running is rejected with the current progress.
 
 Result: orphans disappear, every setting configured in Cloud (including embedders and their keys) is untouched, only changed documents are re-embedded, and search keeps working throughout (results may briefly mix pre- and post-reindex versions of a document).
 
@@ -357,7 +361,7 @@ Anything else (other meta compares, `orderby=meta_value*`, `post__in`, `post_par
 - Content-only → `POST /indexes/{prefix}_content/search`.
 - `post_type=product` only → products index (+ `ProductQueryTranslator`).
 - Mixed → `POST /multi-search` with `federation: {page, hitsPerPage}` and one query per index (filters per index; `post_type` filter only on content). Federated queries must share the same sort; mismatched sorts → do not intercept.
-- All requests: `attributesToRetrieve: ["id"]` (plus `title`, `content` when highlighting, so `_formatted` is returned).
+- All requests: `attributesToRetrieve: ["id"]` (also when highlighting: Meilisearch returns `_formatted` for cropped and highlighted attributes without retrieving them).
 
 ### 9.5 Results
 
@@ -365,7 +369,7 @@ Anything else (other meta compares, `orderby=meta_value*`, `post__in`, `post_par
 
 ### 9.6 Highlighting (optional, default off)
 
-When enabled, intercepted searches add `attributesToCrop: ["content:30"]`, `attributesToHighlight: ["title","content"]`, `highlightPreTag: "<mark>"`, `highlightPostTag: "</mark>"`. `Highlighter` filters `get_the_excerpt` for posts in the current intercepted result set, returning the cropped `_formatted.content` through `wp_kses($html, ['mark' => []])`.
+When enabled, intercepted searches add `attributesToCrop: ["content:30"]`, `attributesToHighlight: ["content"]`, `highlightPreTag: "<mark>"`, `highlightPostTag: "</mark>"`. `Highlighter` filters `get_the_excerpt` for posts in the current intercepted result set, returning the cropped `_formatted.content` through `wp_kses($html, ['mark' => []])`.
 
 ### 9.7 Failure handling
 

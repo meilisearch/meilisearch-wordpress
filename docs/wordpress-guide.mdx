@@ -38,15 +38,25 @@ define( 'MEILISEARCH_HOST', 'https://ms-example.meilisearch.io' );
 define( 'MEILISEARCH_ADMIN_KEY', 'your-admin-key' );
 ```
 
-Each site gets its own index prefix (`wp_{hash}`, plus the site ID on multisite), so staging and production can share one project. You can change the prefix on the Connection tab; a reindex is then required.
+After you change these constants, run `wp meilisearch connect` (or save the Connection tab), then reindex. Until then site search uses the WordPress database, autocomplete is off, a reindex is refused with a message saying so, and an admin notice asks you to reconnect. The same applies after the site address or the index prefix changes outside the Connection tab.
+
+Each site gets its own index prefix (`wp_{hash}`, plus `_{site ID}` on multisite), so staging and production can share one project. The hash is the first 6 hexadecimal characters of the MD5 of the site address stored in the database, not of the URL of the current request: on a single site, the **Site Address** (`home` option, or `WP_HOME`); on multisite, the network's domain and path with the scheme of the main site's Site Address. The prefix is therefore the same in the admin, on the front end, in WP-CLI and in cron. The `home_url` and `network_home_url` filters do not change it.
+
+Changing the stored site address, even only from `http://` to `https://`, changes the default prefix: save the Connection tab and run a full reindex. If your site is served over HTTPS but its stored address still starts with `http://`, correct the stored address or set a prefix. You can set the prefix on the Connection tab, which keeps it fixed whatever the site address; a reindex is then required.
 
 ## Choose what to index
 
-Open **Meilisearch > Content** and select the post types, then for each post type the taxonomies and custom field (meta) keys to index. Only public content is indexed: drafts, private, pending and password-protected posts are never sent, and a post that stops being public is removed from Meilisearch.
+Open **Meilisearch > Content** and select the post types, then for each post type the taxonomies and custom field (meta) keys to index. Only public content is indexed: drafts, private, pending and password-protected posts are never sent, and a post that stops being public is removed from Meilisearch. A post type that is not registered as public is never indexed, even if the stored Content settings list it; documents of such a type are removed by the next reindex or the next save of the Content tab.
+
+After you add a post type, taxonomy or custom field, site search uses the database until a full content reindex has completed, so that results never miss the existing posts or the new field. Removing items does not require this. If the Content settings change while a reindex runs, that reindex does not mark the index as ready: run another one.
+
+Only the first 20,000 characters of a post's text (after shortcodes and HTML tags are removed) are indexed in the `content` field; words after that point do not match searches answered by Meilisearch. To index other text, replace `content` in the `meilisearch_document` filter. The `meilisearch_document_content` filter changes the text before the limit applies.
 
 ## Run the first reindex
 
 Open **Meilisearch > Status** and click **Reindex**. In the background, the plugin sends every indexable post to the live index in batches, then deletes documents of posts that no longer exist or are no longer public (orphan sweep). Search keeps working during the reindex, and settings you changed in Meilisearch (synonyms, ranking rules, embedders) are never overwritten.
+
+A step that hits a temporary Meilisearch or network error (no response, HTTP 408, 429 or 5xx) is retried after 30 seconds, 2 minutes and 10 minutes (with WP-CLI, after 1, 5 and 15 seconds); each retry is logged. The reindex fails only when the last retry fails or the error is not temporary.
 
 For large sites, use WP-CLI instead (see below).
 
@@ -54,7 +64,11 @@ For large sites, use WP-CLI instead (see below).
 
 After the first reindex, an admin notice offers to **replace site search**; you can also enable it on **Meilisearch > Search**. From then on, every search results page of your theme is answered by Meilisearch, with the same templates and pagination.
 
-The WordPress database answers instead of Meilisearch when the query cannot be translated, when it includes a post type that is not indexed (the Search tab and Site Health list them), when the current user can read private posts (the index only holds public content), until a first full reindex has filled the index (after connecting, or after changing the host, admin key or index prefix), and when the circuit breaker is open: if Meilisearch is slow or unavailable, search falls back within 2 seconds and keeps using the database for 60 seconds.
+The WordPress database answers instead of Meilisearch when the query cannot be translated, when it includes a post type that is not indexed (the Search tab and Site Health list them), when the current user can read private posts (the index only holds public content), until a full reindex has filled the index (after connecting, after changing the host, admin key, index prefix or site address, after `wp meilisearch clear`, and after adding a post type, taxonomy or custom field on the Content tab), and when the circuit breaker is open: if Meilisearch is slow or unavailable, search falls back within 2 seconds and keeps using the database for 60 seconds.
+
+Searches answered by Meilisearch do not run the database query, so restrictions that other plugins (for example some multilingual or access-control plugins) add through SQL filters such as `posts_where`, `posts_join` or `posts_clauses` do not apply to them. Return `false` from the `meilisearch_should_intercept` filter to let the database answer those searches, or keep restricted posts out of the index with the `meilisearch_should_index_post` filter.
+
+Result counts and page numbers stop at 1,000, the number of hits Meilisearch serves by default (the `pagination.maxTotalHits` index setting). If you changed that setting, return the same value from the `meilisearch_max_total_hits` filter.
 
 <Warning>
 Only one plugin can answer the search query. Disable search replacement in Relevanssi, SearchWP, ElasticPress or Jetpack Search before enabling it here.
@@ -62,13 +76,13 @@ Only one plugin can answer the search query. Disable search replacement in Relev
 
 ## WooCommerce
 
-With WooCommerce active, open **Meilisearch > WooCommerce** and enable **Index products**. Choose the global attributes to index (all by default), whether to index custom attributes and variation SKUs, then reindex.
+With WooCommerce active, open **Meilisearch > WooCommerce** and enable **Index products**. Choose the global attributes to index (all by default), whether to index custom attributes and variation SKUs, then reindex. While the products index waits for a reindex (after you add a global attribute, or change a WooCommerce tab or store setting that asks for one), product searches that filter on an attribute are answered by the database until the reindex has run; other searches keep using Meilisearch.
 
-Product search results support WooCommerce sorting (price, popularity, rating, date), the `min_price` / `max_price` filters and layered navigation attribute filters. Variations are folded into their parent product. Hidden products, and out-of-stock products when **Hide out of stock items** is enabled, are not indexed.
+Product search results support WooCommerce sorting (price, popularity, rating, date), the `min_price` / `max_price` filters and layered navigation attribute filters. The Product Filters blocks' stock status, category and tag filters apply too; searches filtered by brand or by another product taxonomy are answered by the database. Variations are folded into their parent product: the first 100 published variations of a product are indexed (disabled variations do not count). Hidden products, and out-of-stock products when **Hide out of stock items** is enabled, are not indexed.
 
 ## Autocomplete
 
-Enable **Autocomplete** on **Meilisearch > Search**. A dropdown with matching posts and products appears under existing search fields as visitors type. It follows the WAI-ARIA combobox pattern (arrow keys, Enter, Escape, screen reader announcements) and inherits your theme's colors. Pressing Enter without selecting a suggestion submits the normal search.
+Enable **Autocomplete** on **Meilisearch > Search**. A dropdown with matching posts and products appears under existing search fields as visitors type. It follows the WAI-ARIA combobox pattern (arrow keys, Enter, Escape, screen reader announcements) and inherits your theme's colors. Pressing Enter without selecting a suggestion submits the normal search. Suggestions only include indexed post types that are part of the site search (not excluded from search); when no indexed type is, the autocomplete is not loaded.
 
 <Note>
 With autocomplete on, the characters a visitor types are sent from their browser directly to your Meilisearch host (with the search-only key). Only public content is indexed.
@@ -85,9 +99,9 @@ Configure an embedder in Meilisearch first (for example in your Meilisearch Clou
 | Command | Purpose |
 |---|---|
 | `wp meilisearch status` | Version, document count vs. expected count per index, reindex status/phase/progress/deleted orphans, sync queue |
-| `wp meilisearch reindex [--index=<content\|products>] [--batch-size=<n>]` | Synchronous in-place reindex with a progress bar, followed by an orphan sweep |
+| `wp meilisearch reindex [--index=<content\|products>] [--batch-size=<n>]` | Synchronous in-place reindex with a progress bar, followed by an orphan sweep. The batch size defaults to the `meilisearch_reindex_batch_size` filter (200 unless changed) |
 | `wp meilisearch sync <id>...` | Reconcile specific posts now |
-| `wp meilisearch clear [--index=<content\|products>] [--yes]` | Delete all documents of an index |
+| `wp meilisearch clear [--index=<content\|products>] [--yes]` | Delete all documents of an index. Site search then uses the database until the next full reindex; refused while a reindex of that index runs |
 | `wp meilisearch check` | Run the Site Health checks; exits with status 1 when a check is critical |
 
 ## Multisite
@@ -96,10 +110,11 @@ Each site has its own connection settings and index prefix. On multisite, only s
 
 ## Troubleshooting
 
-- **Tools > Site Health** reports the connection and version, document count drift, missing index settings, the sync queue backlog and failed jobs, the scope of the browser search key, post types that site searches include but no index holds, and pending reindexes. `wp meilisearch check` prints the same checks.
-- **Changes do not appear in search**: sync jobs run through Action Scheduler, which relies on WP-Cron. Make sure WP-Cron runs (or call `wp-cron.php` from a server cron), and check **Tools > Scheduled Actions**, group `meilisearch`.
+- **Tools > Site Health** reports the connection and version, document count drift, missing index settings, the sync queue backlog and failed jobs, the scope of the browser search key, post types that site searches include but no index holds, and pending reindexes. `wp meilisearch check` prints the same checks. The expected document count leaves out posts the last completed reindex excluded (hidden or out-of-stock products, posts vetoed by `meilisearch_should_index_post`), and it is what the Status screen and `wp meilisearch status` show as indexable.
+- **The plugin asks for a full reindex**: this happens after the plugin was deactivated (changes are not tracked meanwhile), and when Meilisearch stayed unreachable through every sync retry (about 8.6 hours), so some changes never reached the index.
+- **Changes do not appear in search**: sync jobs run through Action Scheduler, which relies on WP-Cron. No sync job is scheduled while the site has no host or admin key. Make sure WP-Cron runs (or call `wp-cron.php` from a server cron), and check **Tools > Scheduled Actions**, group `meilisearch`. Renaming an author, or deleting a user and assigning their posts to another author, re-syncs those posts (on multisite, a renamed author's posts are updated on the current site only).
 - **Search results come from the database**: check that **Replace site search** is enabled, and look for a connection error in Site Health; after an error the plugin waits 60 seconds before using Meilisearch again.
-- **Autocomplete does not show**: it needs a verified search key. Save the Connection tab again, or paste a search-only key if your admin key cannot create keys. A pasted key is never served when it is the admin key, a key Meilisearch does not know (such as the master key) or a key that can do more than search.
+- **Autocomplete does not show**: it needs a verified search key. Save the Connection tab again, or paste a search-only key if your admin key cannot create keys. A pasted key is never served when it is the admin key or a key Meilisearch does not know (such as the master key), nor when the admin key can read its details and they allow more than search on this site's indexes. When the admin key cannot read them, the plugin only makes a partial check and serves the key with a warning that it could not be verified: make sure in Meilisearch that it only allows the `search` action on this site's indexes.
 
 ## Developer hooks
 
@@ -107,12 +122,13 @@ Each site has its own connection settings and index prefix. On multisite, only s
 |---|---|---|
 | `meilisearch_should_index_post` | filter | Veto indexing a post |
 | `meilisearch_document` | filter | Modify a document before it is sent |
-| `meilisearch_document_content` | filter | Replace how the `content` field is built |
+| `meilisearch_document_content` | filter | Replace how the `content` field is built (the result is cut to 20,000 characters) |
 | `meilisearch_index_settings` | filter | Adjust the settings the plugin requires |
 | `meilisearch_should_intercept` | filter | Veto search interception for a query |
 | `meilisearch_search_params` | filter | Modify the Meilisearch search request |
 | `meilisearch_search_timeout` | filter | Search timeout in seconds (default 2) |
-| `meilisearch_reindex_batch_size` | filter | Reindex batch size (default 200) |
+| `meilisearch_max_total_hits` | filter | Hits Meilisearch serves per index, the cap on result and page counts (default 1000, the `pagination.maxTotalHits` default) |
+| `meilisearch_reindex_batch_size` | filter | Reindex batch size, for the Reindex button and `wp meilisearch reindex` (default 200) |
 | `meilisearch_autocomplete_selector` | filter | Inputs the autocomplete attaches to |
 
 Any `WP_Query` can opt in to Meilisearch with the `'meilisearch' => true` argument; queries the plugin cannot translate still run on the database.
