@@ -31,6 +31,16 @@ final class ProductSchemaTest extends TestCase {
 		);
 	}
 
+	public function test_build_record_holds_the_document_version_and_the_attribute_fields(): void {
+		self::assertSame(
+			array(
+				'version'    => ProductSchema::DOCUMENT_VERSION,
+				'attributes' => array( 'attr_color' ),
+			),
+			$this->schema( array( 'pa_color' ) )->build_record()
+		);
+	}
+
 	public function test_null_attributes_means_every_attribute_taxonomy(): void {
 		Functions\when( 'wc_get_attribute_taxonomy_names' )->justReturn( array( 'pa_color', 'pa_size' ) );
 

@@ -189,7 +189,13 @@ final class ProductSyncTest extends TestCase {
 		self::assertFalse( $options->needs_reindex( 'products' ), 'The running reindex records the new version.' );
 
 		$options->set_reindex_state( 'products', array( 'status' => 'done' ) );
-		$options->set_state( 'products_build', ( new ProductSchema( $options ) )->build_record() );
+		$options->set_state(
+			'products_build',
+			array(
+				'version'    => ProductSchema::DOCUMENT_VERSION,
+				'attributes' => array(),
+			)
+		);
 		$this->sync->flag_outdated_index();
 		self::assertFalse( $options->needs_reindex( 'products' ), 'Current version.' );
 	}

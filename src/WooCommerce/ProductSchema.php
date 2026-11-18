@@ -86,10 +86,13 @@ final class ProductSchema implements Schema {
 	 * such a run completes (Options state `products_build`); ProductQueryTranslator only relies on
 	 * fields the last completed run wrote.
 	 *
-	 * @return array{version: int}
+	 * @return array{version: int, attributes: list<string>}
 	 */
 	public function build_record(): array {
-		return array( 'version' => self::DOCUMENT_VERSION );
+		return array(
+			'version'    => self::DOCUMENT_VERSION,
+			'attributes' => $this->attribute_fields(),
+		);
 	}
 
 	/**

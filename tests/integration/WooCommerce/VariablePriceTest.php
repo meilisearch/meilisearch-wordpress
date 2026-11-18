@@ -217,6 +217,8 @@ final class VariablePriceTest extends TestCase {
 	 * is kept until a products reindex has rewritten every document.
 	 */
 	public function test_an_index_not_reindexed_since_price_max_keeps_the_minimum_price_translation(): void {
+		// The last completed products reindex predates price_max: it recorded no build.
+		Plugin::instance()->get( 'options' )->set_state( 'products_build', null );
 		$this->sync_products();
 		// What documents written before price_max existed look like.
 		$uid = Plugin::instance()->get( 'names' )->uid( 'products' );

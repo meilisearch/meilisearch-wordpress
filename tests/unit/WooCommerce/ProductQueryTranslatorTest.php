@@ -42,6 +42,14 @@ final class ProductQueryTranslatorTest extends TestCase {
 		$this->saved_get = $_GET; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$_GET            = array();
 		$this->stub_options( array( Options::WOOCOMMERCE => array( 'attributes' => array( 'pa_color' ) ) ) );
+		// A completed products reindex wrote the current fields into every document.
+		( new Options() )->set_state(
+			'products_build',
+			array(
+				'version'    => 2,
+				'attributes' => array( 'attr_color' ),
+			)
+		);
 
 		$find = static function ( string $taxonomy, int $column, $value ): ?\WP_Term {
 			foreach ( self::TERMS[ $taxonomy ] ?? array() as $row ) {
@@ -157,7 +165,7 @@ final class ProductQueryTranslatorTest extends TestCase {
 			'menu order'       => array( 'menu_order title', 'ASC', array(), $wc ),
 			'empty array'      => array( array(), '', array() ),
 			'price asc'        => array( 'price', 'ASC', array( 'price:asc' ), $wc ),
-			'price desc'       => array( 'price', 'DESC', array( 'price:desc' ), $wc ),
+			'price desc'       => array( 'price', 'DESC', array( 'price_max:desc' ), $wc ),
 			'popularity'       => array( 'popularity', 'DESC', array( 'total_sales:desc' ), $wc ),
 			'rating'           => array( 'rating', 'ASC', array( 'rating_average:desc' ), $wc ),
 			'date (WC)'        => array( 'date ID', 'DESC', array( 'date:desc' ), $wc ),
@@ -367,6 +375,33 @@ final class ProductQueryTranslatorTest extends TestCase {
 		self::assertNull( $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) ) );
 	}
 
+	/**
+	 * pa_size was selected and the products reindex has started (which clears the flag), but the last
+	 * completed run did not write attr_size: until the running one completes, only some documents have it.
+	 */
+	public function test_attribute_the_last_completed_reindex_did_not_write_is_not_translated(): void {
+		$this->option_store[ Options::WOOCOMMERCE ]['attributes'] = array( 'pa_color', 'pa_size' );
+		( new Options() )->set_reindex_state( 'products', array( 'status' => 'running' ) );
+
+		self::assertNull( $this->translator()->constraints( $this->query( array(), array( $this->clause( 'pa_size', array( 'xl' ), 'IN', 'slug' ) ) ) ) );
+		$_GET = array( 'filter_size' => 'xl' );
+		self::assertNull( $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) ) );
+
+		$_GET   = array( 'filter_color' => 'red' );
+		$result = $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) );
+		self::assertSame( array( FilterBuilder::compare( 'attr_color', '=', 'Red' ) ), $result['filters'] ?? null, 'attr_color was written.' );
+	}
+
+	/**
+	 * An index filled before completed runs recorded what they wrote: which attributes its documents have is
+	 * unknown (and it is flagged for a reindex), so attribute filters are answered by the database.
+	 */
+	public function test_attributes_are_not_translated_without_a_recorded_build(): void {
+		( new Options() )->set_state( 'products_build', null );
+
+		self::assertNull( $this->translator()->constraints( $this->query( array(), array( $this->clause( 'pa_color', array( 'red' ), 'IN', 'slug' ) ) ) ) );
+	}
+
 	public function test_non_attribute_filters_are_still_translated_while_a_products_reindex_is_pending(): void {
 		( new Options() )->flag_reindex( 'products', true );
 		$_GET = array( 'min_price' => '10' );
@@ -378,22 +413,13 @@ final class ProductQueryTranslatorTest extends TestCase {
 		self::assertSame(
 			array(
 				FilterBuilder::compare( 'featured', '=', true ),
-				FilterBuilder::compare( 'price', '>=', 10.0 ),
+				FilterBuilder::compare( 'price_max', '>=', 10.0 ),
 			),
 			$result['filters'] ?? null
 		);
 	}
 
-	/**
-	 * The last completed products reindex wrote price_max into every document.
-	 */
-	private function record_price_max_build(): void {
-		( new Options() )->set_state( 'products_build', array( 'version' => 2 ) );
-	}
-
 	public function test_price_range_overlaps_the_product_price_range(): void {
-		$this->record_price_max_build();
-
 		$_GET   = array(
 			'min_price' => '10',
 			'max_price' => '50.5',
@@ -411,7 +437,6 @@ final class ProductQueryTranslatorTest extends TestCase {
 	}
 
 	public function test_price_descending_sorts_by_the_highest_price(): void {
-		$this->record_price_max_build();
 		$query = $this->query(
 			array(
 				'orderby'  => 'price',
@@ -453,6 +478,7 @@ final class ProductQueryTranslatorTest extends TestCase {
 	}
 
 	public function test_price_range_on_an_index_without_price_max(): void {
+		( new Options() )->set_state( 'products_build', null );
 		$_GET   = array(
 			'min_price' => '10',
 			'max_price' => '50.5',

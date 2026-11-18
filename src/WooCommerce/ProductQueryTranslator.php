@@ -185,16 +185,24 @@ final class ProductQueryTranslator implements ProductTranslator {
 	 * attribute is unknown to Meilisearch (`invalid_search_filter`, which opens the circuit
 	 * breaker) or missing from existing documents (incomplete results). While a products reindex
 	 * is pending, attribute fields are left out, so attribute filters fall back to MySQL.
+	 * The run clears that flag when it starts, not once it has rewritten every document: an
+	 * attribute the last completed products reindex did not write (ProductSchema::build_record())
+	 * stays left out until the running one completes.
 	 *
 	 * @return list<string>
 	 */
 	private function filterable(): array {
 		$schema     = new ProductSchema( $this->options );
 		$filterable = $schema->filterable();
-		if ( ! $this->options->needs_reindex( 'products' ) ) {
-			return $filterable;
+		$attributes = $schema->attribute_fields();
+		if ( $this->options->needs_reindex( 'products' ) ) {
+			return array_values( array_diff( $filterable, $attributes ) );
 		}
-		return array_values( array_diff( $filterable, $schema->attribute_fields() ) );
+		// No record: the index was filled before completed runs recorded their build, and it is flagged for
+		// a reindex (ProductSync::flag_outdated_index()); nothing tells which attributes its documents have.
+		$build = $this->options->state( 'products_build' );
+		$built = is_array( $build ) && isset( $build['attributes'] ) && is_array( $build['attributes'] ) ? $build['attributes'] : array();
+		return array_values( array_diff( $filterable, array_diff( $attributes, $built ) ) );
 	}
 
 	/**
