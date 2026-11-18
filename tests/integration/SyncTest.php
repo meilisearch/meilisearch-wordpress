@@ -103,6 +103,23 @@ final class SyncTest extends TestCase {
 	}
 
 	/**
+	 * Sorted tax_category_ids of a post's document.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return list<int>
+	 */
+	private function term_ids_of( int $post_id ): array {
+		foreach ( $this->index_documents( $this->uid ) as $document ) {
+			if ( (int) $document['id'] === $post_id ) {
+				$ids = array_map( 'intval', $document['tax_category_ids'] );
+				sort( $ids );
+				return $ids;
+			}
+		}
+		$this->fail( sprintf( 'Post %d has no document.', $post_id ) );
+	}
+
+	/**
 	 * Publishing a post indexes it.
 	 */
 	public function test_published_post_is_indexed(): void {
@@ -211,6 +228,37 @@ final class SyncTest extends TestCase {
 		$this->sync();
 
 		$this->assertSame( array( 'Beta' ), $this->index_documents( $this->uid )[0]['tax_category'] );
+	}
+
+	/**
+	 * Deleting a parent term re-parents its children with a direct UPDATE (no edited_term): the posts
+	 * of the child terms lose the deleted ancestor from their ancestor-inclusive IDs.
+	 */
+	public function test_parent_term_delete_resyncs_posts_of_child_terms(): void {
+		$parent        = self::factory()->category->create( array( 'name' => 'Clothing' ) );
+		$child         = self::factory()->category->create(
+			array(
+				'name'   => 'Shirts',
+				'parent' => $parent,
+			)
+		);
+		$grandchild    = self::factory()->category->create(
+			array(
+				'name'   => 'Polos',
+				'parent' => $child,
+			)
+		);
+		$in_child      = self::factory()->post->create( array( 'post_category' => array( $child ) ) );
+		$in_grandchild = self::factory()->post->create( array( 'post_category' => array( $grandchild ) ) );
+		$this->sync();
+		$this->assertSame( array( $parent, $child ), $this->term_ids_of( $in_child ) );
+		$this->assertSame( array( $parent, $child, $grandchild ), $this->term_ids_of( $in_grandchild ) );
+
+		wp_delete_term( $parent, 'category' );
+		$this->sync();
+
+		$this->assertSame( array( $child ), $this->term_ids_of( $in_child ) );
+		$this->assertSame( array( $child, $grandchild ), $this->term_ids_of( $in_grandchild ) );
 	}
 
 	/**

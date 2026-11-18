@@ -15,7 +15,8 @@ use Meilisearch\WordPress\Registrable;
 use Meilisearch\WordPress\Settings\Options;
 
 /**
- * Hooks: edited_term → Queue::SYNC_TERM {taxonomy, term_id, page}; delete_term → collector.
+ * Hooks: edited_term → Queue::SYNC_TERM {taxonomy, term_id, page}; delete_term → collector;
+ * pre_delete_term → Queue::SYNC_TERM for each direct child of the term about to be deleted.
  * The handler pages through the term's objects (and those of its descendants, whose
  * ancestor-inclusive *_ids fields change when a term is re-parented) PAGE at a time.
  */
@@ -41,6 +42,7 @@ final class TermJob implements Registrable {
 	 */
 	public function register(): void {
 		add_action( 'edited_term', array( $this, 'on_edited_term' ), 10, 3 );
+		add_action( 'pre_delete_term', array( $this, 'on_pre_delete_term' ), 10, 2 );
 		add_action( 'delete_term', array( $this, 'on_delete_term' ), 10, 5 );
 		add_action( Queue::SYNC_TERM, array( $this, 'handle' ), 10, 1 );
 	}
@@ -65,6 +67,37 @@ final class TermJob implements Registrable {
 				'page'     => 0,
 			)
 		);
+	}
+
+	/**
+	 * Callback for pre_delete_term( int $term, string $taxonomy ). wp_delete_term() moves the children
+	 * of the term to its parent with a direct UPDATE, so edited_term never fires for them although the
+	 * ancestors of their posts change. The children are still attached here: a term sync is scheduled
+	 * for each one, and runs after the deletion, when the hierarchy is the new one.
+	 *
+	 * @param mixed $term     Term ID.
+	 * @param mixed $taxonomy Taxonomy slug.
+	 */
+	public function on_pre_delete_term( mixed $term, mixed $taxonomy ): void {
+		$term_id = (int) $term;
+		if ( $term_id <= 0 || ! is_string( $taxonomy ) || ! $this->is_tracked( $taxonomy ) || ! is_taxonomy_hierarchical( $taxonomy ) ) {
+			return;
+		}
+		$children = get_terms(
+			array(
+				'taxonomy'   => $taxonomy,
+				'parent'     => $term_id,
+				'hide_empty' => false,
+				'fields'     => 'ids',
+			)
+		);
+		if ( ! is_array( $children ) ) {
+			return;
+		}
+		foreach ( $children as $child ) {
+			// The handler includes the descendants of each child.
+			$this->on_edited_term( $child, 0, $taxonomy );
+		}
 	}
 
 	/**

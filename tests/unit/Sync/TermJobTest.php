@@ -89,11 +89,12 @@ final class TermJobTest extends TestCase {
 	 */
 	public function test_register_attaches_hooks(): void {
 		Actions\expectAdded( 'edited_term' )->once()->with( array( $this->job, 'on_edited_term' ), 10, 3 );
+		Actions\expectAdded( 'pre_delete_term' )->once()->with( array( $this->job, 'on_pre_delete_term' ), 10, 2 );
 		Actions\expectAdded( 'delete_term' )->once()->with( array( $this->job, 'on_delete_term' ), 10, 5 );
 		Actions\expectAdded( Queue::SYNC_TERM )->once()->with( array( $this->job, 'handle' ), 10, 1 );
 
 		$this->job->register();
-		$this->addToAssertionCount( 3 );
+		$this->addToAssertionCount( 4 );
 	}
 
 	/**
@@ -125,6 +126,62 @@ final class TermJobTest extends TestCase {
 		$this->job->on_edited_term( 8, 80, 'product_cat' );
 		$this->job->on_edited_term( 9, 90, 'pa_color' );
 		$this->job->on_edited_term( 0, 0, 'category' );
+
+		$this->assertSame( array(), $this->scheduled );
+	}
+
+	/**
+	 * Before a term of a tracked hierarchical taxonomy is deleted, a term sync is scheduled for each
+	 * direct child: WordPress re-parents them without firing edited_term.
+	 */
+	public function test_pre_delete_term_schedules_a_sync_of_each_direct_child(): void {
+		Functions\when( 'is_taxonomy_hierarchical' )->justReturn( true );
+		Functions\expect( 'get_terms' )
+			->once()
+			->with(
+				array(
+					'taxonomy'   => 'category',
+					'parent'     => 7,
+					'hide_empty' => false,
+					'fields'     => 'ids',
+				)
+			)
+			->andReturn( array( '8', 9 ) );
+
+		$this->job->on_pre_delete_term( '7', 'category' );
+
+		$this->assertSame(
+			array(
+				array(
+					'taxonomy' => 'category',
+					'term_id'  => 8,
+					'page'     => 0,
+				),
+				array(
+					'taxonomy' => 'category',
+					'term_id'  => 9,
+					'page'     => 0,
+				),
+			),
+			$this->payloads( Queue::SYNC_TERM )
+		);
+	}
+
+	/**
+	 * Flat or untracked taxonomies, invalid terms and a failed child lookup schedule nothing.
+	 */
+	public function test_pre_delete_term_ignores_flat_and_untracked_taxonomies(): void {
+		Functions\when( 'is_taxonomy_hierarchical' )->alias( fn ( $taxonomy ) => 'post_tag' !== $taxonomy );
+		Functions\when( 'get_terms' )->alias(
+			fn ( $args ) => 'category' === $args['taxonomy'] ? new \WP_Error( 'invalid_taxonomy', 'Invalid taxonomy.' ) : array( 8 )
+		);
+		$this->option_store[ Options::CONTENT ]['taxonomies'] = array( 'post' => array( 'category', 'post_tag' ) );
+
+		$this->job->on_pre_delete_term( 7, 'post_tag' );
+		$this->job->on_pre_delete_term( 7, 'nav_menu' );
+		$this->job->on_pre_delete_term( 7, 'product_cat' );
+		$this->job->on_pre_delete_term( 0, 'category' );
+		$this->job->on_pre_delete_term( 7, 'category' );
 
 		$this->assertSame( array(), $this->scheduled );
 	}

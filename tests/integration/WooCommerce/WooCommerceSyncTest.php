@@ -146,6 +146,22 @@ final class WooCommerceSyncTest extends TestCase {
 		$this->assertSame( array( 'T-shirts' ), $this->product_document( $product->get_id() )['tax_product_cat'] );
 	}
 
+	public function test_parent_category_delete_resyncs_the_products_of_its_child_categories(): void {
+		$parent  = wp_insert_term( 'Clothing', 'product_cat' );
+		$child   = wp_insert_term( 'Shirts', 'product_cat', array( 'parent' => (int) $parent['term_id'] ) );
+		$product = $this->create_simple_product( 'Meili Child Category Shirt', '12', array( 'category_ids' => array( (int) $child['term_id'] ) ) );
+		$this->sync_products();
+		$this->assertContains( 'Clothing', $this->product_document( $product->get_id() )['tax_product_cat'] );
+
+		wp_delete_term( (int) $parent['term_id'], 'product_cat' );
+		$this->sync_products();
+
+		$document = $this->product_document( $product->get_id() );
+		$this->assertSame( array( 'Shirts' ), $document['tax_product_cat'] );
+		$this->assertSame( array( (int) $child['term_id'] ), $document['tax_product_cat_ids'] );
+		$this->assertSame( array( 'lvl0' => array( 'Shirts' ) ), $document['categories'] );
+	}
+
 	public function test_scheduled_sale_start_resyncs_the_product(): void {
 		$product = $this->create_simple_product(
 			'Meili Sale Tee',
