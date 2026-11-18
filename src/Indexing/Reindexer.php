@@ -866,11 +866,12 @@ final class Reindexer implements Registrable {
 	}
 
 	/**
-	 * Batch size from the meilisearch_reindex_batch_size filter, clamped to 1..MAX_BATCH.
+	 * Batch size from the meilisearch_reindex_batch_size filter, clamped to 1..MAX_BATCH. Used by
+	 * background runs and as the default of `wp meilisearch reindex` (--batch-size overrides it).
 	 *
 	 * @return int
 	 */
-	private function batch_size(): int {
+	public function batch_size(): int {
 		$size = (int) apply_filters( 'meilisearch_reindex_batch_size', self::DEFAULT_BATCH );
 		return max( 1, min( self::MAX_BATCH, $size ) );
 	}

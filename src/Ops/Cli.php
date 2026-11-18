@@ -217,7 +217,7 @@ final class Cli {
 	 * ---
 	 *
 	 * [--batch-size=<n>]
-	 * : Posts sent per request. Default 200.
+	 * : Posts sent per request. Defaults to the meilisearch_reindex_batch_size filter (200 unless a site changes it).
 	 *
 	 * ## EXAMPLES
 	 *
@@ -230,7 +230,7 @@ final class Cli {
 	public function reindex( array $args, array $assoc_args ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- WP-CLI always passes both arrays.
 		$this->require_configured();
 		$logicals   = $this->logicals_from( $assoc_args );
-		$batch_size = isset( $assoc_args['batch-size'] ) ? (int) $assoc_args['batch-size'] : Reindexer::DEFAULT_BATCH;
+		$batch_size = isset( $assoc_args['batch-size'] ) ? (int) $assoc_args['batch-size'] : $this->reindexer->batch_size();
 		if ( $batch_size < 1 ) {
 			$this->fail( '--batch-size must be a positive integer.' );
 		}
