@@ -213,10 +213,13 @@ final class SiteHealth implements Registrable {
 	}
 
 	/**
-	 * Compares document counts with what WordPress expects.
+	 * Compares document counts with what WordPress expects. 'indexable' is the SQL candidate count, an
+	 * upper bound; 'excluded' is how many candidates the last completed reindex left out (hidden or
+	 * out-of-stock products, posts vetoed by meilisearch_should_index_post). The index is in sync when
+	 * it holds between indexable - excluded and indexable documents, within DRIFT_THRESHOLD.
 	 *
-	 * @param array<string, array{uid: string, documents: ?int, indexable: int}> $counts Logical index => counts.
-	 * @param string                                                             $status_url URL of the Status tab.
+	 * @param array<string, array{uid: string, documents: ?int, indexable: int, excluded?: int}> $counts Logical index => counts.
+	 * @param string                                                                             $status_url URL of the Status tab.
 	 * @return Result
 	 */
 	public static function evaluate_documents( array $counts, string $status_url ): array {
@@ -230,16 +233,19 @@ final class SiteHealth implements Registrable {
 				);
 				continue;
 			}
-			if ( self::drift_ratio( $count['documents'], $count['indexable'] ) > self::DRIFT_THRESHOLD ) {
+			// The nearest bound of [indexable - excluded, indexable]; the document count itself when inside.
+			$lower    = max( 0, $count['indexable'] - max( 0, $count['excluded'] ?? 0 ) );
+			$expected = max( $lower, min( $count['indexable'], $count['documents'] ) );
+			if ( self::drift_ratio( $count['documents'], $expected ) > self::DRIFT_THRESHOLD ) {
 				$problems[] = sprintf(
 					/* translators: 1: index UID, 2: number of documents in Meilisearch, 3: number of searchable items in WordPress. */
 					__( '%1$s holds %2$d documents but WordPress has %3$d searchable items.', 'meilisearch' ),
 					$count['uid'],
 					$count['documents'],
-					$count['indexable']
+					$expected
 				);
 			}
-		}
+		}//end foreach
 
 		if ( array() === $problems ) {
 			return self::make(
@@ -620,7 +626,7 @@ final class SiteHealth implements Registrable {
 	/**
 	 * Counts documents in Meilisearch and indexable items in WordPress.
 	 *
-	 * @return array<string, array{uid: string, documents: ?int, indexable: int}>
+	 * @return array<string, array{uid: string, documents: ?int, indexable: int, excluded: int}>
 	 * @throws ApiError On errors other than a missing index.
 	 */
 	private function document_counts(): array {
@@ -641,6 +647,7 @@ final class SiteHealth implements Registrable {
 				'uid'       => $uid,
 				'documents' => $documents,
 				'indexable' => $this->reindexer->count_indexable( $logical ),
+				'excluded'  => $this->reindexer->excluded_count( $logical ),
 			);
 		}
 

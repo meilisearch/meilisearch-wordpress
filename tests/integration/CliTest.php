@@ -291,6 +291,31 @@ final class CliTest extends TestCase {
 		self::assertStringContainsString( 'Reindexed', $this->messages( 'success' )[0] ?? '' );
 	}
 
+	public function test_reindex_with_vetoed_posts_completes_the_bar_and_status_shows_the_expected_count(): void {
+		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
+		$vetoed = self::factory()->post->create_many( 2, array( 'post_status' => 'publish' ) );
+		add_filter(
+			'meilisearch_should_index_post',
+			static fn ( $index, $post ) => in_array( (int) $post->ID, $vetoed, true ) ? false : $index,
+			10,
+			2
+		);
+		$candidates = $this->service( 'reindexer', Reindexer::class )->count_indexable( 'content' );
+
+		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+
+		$bar = WP_CLI::$bars[0] ?? null;
+		self::assertInstanceOf( ShimProgressBar::class, $bar );
+		self::assertSame( $candidates, $bar->ticks, 'Every candidate post was scanned, so the bar reaches its total.' );
+		self::assertStringContainsString( ( $candidates - 2 ) . ' document(s) sent', $this->messages( 'success' )[0] ?? '' );
+
+		WP_CLI::reset();
+		$this->cli()->status( array(), array( 'format' => 'json' ) );
+		$row = array_column( WP_CLI::$items[0]['items'], null, 'index' )['content'];
+		self::assertSame( (string) ( $candidates - 2 ), $row['indexable'] );
+		self::assertSame( (string) ( $candidates - 2 ), $row['documents'] );
+	}
+
 	public function test_reindex_rejects_an_unknown_index(): void {
 		$this->expect_exit( fn () => $this->cli()->reindex( array(), array( 'index' => 'orders' ) ), 1 );
 

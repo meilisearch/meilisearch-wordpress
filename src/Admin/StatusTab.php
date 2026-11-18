@@ -181,7 +181,7 @@ final class StatusTab implements Tab, Registrable {
 				echo ' <span class="meilisearch-badge">' . esc_html__( 'Reindex needed', 'meilisearch' ) . '</span>';
 			}
 			echo '</th>';
-			echo '<td>' . esc_html( number_format_i18n( $this->reindexer->count_indexable( $logical ) ) ) . '</td>';
+			echo '<td>' . esc_html( number_format_i18n( $this->reindexer->estimated_indexable( $logical ) ) ) . '</td>';
 			echo '<td>' . esc_html( $this->document_count( $client, $uid ) ) . '</td>';
 			echo '<td><button type="button" class="button" data-meilisearch-action="reindex" data-meilisearch-index="' . esc_attr( $logical ) . '"';
 			echo ( $active || null === $client ) ? ' disabled' : '';

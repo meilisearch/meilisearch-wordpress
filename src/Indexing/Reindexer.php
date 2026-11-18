@@ -254,7 +254,8 @@ final class Reindexer implements Registrable {
 	 *
 	 * @param string   $logical    'content' or 'products'.
 	 * @param int      $batch_size Posts per batch (1..MAX_BATCH).
-	 * @param callable $progress   Called as $progress( int $sent, int $total ).
+	 * @param callable $progress   Called as $progress( int $sent, int $total, int $scanned ): documents sent and
+	 *                             candidate posts scanned so far, out of $total candidates.
 	 * @throws \RuntimeException When the run is superseded or fails.
 	 * @throws ApiError 'task_timeout' when Meilisearch does not finish within CLI_TASK_TIMEOUT.
 	 * @throws \Throwable Any other error, after marking the run failed.
@@ -266,7 +267,7 @@ final class Reindexer implements Registrable {
 		$deadline   = 0;
 
 		try {
-			$progress( 0, (int) $state['total'] );
+			$progress( 0, (int) $state['total'], 0 );
 			while ( self::is_active( $state ) ) {
 				$current = $this->status( $logical );
 				if ( null === $current || ( $current['run'] ?? '' ) !== $run ) {
@@ -288,7 +289,7 @@ final class Reindexer implements Registrable {
 					wp_cache_flush_runtime();
 				}
 				if ( $was_upsert ) {
-					$progress( (int) $state['sent'], (int) $state['total'] );
+					$progress( (int) $state['sent'], (int) $state['total'], (int) ( $state['scanned'] ?? 0 ) );
 				} elseif ( self::is_active( $state ) && self::is_waiting( $state ) ) {
 					usleep( 500000 );
 				}
@@ -389,7 +390,8 @@ final class Reindexer implements Registrable {
 
 	/**
 	 * Number of candidate posts (published, no password, indexed type). An upper bound: the
-	 * PHP-side rule (product visibility, meilisearch_should_index_post) is not applied here.
+	 * PHP-side rule (product visibility, meilisearch_should_index_post) is not applied here;
+	 * estimated_indexable() subtracts what the last completed run excluded.
 	 *
 	 * @param string $logical 'content' or 'products'.
 	 * @return int
@@ -410,6 +412,30 @@ final class Reindexer implements Registrable {
 		);
 		// phpcs:enable
 		return (int) $count;
+	}
+
+	/**
+	 * Candidate posts the last completed run did not send: excluded by the PHP-side rule (product
+	 * visibility, out-of-stock products the store hides, meilisearch_should_index_post) or skipped
+	 * because their document could not be built. 0 when no run has completed yet.
+	 *
+	 * @param string $logical 'content' or 'products'.
+	 * @return int
+	 */
+	public function excluded_count( string $logical ): int {
+		$state = $this->status( $logical );
+		return null !== $state ? max( 0, (int) ( $state['excluded'] ?? 0 ) ) : 0;
+	}
+
+	/**
+	 * Estimated number of documents a full reindex would send: the candidate count minus the
+	 * candidates the last completed run excluded.
+	 *
+	 * @param string $logical 'content' or 'products'.
+	 * @return int
+	 */
+	public function estimated_indexable( string $logical ): int {
+		return max( 0, $this->count_indexable( $logical ) - $this->excluded_count( $logical ) );
 	}
 
 	/**
@@ -437,8 +463,11 @@ final class Reindexer implements Registrable {
 			'phase'      => 'upsert',
 			'last_id'    => 0,
 			'sent'       => 0,
+			'scanned'    => 0,
 			'deleted'    => 0,
 			'total'      => $this->count_indexable( $logical ),
+			// What the last completed run excluded, kept until this run completes (see excluded_count()).
+			'excluded'   => $this->excluded_count( $logical ),
 			'task_uids'  => array(),
 			'started_at' => time(),
 			'updated_at' => time(),
@@ -520,6 +549,7 @@ final class Reindexer implements Registrable {
 			$state['task_uids'][] = $client->add_documents( $this->names->uid( $logical ), $documents )->uid;
 		}
 		$state['sent']    = (int) $state['sent'] + count( $documents );
+		$state['scanned'] = (int) ( $state['scanned'] ?? 0 ) + $scan['scanned'];
 		$state['last_id'] = $scan['last_scanned'];
 		if ( $scan['exhausted'] ) {
 			$state['phase']   = 'sweep';
@@ -610,9 +640,10 @@ final class Reindexer implements Registrable {
 			return $this->save( $logical, $state );
 		}
 
-		$state['status'] = 'done';
-		$state['error']  = '';
-		$state           = $this->save( $logical, $state );
+		$state['status']   = 'done';
+		$state['error']    = '';
+		$state['excluded'] = max( 0, (int) ( $state['scanned'] ?? 0 ) - (int) $state['sent'] );
+		$state             = $this->save( $logical, $state );
 		$this->options->set_state( 'first_reindex_done', true );
 		$this->options->set_populated( $logical, true );
 		return $state;
@@ -718,7 +749,7 @@ final class Reindexer implements Registrable {
 	 * @param string $logical Logical index.
 	 * @param int    $last_id Cursor.
 	 * @param int    $limit   Rows to scan.
-	 * @return array{ids: list<int>, last_scanned: int, exhausted: bool}
+	 * @return array{ids: list<int>, last_scanned: int, exhausted: bool, scanned: int}
 	 * @throws DatabaseReadError When the scan query failed (it must not be read as "no posts left").
 	 */
 	private function scan( string $logical, int $last_id, int $limit ): array {
@@ -729,6 +760,7 @@ final class Reindexer implements Registrable {
 				'ids'          => array(),
 				'last_scanned' => $last_id,
 				'exhausted'    => true,
+				'scanned'      => 0,
 			);
 		}
 
@@ -746,6 +778,7 @@ final class Reindexer implements Registrable {
 				'ids'          => array(),
 				'last_scanned' => $last_id,
 				'exhausted'    => true,
+				'scanned'      => 0,
 			);
 		}
 
@@ -764,6 +797,7 @@ final class Reindexer implements Registrable {
 			'ids'          => $ids,
 			'last_scanned' => max( $rows ),
 			'exhausted'    => count( $rows ) < $limit,
+			'scanned'      => count( $rows ),
 		);
 	}
 
