@@ -73,13 +73,13 @@ final class ContentDocumentBuilder implements DocumentBuilder {
 		/**
 		 * Filters the indexed content text (e.g. to use `the_content` on page-builder sites).
 		 *
-		 * The result is cleaned again and truncated.
+		 * The result is cleaned again and truncated (see meilisearch_document_content_length).
 		 *
 		 * @param string   $content Cleaned plain text.
 		 * @param \WP_Post $post    Source post.
 		 */
 		$content = apply_filters( 'meilisearch_document_content', $content, $post );
-		$content = mb_substr( self::clean_text( is_string( $content ) ? $content : '' ), 0, self::MAX_CONTENT_LENGTH );
+		$content = mb_substr( self::clean_text( is_string( $content ) ? $content : '' ), 0, self::content_length( $post ) );
 
 		$excerpt = self::clean_text( (string) $post->post_excerpt );
 		if ( '' === $excerpt ) {
@@ -103,6 +103,29 @@ final class ContentDocumentBuilder implements DocumentBuilder {
 			'author_name'   => self::clean_text( (string) get_the_author_meta( 'display_name', $author_id ) ),
 			'thumbnail_url' => is_string( $thumbnail ) && '' !== $thumbnail ? $thumbnail : null,
 		);
+	}
+
+	/**
+	 * Maximum number of characters of cleaned content indexed for a post (products included).
+	 *
+	 * @param \WP_Post $post Post.
+	 * @return int
+	 */
+	private static function content_length( \WP_Post $post ): int {
+		/**
+		 * Filters the maximum number of characters of cleaned content indexed per post or product.
+		 *
+		 * Text past the limit is not searchable. A value that is not a positive number restores the
+		 * default: Meilisearch only indexes the first 65,535 words of an attribute anyway, so there is
+		 * no "unlimited" setting.
+		 *
+		 * @param int      $length Maximum characters. Default 20000.
+		 * @param \WP_Post $post   Source post.
+		 */
+		$length = apply_filters( 'meilisearch_document_content_length', self::MAX_CONTENT_LENGTH, $post );
+		$length = is_int( $length ) || is_float( $length ) || ( is_string( $length ) && is_numeric( $length ) ) ? (int) $length : 0;
+
+		return $length > 0 ? $length : self::MAX_CONTENT_LENGTH;
 	}
 
 	/**

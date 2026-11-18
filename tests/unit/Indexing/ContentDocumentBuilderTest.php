@@ -182,6 +182,44 @@ final class ContentDocumentBuilderTest extends TestCase {
 		$this->assertSame( 20000, mb_strlen( $doc['content'] ) );
 	}
 
+	public function test_content_length_filter_receives_the_default_and_the_post(): void {
+		$post = $this->post( array( 'post_content' => str_repeat( 'é', 25000 ) ) );
+		Filters\expectApplied( 'meilisearch_document_content_length' )->once()->with( 20000, $post )->andReturn( 30000 );
+
+		$this->assertSame( 25000, mb_strlen( $this->builder()->core_fields( $post )['content'] ) );
+	}
+
+	/**
+	 * @dataProvider content_lengths
+	 *
+	 * @param mixed $filtered Filter result.
+	 * @param int   $expected Indexed characters.
+	 */
+	public function test_content_length_filter_result_is_sanitized( mixed $filtered, int $expected ): void {
+		Filters\expectApplied( 'meilisearch_document_content_length' )->once()->andReturn( $filtered );
+
+		$doc = $this->builder()->core_fields( $this->post( array( 'post_content' => str_repeat( 'é', 25000 ) ) ) );
+
+		$this->assertSame( $expected, mb_strlen( $doc['content'] ) );
+	}
+
+	/**
+	 * Filter result => indexed characters of a 25,000-character content.
+	 *
+	 * @return array<string, array{0: mixed, 1: int}>
+	 */
+	public static function content_lengths(): array {
+		return array(
+			'lower'          => array( 100, 100 ),
+			'numeric string' => array( '500', 500 ),
+			'float'          => array( 150.9, 150 ),
+			'zero'           => array( 0, 20000 ),
+			'negative'       => array( -1, 20000 ),
+			'not a number'   => array( 'all', 20000 ),
+			'null'           => array( null, 20000 ),
+		);
+	}
+
 	public function test_content_filter_output_is_cleaned(): void {
 		$post = $this->post();
 		Filters\expectApplied( 'meilisearch_document_content' )->once()->with( 'First paragraph.', $post )->andReturn( '<div>Rendered   by builder</div>' );

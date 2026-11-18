@@ -572,4 +572,90 @@ final class SearchTest extends TestCase {
 			self::assertSame( array( $expected ), array_map( 'intval', wp_list_pluck( $meili->posts, 'ID' ) ), (string) $zip );
 		}
 	}
+
+	/**
+	 * Documents hold only the first value of a meta key and leave out empty values, so the comparisons
+	 * whose answer depends on the other rows or on empty values (!=, NOT IN, NOT EXISTS, = '') are
+	 * answered by MySQL, with the same results as without Meilisearch.
+	 */
+	public function test_meta_comparisons_affected_by_empty_or_multi_row_meta_match_mysql(): void {
+		update_option(
+			Options::CONTENT,
+			array(
+				'post_types' => array( 'post', 'page' ),
+				'taxonomies' => array( 'post' => array( 'category' ) ),
+				'meta_keys'  => array( 'post' => array( 'rating', 'color' ) ),
+			)
+		);
+		update_post_meta( $this->matching[0], 'rating', '' );
+		add_post_meta( $this->matching[1], 'color', 'red' );
+		add_post_meta( $this->matching[1], 'color', 'blue' );
+		update_post_meta( $this->matching[2], 'color', 'red' );
+		update_post_meta( $this->matching[3], 'rating', '5' );
+		$plugin = Plugin::instance();
+		$plugin->get( 'index_manager' )->ensure_all();
+		$plugin->get( 'reindexer' )->run_sync(
+			'content',
+			200,
+			static function (): void {}
+		);
+
+		$cases       = array(
+			'rating != 3'        => array(
+				'key'     => 'rating',
+				'value'   => '3',
+				'compare' => '!=',
+			),
+			'rating NOT IN 3, 4' => array(
+				'key'     => 'rating',
+				'value'   => array( '3', '4' ),
+				'compare' => 'NOT IN',
+			),
+			'rating NOT EXISTS'  => array(
+				'key'     => 'rating',
+				'compare' => 'NOT EXISTS',
+			),
+			'rating = empty'     => array(
+				'key'   => 'rating',
+				'value' => '',
+			),
+			'color != red'       => array(
+				'key'     => 'color',
+				'value'   => 'red',
+				'compare' => '!=',
+			),
+			'color NOT IN red'   => array(
+				'key'     => 'color',
+				'value'   => array( 'red' ),
+				'compare' => 'NOT IN',
+			),
+			'color NOT EXISTS'   => array(
+				'key'     => 'color',
+				'compare' => 'NOT EXISTS',
+			),
+		);
+		$differences = array();
+		foreach ( $cases as $name => $clause ) {
+			$args  = array(
+				's'                   => 'nebula',
+				'post_type'           => 'post',
+				'posts_per_page'      => 50,
+				'ignore_sticky_posts' => true,
+				'meta_query'          => array( $clause ), // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- Test query.
+			);
+			$mysql = new \WP_Query( $args );
+			$meili = new \WP_Query( array_merge( $args, array( 'meilisearch' => true ) ) );
+
+			$expected = array_map( 'intval', wp_list_pluck( $mysql->posts, 'ID' ) );
+			$actual   = array_map( 'intval', wp_list_pluck( $meili->posts, 'ID' ) );
+			sort( $expected );
+			sort( $actual );
+			self::assertNotTrue( $mysql->get( Interceptor::QUERY_FLAG ), $name );
+			self::assertNotEmpty( $expected, $name );
+			if ( $expected !== $actual || true === $meili->get( Interceptor::QUERY_FLAG ) ) {
+				$differences[ $name ] = sprintf( 'mysql=[%s] meilisearch=[%s]%s', implode( ',', $expected ), implode( ',', $actual ), true === $meili->get( Interceptor::QUERY_FLAG ) ? ' (intercepted)' : '' );
+			}
+		}
+		self::assertSame( array(), $differences );
+	}
 }
