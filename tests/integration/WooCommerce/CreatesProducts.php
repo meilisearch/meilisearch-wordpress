@@ -42,8 +42,10 @@ trait CreatesProducts {
 		);
 		$this->reboot_plugin();
 		Plugin::instance()->get( 'index_manager' )->ensure_index( 'products' );
-		// Tests fill the products index through sync instead of a full reindex (which populates it).
+		// Tests fill the products index through sync instead of a full reindex (which populates it
+		// and clears the "needs reindex" flag raised by the attribute and WooCommerce option changes above).
 		Plugin::instance()->get( 'options' )->set_populated( 'products', true );
+		Plugin::instance()->get( 'options' )->flag_reindex( 'products', false );
 	}
 
 	/**
