@@ -163,8 +163,9 @@ Field names derived from taxonomy slugs and meta keys are normalized to `[A-Za-z
 The plugin **owns only what it needs to function**:
 
 - `filterableAttributes` and `sortableAttributes`: plugin computes the required set and PATCHes the **union** of required ∪ current (read via `GET /settings` first). Cloud-added attributes survive.
-- `searchableAttributes`: set once at index creation to an ordered list (content: `title`, `tax_*`, `excerpt`, `content`, `meta_*`; products: § 8.3). Later, newly enabled fields are **appended** if the current value is not `["*"]`; existing order is never changed.
-- Never touched: `displayedAttributes` (stays `["*"]`), `distinctAttribute`, ranking rules, synonyms, stop words, typo tolerance, embedders, faceting, pagination settings.
+- `searchableAttributes`: set once at index creation to an ordered list (content: `title`, `tax_*`, `excerpt`, `content`, `meta_*`; products: § 8.3). Later, required fields missing from the current list (newly enabled, or removed in Meilisearch) are **appended** if the current value is not `["*"]`; existing order is never changed.
+- `displayedAttributes`: set at index creation to the public fields (schema allowlist + autocomplete subtitle field, filter `meilisearch_displayed_attributes`); missing ones are appended to an existing list, `["*"]` is never changed (Site Health reports it while autocomplete is on).
+- Never touched: `distinctAttribute`, ranking rules, synonyms, stop words, typo tolerance, embedders, faceting, pagination settings.
 - `SettingsBuilder` output is filterable via `meilisearch_index_settings`.
 - Site Health reports drift (required attributes missing).
 
@@ -273,7 +274,7 @@ Only parent products (simple, variable, grouped, external); variations never get
 | `sku`, `variation_skus[]` | product / child variation SKUs (variation SKUs optional) |
 | `product_type`, `featured` | `get_type()`, `is_featured()` |
 | `price` | `wc_get_price_to_display($product)` computed in a context with the store base location (documented: prices reflect base tax display) |
-| `price_min`, `price_max` | variable products: `get_variation_price('min'/'max', true)` |
+| `price_min`, `price_max` | variable products: `get_variation_price('min'/'max', true)`; `price_max` on every product (other types: `price`, grouped: highest child price) |
 | `regular_price`, `sale_price`, `on_sale` | as floats / null / bool |
 | `in_stock`, `stock_status`, `stock_quantity` | bool / string / int or null |
 | `rating_average`, `rating_count`, `total_sales` | numbers |
@@ -289,8 +290,8 @@ Variations are read via `get_children()` + `wc_get_product()` (not `get_availabl
 ### 8.3 Products index settings
 
 - searchable (initial order): `title`, `sku`, `variation_skus`, `attr_*`, `tax_product_cat`, `tax_product_tag`, `excerpt`, `content`
-- filterable: `id`, `tax_product_cat_ids`, `tax_product_tag_ids`, `attr_*`, `price`, `in_stock`, `stock_status`, `on_sale`, `featured`, `product_type`, `rating_average`
-- sortable: `id`, `price`, `total_sales`, `rating_average`, `date`, `title`
+- filterable: `id`, `tax_product_cat_ids`, `tax_product_tag_ids`, `attr_*`, `price`, `price_max`, `in_stock`, `stock_status`, `on_sale`, `featured`, `product_type`, `rating_average`
+- sortable: `id`, `price`, `price_max`, `total_sales`, `rating_average`, `date`, `title`
 - `custom_attr_*` fields are stored on documents (for display and future facets) but are neither filterable nor searchable in v1: their names cannot be enumerated when settings are built, and WooCommerce layered nav only uses global `pa_*` attributes.
 
 ### 8.4 Product sync hooks
@@ -310,8 +311,8 @@ To keep checkout bursts from flooding the queue, the collector skips product IDs
 Handled by `Search\Interceptor` when the main query is a search with `post_type=product`:
 
 - Top-level `product_visibility` clauses added by `WC_Query`: `exclude-from-search` `NOT IN` is dropped (such products are never indexed); `featured` → `featured = true|false`; `outofstock` `NOT IN` → `in_stock = true`; `rated-N` (rating filter) → `rating_average` ranges; `exclude-from-catalog` or anything else → do not intercept. `product_cat` / `product_tag` clauses use the generic taxonomy translation of § 9.2.
-- `orderby`: `price` → `price:asc`, `price-desc` → `price:desc`, `popularity` → `total_sales:desc`, `rating` → `rating_average:desc`, `date` → `date:desc`, `relevance`/default → relevance.
-- Layered nav: `filter_{attr}` (comma-separated term slugs → resolved to term names) with `query_type_{attr}` = `and`/`or`; `min_price` / `max_price` → `price` range (for variable products `price` is the minimum price, so a product matches when its minimum price is in range). Read from the query's vars / request.
+- `orderby`: `price` → `price:asc`, `price-desc` → `price_max:desc`, `popularity` → `total_sales:desc`, `rating` → `rating_average:desc`, `date` → `date:desc`, `relevance`/default → relevance.
+- Layered nav: `filter_{attr}` (comma-separated term slugs → resolved to term names) with `query_type_{attr}` = `and`/`or`; `min_price` / `max_price` → price range overlap, as WooCommerce: `price <= max_price` and `price_max >= min_price` (`price` is the minimum price of a variable product). Until a products reindex has written `price_max` everywhere, `price` is compared with both bounds and `price-desc` → `price:desc`. Read from the query's vars / request.
 - Any other unrecognised product-query constraint → do not intercept.
 
 Shop and category archives without `s` are not intercepted in v1.
@@ -343,7 +344,7 @@ Developers can opt any `WP_Query` in with `'meilisearch' => true` (same translat
 | `post_type` | `post_type IN [...]` (content index) |
 | `author`, `author__in`, `author__not_in` | `author_id` filters |
 | `$query->tax_query->queries` (includes `cat`, `tag`, `category_name`, `product_cat`, ...) with `field` = `term_id`/`slug`/`name` (resolved to term IDs), operators `IN`/`NOT IN`/`AND`, `include_children` (default true → `_ids` already include ancestors), nested relations | `tax_{t}_ids` filters with parentheses |
-| `meta_query` on indexed keys: `=`, `!=`, `<`, `<=`, `>`, `>=`, `IN`, `NOT IN`, `BETWEEN`, `EXISTS`, `NOT EXISTS` | `meta_{key}` filters |
+| `meta_query` on indexed keys: `=`, `<`, `<=`, `>`, `>=`, `IN`, `BETWEEN`, `EXISTS` (not `!=`, `NOT IN`, `NOT EXISTS` or empty-string values: the document holds only the first non-empty value) | `meta_{key}` filters |
 | `date_query` with only `after` / `before` (string or array form) | `date` range |
 | hybrid configured | `hybrid: {embedder, semanticRatio}` |
 
