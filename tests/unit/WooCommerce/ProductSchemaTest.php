@@ -26,7 +26,7 @@ final class ProductSchemaTest extends TestCase {
 		$schema = $this->schema( array( 'pa_color', 'pa_couleur-é', 'pa_日本' ) );
 
 		self::assertSame(
-			array( 'id', 'tax_product_cat_ids', 'tax_product_tag_ids', 'attr_color', 'attr_couleur', 'price', 'in_stock', 'stock_status', 'on_sale', 'featured', 'product_type', 'rating_average' ),
+			array( 'id', 'tax_product_cat_ids', 'tax_product_tag_ids', 'attr_color', 'attr_couleur', 'price', 'price_max', 'in_stock', 'stock_status', 'on_sale', 'featured', 'product_type', 'rating_average' ),
 			$schema->filterable()
 		);
 	}
@@ -53,7 +53,7 @@ final class ProductSchemaTest extends TestCase {
 	public function test_sortable_and_searchable_order(): void {
 		$schema = $this->schema( array( 'pa_color' ) );
 
-		self::assertSame( array( 'id', 'price', 'total_sales', 'rating_average', 'date', 'title' ), $schema->sortable() );
+		self::assertSame( array( 'id', 'price', 'price_max', 'total_sales', 'rating_average', 'date', 'title' ), $schema->sortable() );
 		self::assertSame(
 			array( 'title', 'sku', 'variation_skus', 'attr_color', 'tax_product_cat', 'tax_product_tag', 'excerpt', 'content' ),
 			$schema->searchable()

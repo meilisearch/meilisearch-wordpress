@@ -384,7 +384,75 @@ final class ProductQueryTranslatorTest extends TestCase {
 		);
 	}
 
-	public function test_price_range(): void {
+	/**
+	 * The last completed products reindex wrote price_max into every document.
+	 */
+	private function record_price_max_build(): void {
+		( new Options() )->set_state( 'products_build', array( 'version' => 2 ) );
+	}
+
+	public function test_price_range_overlaps_the_product_price_range(): void {
+		$this->record_price_max_build();
+
+		$_GET   = array(
+			'min_price' => '10',
+			'max_price' => '50.5',
+		);
+		$result = $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) );
+		self::assertSame( array( '(price <= 50.5) AND (price_max >= 10.0)' ), $result['filters'] );
+
+		$_GET   = array( 'min_price' => '10' );
+		$result = $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) );
+		self::assertSame( array( FilterBuilder::compare( 'price_max', '>=', 10.0 ) ), $result['filters'] );
+
+		$_GET   = array( 'max_price' => '20' );
+		$result = $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) );
+		self::assertSame( array( FilterBuilder::compare( 'price', '<=', 20.0 ) ), $result['filters'] );
+	}
+
+	public function test_price_descending_sorts_by_the_highest_price(): void {
+		$this->record_price_max_build();
+		$query = $this->query(
+			array(
+				'orderby'  => 'price',
+				'order'    => 'DESC',
+				'wc_query' => 'product_query',
+			)
+		);
+
+		self::assertSame( array( 'price_max:desc' ), $this->translator()->constraints( $query )['sort'] );
+		$ascending = $this->query(
+			array(
+				'orderby'  => 'price',
+				'order'    => 'ASC',
+				'wc_query' => 'product_query',
+			)
+		);
+		self::assertSame( array( 'price:asc' ), $this->translator()->sort( $ascending ) );
+	}
+
+	/**
+	 * Documents written before price_max existed (no completed products reindex since, or one that is
+	 * still running) would be dropped by a price_max filter and sunk by a price_max sort.
+	 */
+	public function test_minimum_price_translation_is_kept_until_a_reindex_wrote_price_max(): void {
+		( new Options() )->set_state( 'products_build', array( 'version' => 1 ) );
+		$_GET  = array( 'min_price' => '10' );
+		$query = $this->query(
+			array(
+				'orderby'  => 'price',
+				'order'    => 'DESC',
+				'wc_query' => 'product_query',
+			)
+		);
+
+		$result = $this->translator()->constraints( $query );
+
+		self::assertSame( array( FilterBuilder::compare( 'price', '>=', 10.0 ) ), $result['filters'] );
+		self::assertSame( array( 'price:desc' ), $result['sort'] );
+	}
+
+	public function test_price_range_on_an_index_without_price_max(): void {
 		$_GET   = array(
 			'min_price' => '10',
 			'max_price' => '50.5',

@@ -127,11 +127,14 @@ final class ProductDocumentBuilder implements DocumentBuilder {
 		$quantity = $product->get_stock_quantity();
 		$on_sale  = (bool) $product->is_on_sale();
 
+		$price = $this->display_price( $product, $product->get_price() );
+
 		return array(
 			'sku'            => (string) $product->get_sku(),
 			'product_type'   => (string) $product->get_type(),
 			'featured'       => (bool) $product->is_featured(),
-			'price'          => $this->display_price( $product, $product->get_price() ),
+			'price'          => $price,
+			'price_max'      => $this->price_max( $product, $price ),
 			'regular_price'  => $this->display_price( $product, $product->get_regular_price() ),
 			// get_sale_price() returns the stored value even for a scheduled (future) or expired sale.
 			'sale_price'     => $on_sale ? $this->display_price( $product, $product->get_sale_price() ) : null,
@@ -143,6 +146,26 @@ final class ProductDocumentBuilder implements DocumentBuilder {
 			'rating_count'   => (int) $product->get_rating_count(),
 			'total_sales'    => (int) $product->get_total_sales(),
 		);
+	}
+
+	/**
+	 * Highest price of a non-variable product, for the price filter (range overlap) and "price: high to
+	 * low", as WooCommerce's wc_product_meta_lookup max_price: the price itself, except for a grouped
+	 * product, whose `_price` meta holds its cheapest and dearest child prices. Never below `price`, and
+	 * null exactly when `price` is (variable products: variable_fields()).
+	 *
+	 * @param \WC_Product $product Product.
+	 * @param float|null  $price   Its indexed display price.
+	 */
+	private function price_max( \WC_Product $product, ?float $price ): ?float {
+		if ( null === $price || ! $product instanceof \WC_Product_Grouped ) {
+			return $price;
+		}
+		$raw = array_filter( (array) get_post_meta( (int) $product->get_id(), '_price', false ), 'is_numeric' );
+		if ( array() === $raw ) {
+			return $price;
+		}
+		return max( $price, (float) $this->display_price( $product, max( array_map( 'floatval', $raw ) ) ) );
 	}
 
 	/**

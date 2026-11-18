@@ -19,6 +19,7 @@ use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\ErrorLog;
 use Meilisearch\WordPress\Sync\Queue;
+use Meilisearch\WordPress\WooCommerce\ProductSchema;
 
 /**
  * Spec § 6.3. One run per logical index, against the live index (no temporary index, no swap:
@@ -35,7 +36,8 @@ use Meilisearch\WordPress\Sync\Queue;
  *    finalizing phase) until the recorded settings task has succeeded; a failed one fails the run.
  * 4. Phase "finalizing": wait until no recorded task is enqueued/processing; a failed or canceled
  *    task fails the run, otherwise the run is done and the index is marked populated (search is
- *    intercepted only for populated indexes), unless the content settings changed while it ran.
+ *    intercepted only for populated indexes), unless the content settings changed while it ran. A
+ *    products run also records what its documents carry (ProductSchema::build_record()).
  *
  * A step that hits a transient error (no response, HTTP 408, 429 or 5xx) is retried: the background
  * run reschedules it after RETRY_BACKOFF[n] seconds (the counter, "retries", is kept in the state and
@@ -485,6 +487,10 @@ final class Reindexer implements Registrable {
 			// Compared at finalize: posts sent before a mid-run settings change were built without it.
 			$state['content_signature'] = $this->options->content_signature();
 		}
+		if ( 'products' === $logical ) {
+			// Recorded at finalize: the fields every product document has once this run has rewritten them all.
+			$state['products_build'] = ( new ProductSchema( $this->options ) )->build_record();
+		}
 		// Flags raised from now on (settings changed mid-run) survive the run: finalize does not clear them.
 		$this->options->flag_reindex( $logical, false );
 		$this->options->set_reindex_state( $logical, $state );
@@ -664,6 +670,9 @@ final class Reindexer implements Registrable {
 		$this->options->set_state( 'first_reindex_done', true );
 		if ( ! isset( $state['content_signature'] ) || $state['content_signature'] === $this->options->content_signature() ) {
 			$this->options->set_populated( $logical, true );
+		}
+		if ( isset( $state['products_build'] ) ) {
+			$this->options->set_state( 'products_build', $state['products_build'] );
 		}
 		return $state;
 	}

@@ -589,6 +589,56 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
+	 * A products run records what its documents carry once it is done (ProductQueryTranslator relies on it).
+	 */
+	public function test_finalize_records_the_product_build_of_the_run(): void {
+		$this->seed_run(
+			array(
+				'phase'          => 'finalizing',
+				'task_uids'      => array( 7 ),
+				'products_build' => array( 'version' => 2 ),
+			)
+		);
+		$this->transport->queue( self::tasks_response( array() ) )->queue( self::tasks_response( array() ) );
+
+		$this->handle();
+
+		$this->assertSame( array( 'version' => 2 ), $this->options->state( 'products_build' ) );
+	}
+
+	/**
+	 * A failed run did not rewrite every document: the previous build stays recorded.
+	 */
+	public function test_failed_run_does_not_record_its_product_build(): void {
+		$this->options->set_state( 'products_build', array( 'version' => 1 ) );
+		$this->seed_run(
+			array(
+				'phase'          => 'finalizing',
+				'task_uids'      => array( 7 ),
+				'products_build' => array( 'version' => 2 ),
+			)
+		);
+		$this->transport
+			->queue( self::tasks_response( array() ) )
+			->queue(
+				self::tasks_response(
+					array(
+						array(
+							'uid'    => 7,
+							'status' => 'failed',
+							'error'  => array( 'message' => 'Boom.' ),
+						),
+					)
+				)
+			);
+
+		$this->handle();
+
+		$this->assertSame( 'failed', $this->state()['status'] );
+		$this->assertSame( array( 'version' => 1 ), $this->options->state( 'products_build' ) );
+	}
+
+	/**
 	 * Vetoed rows count as scanned but not sent: the done run records them as excluded.
 	 */
 	public function test_vetoed_rows_are_counted_as_scanned_and_recorded_as_excluded_when_done(): void {

@@ -130,6 +130,7 @@ final class ProductDocumentBuilderTest extends TestCase {
 				'product_type'        => 'simple',
 				'featured'            => true,
 				'price'               => 9.6,
+				'price_max'           => 9.6,
 				'regular_price'       => 12.0,
 				'sale_price'          => 9.6,
 				'on_sale'             => true,
@@ -173,12 +174,47 @@ final class ProductDocumentBuilderTest extends TestCase {
 
 		self::assertSame( 'external', $fields['product_type'] );
 		self::assertNull( $fields['price'] );
+		self::assertNull( $fields['price_max'] );
 		self::assertNull( $fields['regular_price'] );
 		self::assertNull( $fields['sale_price'] );
 		self::assertNull( $fields['stock_quantity'] );
 		self::assertSame( array(), $fields['tax_product_cat'] );
 		self::assertArrayNotHasKey( 'categories', $fields );
 		self::assertArrayNotHasKey( 'variations', $fields );
+	}
+
+	public function test_external_and_extension_products_have_price_max_equal_to_price(): void {
+		$external  = $this->builder()->product_fields( new \WC_Product_External( $this->simple_props() ) );
+		$extension = $this->builder()->product_fields( new \WC_Product_Simple( $this->simple_props( array( 'type' => 'subscription' ) ) ) );
+
+		self::assertSame( 9.6, $external['price_max'] );
+		self::assertSame( 9.6, $extension['price_max'] );
+	}
+
+	public function test_grouped_product_price_max_is_its_dearest_child_price(): void {
+		// WooCommerce stores the cheapest and dearest child prices as two `_price` rows (the lookup table's min/max).
+		Functions\when( 'get_post_meta' )->alias(
+			static function ( $id, $key = '', $single = false ) {
+				if ( 7 === (int) $id && '_price' === $key && ! $single ) {
+					return array( '8', '25' );
+				}
+				return array();
+			}
+		);
+
+		$fields = $this->builder()->product_fields( new \WC_Product_Grouped( $this->simple_props() ) );
+
+		self::assertSame( 9.6, $fields['price'] );
+		self::assertSame( 30.0, $fields['price_max'] );
+	}
+
+	public function test_grouped_product_without_priced_children_has_null_prices(): void {
+		Functions\when( 'get_post_meta' )->justReturn( array() );
+
+		$fields = $this->builder()->product_fields( new \WC_Product_Grouped( $this->simple_props( array( 'price' => '' ) ) ) );
+
+		self::assertNull( $fields['price'] );
+		self::assertNull( $fields['price_max'] );
 	}
 
 	public function test_prices_are_computed_with_the_base_location_filter_which_is_removed_afterwards(): void {
