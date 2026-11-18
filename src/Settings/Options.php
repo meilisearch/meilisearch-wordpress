@@ -133,7 +133,8 @@ final class Options {
 		if ( ! in_array( $scheme, array( 'http', 'https' ), true ) ) {
 			return '';
 		}
-		if ( 1 !== preg_match( '/^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/', $host ) ) {
+		// Underscores are not valid in DNS hostnames but are in Docker service and container names, which resolve.
+		if ( 1 !== preg_match( '/^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])$/', $host ) ) {
 			return '';
 		}
 
