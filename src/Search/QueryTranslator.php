@@ -68,6 +68,8 @@ final class QueryTranslator {
 		'sentence',
 		'exact',
 		'search_columns',
+		'comment_status',
+		'ping_status',
 	);
 
 	/**

@@ -1133,6 +1133,8 @@ final class QueryTranslatorTest extends TestCase {
 			'title'            => array( 'title', 'Hello' ),
 			'menu_order'       => array( 'menu_order', 2 ),
 			'search_columns'   => array( 'search_columns', array( 'post_title' ) ),
+			'comment_status'   => array( 'comment_status', 'open' ),
+			'ping_status'      => array( 'ping_status', 'closed' ),
 		);
 	}
 
