@@ -56,6 +56,11 @@ final class ProductQueryTranslator implements ProductTranslator {
 	);
 
 	/**
+	 * First product document version (ProductSchema::DOCUMENT_VERSION) with `price_max` on every product.
+	 */
+	private const PRICE_MAX_SINCE = 2;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param Options $options Plugin options.
@@ -151,7 +156,14 @@ final class ProductQueryTranslator implements ProductTranslator {
 			case 'menu_order title':
 				return $wc ? array() : null;
 			case 'price':
-				return $wc ? array( 'DESC' === $order ? 'price:desc' : 'price:asc' ) : null;
+				// As WooCommerce: ascending by the lowest price, descending by the highest one.
+				if ( ! $wc ) {
+					return null;
+				}
+				if ( 'DESC' !== $order ) {
+					return array( 'price:asc' );
+				}
+				return array( $this->has_price_max() ? 'price_max:desc' : 'price:desc' );
 			case 'popularity':
 				return $wc ? array( 'total_sales:desc' ) : null;
 			case 'rating':
@@ -173,16 +185,24 @@ final class ProductQueryTranslator implements ProductTranslator {
 	 * attribute is unknown to Meilisearch (`invalid_search_filter`, which opens the circuit
 	 * breaker) or missing from existing documents (incomplete results). While a products reindex
 	 * is pending, attribute fields are left out, so attribute filters fall back to MySQL.
+	 * The run clears that flag when it starts, not once it has rewritten every document: an
+	 * attribute the last completed products reindex did not write (ProductSchema::build_record())
+	 * stays left out until the running one completes.
 	 *
 	 * @return list<string>
 	 */
 	private function filterable(): array {
 		$schema     = new ProductSchema( $this->options );
 		$filterable = $schema->filterable();
-		if ( ! $this->options->needs_reindex( 'products' ) ) {
-			return $filterable;
+		$attributes = $schema->attribute_fields();
+		if ( $this->options->needs_reindex( 'products' ) ) {
+			return array_values( array_diff( $filterable, $attributes ) );
 		}
-		return array_values( array_diff( $filterable, $schema->attribute_fields() ) );
+		// No record: the index was filled before completed runs recorded their build, and it is flagged for
+		// a reindex (ProductSync::flag_outdated_index()); nothing tells which attributes its documents have.
+		$build = $this->options->state( 'products_build' );
+		$built = is_array( $build ) && isset( $build['attributes'] ) && is_array( $build['attributes'] ) ? $build['attributes'] : array();
+		return array_values( array_diff( $filterable, array_diff( $attributes, $built ) ) );
 	}
 
 	/**
@@ -499,9 +519,16 @@ final class ProductQueryTranslator implements ProductTranslator {
 	}
 
 	/**
-	 * `min_price` / `max_price` → price range on the indexed display price ('' when absent).
-	 * A bound that overflows a float (`1e999`) cannot be written as a filter: null, so the
-	 * database answers that request as it would without the plugin.
+	 * `min_price` / `max_price` → price filter on the indexed display prices ('' when absent).
+	 * As WooCommerce (WC_Query::price_filter_post_clauses), a product matches when its price range
+	 * overlaps the requested one: lowest price <= max_price and highest price >= min_price, which
+	 * keeps a variable product priced 10 to 50 for 20–30. A bound that overflows a float (`1e999`)
+	 * cannot be written as a filter: null, so the database answers that request as it would
+	 * without the plugin.
+	 *
+	 * Until a products reindex has written `price_max` into every document (has_price_max()), the
+	 * lowest price is compared with both bounds, as before: a `price_max` condition would drop the
+	 * documents written without it.
 	 */
 	private function price_filter(): ?string {
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Cast to float, as in WC_Query.
@@ -511,16 +538,36 @@ final class ProductQueryTranslator implements ProductTranslator {
 		if ( ( null !== $min && ! is_finite( $min ) ) || ( null !== $max && ! is_finite( $max ) ) ) {
 			return null;
 		}
+		$highest = $this->has_price_max() ? 'price_max' : 'price';
 		if ( null !== $min && null !== $max ) {
-			return FilterBuilder::between( 'price', $min, $max );
+			if ( 'price' === $highest ) {
+				return FilterBuilder::between( 'price', $min, $max );
+			}
+			return FilterBuilder::all(
+				array(
+					FilterBuilder::compare( 'price', '<=', $max ),
+					FilterBuilder::compare( $highest, '>=', $min ),
+				)
+			);
 		}
 		if ( null !== $min ) {
-			return FilterBuilder::compare( 'price', '>=', $min );
+			return FilterBuilder::compare( $highest, '>=', $min );
 		}
 		if ( null !== $max ) {
 			return FilterBuilder::compare( 'price', '<=', $max );
 		}
 		return '';
+	}
+
+	/**
+	 * Whether every product document carries `price_max`: the last completed products reindex wrote
+	 * documents of a version that has it (Reindexer records ProductSchema::build_record()). Documents
+	 * synced one by one since then have it too; an index filled by an older version does not, and a
+	 * reindex that is still running has not rewritten every document yet.
+	 */
+	private function has_price_max(): bool {
+		$build = $this->options->state( 'products_build' );
+		return is_array( $build ) && (int) ( $build['version'] ?? 0 ) >= self::PRICE_MAX_SINCE;
 	}
 
 	/**

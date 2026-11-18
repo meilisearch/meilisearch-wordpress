@@ -29,6 +29,12 @@ final class AttributeCollector {
 	public const MAX_VARIATIONS = 100;
 
 	/**
+	 * Maximum number of variation SKUs read per variable product: every published variation of any real
+	 * catalog, while a pathological product cannot make one document unbounded (about 1 MB of SKUs at most).
+	 */
+	public const MAX_VARIATION_SKUS = 10000;
+
+	/**
 	 * Field name for a global attribute taxonomy: `pa_color` → `attr_color`.
 	 *
 	 * @param string $taxonomy Attribute taxonomy name (with or without the `pa_` prefix).
@@ -198,6 +204,34 @@ final class AttributeCollector {
 			}
 		}
 		return $variations;
+	}
+
+	/**
+	 * Own SKUs of every published child variation, in WooCommerce's variation order (at most
+	 * MAX_VARIATION_SKUS). One query on the `_sku` post meta, where WooCommerce stores them, instead of
+	 * loading each variation: unlike variations(), this is not capped at MAX_VARIATIONS. A variation
+	 * without its own SKU (it shows the parent's) adds nothing; disabled (private) variations are skipped.
+	 *
+	 * @param \WC_Product_Variable $product Variable product.
+	 * @return list<string>
+	 */
+	public function variation_skus( \WC_Product_Variable $product ): array {
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- One read per document build; WooCommerce has no API for this without loading every variation.
+		$skus = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT meta.meta_value FROM {$wpdb->posts} AS posts
+				INNER JOIN {$wpdb->postmeta} AS meta ON meta.post_id = posts.ID AND meta.meta_key = '_sku'
+				WHERE posts.post_parent = %d AND posts.post_type = 'product_variation' AND posts.post_status = 'publish'
+				AND meta.meta_value <> ''
+				ORDER BY posts.menu_order ASC, posts.ID ASC
+				LIMIT %d",
+				(int) $product->get_id(),
+				self::MAX_VARIATION_SKUS
+			)
+		);
+		$skus = array_map( static fn( $sku ): string => trim( (string) $sku ), (array) $skus );
+		return array_values( array_unique( array_filter( $skus, static fn( string $sku ): bool => '' !== $sku ) ) );
 	}
 
 	/**

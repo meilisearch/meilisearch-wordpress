@@ -88,6 +88,49 @@ final class ProductDocumentBuilderTest extends TestCase {
 		$this->assertFalse( has_filter( 'woocommerce_get_tax_location' ) );
 	}
 
+	/**
+	 * 150 published variations with their own SKU, one published variation without one (it shows the
+	 * parent's SKU, which must not be added again) and one disabled variation: every published SKU is
+	 * searchable, while the compact variation list keeps its cap.
+	 */
+	public function test_variation_skus_cover_every_published_variation(): void {
+		update_option(
+			Options::WOOCOMMERCE,
+			array(
+				'enabled'           => true,
+				'attributes'        => null,
+				'custom_attributes' => false,
+				'variation_skus'    => true,
+			)
+		);
+		$product = new \WC_Product_Variable();
+		$product->set_name( 'Meili Many Variations' );
+		$product->set_status( 'publish' );
+		$product->set_sku( 'MMV-PARENT' );
+		$product->save();
+		$expected = array();
+		for ( $i = 1; $i <= 152; $i++ ) {
+			$variation = new \WC_Product_Variation();
+			$variation->set_parent_id( $product->get_id() );
+			$variation->set_regular_price( (string) $i );
+			$variation->set_status( 151 === $i ? 'private' : 'publish' );
+			if ( 152 !== $i ) {
+				$variation->set_sku( sprintf( 'MMV-%03d', $i ) );
+			}
+			if ( $i <= 150 ) {
+				$expected[] = sprintf( 'MMV-%03d', $i );
+			}
+			$variation->save();
+		}
+		\WC_Product_Variable::sync( $product->get_id() );
+
+		$document = $this->builder()->build( get_post( $product->get_id() ) );
+
+		$this->assertIsArray( $document );
+		$this->assertCount( ProductDocumentBuilder::MAX_VARIATIONS, $document['variations'] );
+		$this->assertEqualsCanonicalizing( $expected, $document['variation_skus'] );
+	}
+
 	public function test_variation_post_is_not_built(): void {
 		$color   = $this->create_attribute( 'color', array( 'Red' ) );
 		$product = $this->create_variable_product(

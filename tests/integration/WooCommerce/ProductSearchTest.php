@@ -243,6 +243,43 @@ final class ProductSearchTest extends TestCase {
 		);
 	}
 
+	/**
+	 * The merchant selects an attribute the existing documents were built without, then starts the reindex
+	 * the notice asks for. The run clears the "needs reindex" flag when it starts, but until it has rewritten
+	 * every document a filter on that attribute would only match the documents sent so far.
+	 */
+	public function test_filter_on_a_newly_selected_attribute_falls_back_until_the_reindex_has_completed(): void {
+		$options = Plugin::instance()->get( 'options' );
+		$fabric  = array_merge( $options->woocommerce(), array( 'attributes' => array( 'pa_color' ) ) );
+		update_option( Options::WOOCOMMERCE, $fabric );
+		$material = $this->create_attribute( 'material', array( 'Cotton' ) );
+		$cotton   = $this->create_simple_product( 'Meili Shirt Delta', '40', array(), $material, array( 'Cotton' ) )->get_id();
+		$this->sync_products();
+		$this->assertArrayNotHasKey( 'attr_material', $this->product_document( $cotton ), 'Built while material was not selected.' );
+
+		// WooCommerce tab: material selected (the tab flags a products reindex), then the reindex is started.
+		update_option( Options::WOOCOMMERCE, array_merge( $fabric, array( 'attributes' => array( 'pa_color', 'pa_material' ) ) ) );
+		$options->flag_reindex( 'products', true );
+		Plugin::instance()->get( 'reindexer' )->start( 'products' );
+		$this->wait_for_tasks();
+		$this->assertFalse( $options->needs_reindex( 'products' ) );
+		delete_transient( CircuitBreaker::TRANSIENT );
+
+		$args = array(
+			's'               => 'Meili Shirt',
+			'filter_material' => 'cotton',
+		);
+		$this->assertSame( array( $cotton ), $this->search( $args ), 'The database answers while the run is in progress.' );
+		$this->assertNotTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ) );
+		$this->assertFalse( get_transient( CircuitBreaker::TRANSIENT ), 'the circuit breaker stays closed' );
+
+		$this->run_actions();
+		$this->wait_for_tasks();
+		$this->assertSame( 'done', Plugin::instance()->get( 'reindexer' )->status( 'products' )['status'] ?? null );
+		$this->assertSame( array( $cotton ), $this->search( array_merge( $args, array( 's' => 'shirtt' ) ) ), 'Meilisearch answers once every document has the field.' );
+		$this->assertTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ) );
+	}
+
 	public function test_product_category_clause_is_translated_by_the_query_translator(): void {
 		$ids = $this->search(
 			array(

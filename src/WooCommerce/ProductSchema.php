@@ -27,6 +27,12 @@ use Meilisearch\WordPress\Settings\Options;
 final class ProductSchema implements Schema {
 
 	/**
+	 * Version of the product document shape, recorded by each completed products reindex (build_record()).
+	 * 2: `price_max` on every document. Search uses a field only once a reindex has written it everywhere.
+	 */
+	public const DOCUMENT_VERSION = 2;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param Options $options Plugin options.
@@ -44,7 +50,7 @@ final class ProductSchema implements Schema {
 				array_merge(
 					array( 'id', 'tax_product_cat_ids', 'tax_product_tag_ids' ),
 					$this->attribute_fields(),
-					array( 'price', 'in_stock', 'stock_status', 'on_sale', 'featured', 'product_type', 'rating_average' )
+					array( 'price', 'price_max', 'in_stock', 'stock_status', 'on_sale', 'featured', 'product_type', 'rating_average' )
 				)
 			)
 		);
@@ -56,7 +62,7 @@ final class ProductSchema implements Schema {
 	 * @return list<string>
 	 */
 	public function sortable(): array {
-		return array( 'id', 'price', 'total_sales', 'rating_average', 'date', 'title' );
+		return array( 'id', 'price', 'price_max', 'total_sales', 'rating_average', 'date', 'title' );
 	}
 
 	/**
@@ -96,6 +102,20 @@ final class ProductSchema implements Schema {
 	public function displayed(): array {
 		$fields = array_merge( ContentSchema::PUBLIC_FIELDS, self::PUBLIC_FIELDS, $this->searchable(), $this->filterable(), $this->sortable() );
 		return array_values( array_diff( array_unique( $fields ), self::PRIVATE_FIELDS ) );
+	}
+
+	/**
+	 * What a products reindex starting now writes into every document. The Reindexer records it when
+	 * such a run completes (Options state `products_build`); ProductQueryTranslator only relies on
+	 * fields the last completed run wrote.
+	 *
+	 * @return array{version: int, attributes: list<string>}
+	 */
+	public function build_record(): array {
+		return array(
+			'version'    => self::DOCUMENT_VERSION,
+			'attributes' => $this->attribute_fields(),
+		);
 	}
 
 	/**

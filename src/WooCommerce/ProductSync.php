@@ -76,6 +76,9 @@ final class ProductSync implements Registrable {
 		add_action( 'woocommerce_attribute_updated', array( $this, 'flag_products_reindex' ), 10, 0 );
 		add_action( 'woocommerce_attribute_deleted', array( $this, 'flag_products_reindex' ), 10, 0 );
 
+		// An index last reindexed by an older document version lacks fields search would rely on.
+		add_action( 'admin_init', array( $this, 'flag_outdated_index' ), 10, 0 );
+
 		foreach ( self::REINDEX_OPTIONS as $option ) {
 			add_action( "update_option_{$option}", array( $this, 'on_store_option_updated' ), 10, 2 );
 			add_action( "add_option_{$option}", array( $this, 'flag_products_reindex' ), 10, 0 );
@@ -152,6 +155,29 @@ final class ProductSync implements Registrable {
 	 */
 	public function flag_products_reindex(): void {
 		$this->options->flag_reindex( 'products', true );
+	}
+
+	/**
+	 * Flags a products reindex when the products index holds documents of an older version than the
+	 * one this plugin writes (ProductSchema::DOCUMENT_VERSION), as recorded by the last completed
+	 * products reindex, so the admin is asked to run one. Until it completes, search keeps to the
+	 * fields those documents have (ProductQueryTranslator). Nothing to do for an index no reindex has
+	 * filled yet (search does not use it), while a products reindex runs (it records the new version
+	 * when it completes) or when the flag is already raised.
+	 */
+	public function flag_outdated_index(): void {
+		if ( ! $this->options->is_populated( 'products' ) || $this->options->needs_reindex( 'products' ) ) {
+			return;
+		}
+		$run = $this->options->reindex_state( 'products' );
+		if ( null !== $run && 'running' === ( $run['status'] ?? '' ) ) {
+			return;
+		}
+		$build = $this->options->state( 'products_build' );
+		if ( is_array( $build ) && (int) ( $build['version'] ?? 0 ) >= ProductSchema::DOCUMENT_VERSION ) {
+			return;
+		}
+		$this->flag_products_reindex();
 	}
 
 	/**
