@@ -12,6 +12,7 @@ namespace Meilisearch\WordPress\Frontend;
 defined( 'ABSPATH' ) || exit;
 
 use Meilisearch\WordPress\Registrable;
+use Meilisearch\WordPress\Search\FilterBuilder;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 
@@ -48,10 +49,15 @@ final class Autocomplete implements Registrable {
 	}
 
 	/**
-	 * Registers, configures and enqueues the script and style when autocomplete is usable.
+	 * Registers, configures and enqueues the script and style when autocomplete is usable and at
+	 * least one index holds a post type of the site search (otherwise the script has nothing to query).
 	 */
 	public function enqueue(): void {
 		if ( ! $this->should_enqueue() ) {
+			return;
+		}
+		$config = $this->config();
+		if ( null === $config['indexes']['content'] && null === $config['indexes']['products'] ) {
 			return;
 		}
 		wp_register_script(
@@ -64,7 +70,7 @@ final class Autocomplete implements Registrable {
 				'strategy'  => 'defer',
 			)
 		);
-		wp_localize_script( self::HANDLE, self::OBJECT_NAME, $this->config() );
+		wp_localize_script( self::HANDLE, self::OBJECT_NAME, $config );
 		wp_enqueue_script( self::HANDLE );
 		wp_enqueue_style( self::HANDLE, plugins_url( 'assets/css/autocomplete.css', MEILISEARCH_FILE ), array(), MEILISEARCH_VERSION );
 	}
@@ -96,14 +102,20 @@ final class Autocomplete implements Registrable {
 	 * Script configuration. Numbers live in nested arrays because wp_localize_script()
 	 * casts top-level scalars to strings.
 	 *
-	 * @return array{host: string, key: string, indexes: array{content: string, products: ?string}, limits: array{content: int, products: int, minChars: int, debounce: int}, subtitles: array{content: ?string, products: ?string}, selector: string, currency: ?string, locale: string, home: string, i18n: array<string, string>}
+	 * Suggestions follow the default site search (QueryTranslator): only post types registered with
+	 * exclude_from_search = false. A type can be indexed and still be left out of the search, and the
+	 * results page the "See all results" link opens would not list it.
+	 *
+	 * @return array{host: string, key: string, indexes: array{content: ?string, products: ?string}, filters: array{content: ?string}, limits: array{content: int, products: int, minChars: int, debounce: int}, subtitles: array{content: ?string, products: ?string}, selector: string, currency: ?string, locale: string, home: string, i18n: array<string, string>}
 	 */
 	public function config(): array {
 		$selector = apply_filters( 'meilisearch_autocomplete_selector', self::DEFAULT_SELECTOR );
 		if ( ! is_string( $selector ) || '' === trim( $selector ) ) {
 			$selector = self::DEFAULT_SELECTOR;
 		}
-		$products = $this->options->products_enabled();
+		$searchable    = array_map( 'strval', array_values( get_post_types( array( 'exclude_from_search' => false ) ) ) );
+		$content_types = array_values( array_intersect( $this->options->enabled_post_types(), $searchable ) );
+		$products      = $this->options->products_enabled() && in_array( 'product', $searchable, true );
 
 		$subtitles = array();
 		foreach ( array( 'content', 'products' ) as $logical ) {
@@ -121,8 +133,11 @@ final class Autocomplete implements Registrable {
 			'host'      => $this->browser_host(),
 			'key'       => $this->options->search_key(),
 			'indexes'   => array(
-				'content'  => $this->names->uid( 'content' ),
+				'content'  => array() !== $content_types ? $this->names->uid( 'content' ) : null,
 				'products' => $products ? $this->names->uid( 'products' ) : null,
+			),
+			'filters'   => array(
+				'content' => array() !== $content_types ? FilterBuilder::in( 'post_type', $content_types ) : null,
 			),
 			'limits'    => array(
 				'content'  => self::LIMIT,

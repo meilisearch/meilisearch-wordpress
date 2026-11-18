@@ -14,6 +14,9 @@
 	if ( ! config || ! config.host || ! config.key || ! config.indexes || ! window.fetch || ! window.AbortController ) {
 		return;
 	}
+	if ( ! config.indexes.content && ! config.indexes.products ) {
+		return; // No index holds a post type of the site search.
+	}
 
 	const PRE_TAG = '\u0002';
 	const POST_TAG = '\u0003';
@@ -34,6 +37,8 @@
 		},
 		config.i18n || {}
 	);
+	// Limits content suggestions to the post types the results page lists (built and escaped in PHP).
+	const contentFilter = config.filters && typeof config.filters.content === 'string' && config.filters.content !== '' ? config.filters.content : null;
 	const endpoint = String( config.host ).replace( /\/+$/, '' ) + '/multi-search';
 	let instances = 0;
 	let priceFormatter = null;
@@ -91,8 +96,8 @@
 		return subtitles[ key ] ? base.concat( [ subtitles[ key ] ] ) : base;
 	}
 
-	function buildQuery( indexUid, q, limit, fields ) {
-		return {
+	function buildQuery( indexUid, q, limit, fields, filter ) {
+		const query = {
 			indexUid: indexUid,
 			q: q,
 			limit: limit,
@@ -101,6 +106,10 @@
 			highlightPreTag: PRE_TAG,
 			highlightPostTag: POST_TAG,
 		};
+		if ( filter ) {
+			query.filter = filter;
+		}
+		return query;
 	}
 
 	function attach( input ) {
@@ -115,10 +124,13 @@
 		let timer = null;
 		let controller = null;
 		let lastQuery = '';
+		let shownQuery = ''; // The query the current options answer.
 
 		panel.hidden = true;
 		panel.appendChild( listbox );
-		input.insertAdjacentElement( 'afterend', panel );
+		// Core's HTML5 search form wraps the input in its <label>: inserted there, the panel and the status
+		// region would become part of the field's accessible name (and are not valid label content).
+		( input.closest( 'label' ) || input ).insertAdjacentElement( 'afterend', panel );
 		panel.insertAdjacentElement( 'afterend', status );
 
 		input.setAttribute( 'data-meilisearch-autocomplete', '1' );
@@ -132,10 +144,17 @@
 			status.textContent = text;
 		}
 
+		// Places the (displayed) panel under the input. The two may not share an offset parent, so the
+		// offset is measured: where the panel lands at 0,0 (its margins aside) against where the input is.
 		function position() {
-			panel.style.top = input.offsetTop + input.offsetHeight + 'px';
-			panel.style.left = input.offsetLeft + 'px';
-			panel.style.minWidth = input.offsetWidth + 'px';
+			panel.style.top = '0px';
+			panel.style.left = '0px';
+			const margins = window.getComputedStyle( panel );
+			const origin = panel.getBoundingClientRect();
+			const box = input.getBoundingClientRect();
+			panel.style.top = box.bottom - origin.top + ( parseFloat( margins.marginTop ) || 0 ) + 'px';
+			panel.style.left = box.left - origin.left + ( parseFloat( margins.marginLeft ) || 0 ) + 'px';
+			panel.style.minWidth = box.width + 'px';
 		}
 
 		function setActive( index ) {
@@ -156,8 +175,8 @@
 		}
 
 		function open() {
-			position();
 			panel.hidden = false;
+			position();
 			input.setAttribute( 'aria-expanded', 'true' );
 		}
 
@@ -167,6 +186,15 @@
 			input.setAttribute( 'aria-expanded', 'false' );
 		}
 
+		// Drops the suggestions: they no longer answer what the field contains, so the arrow keys
+		// must not bring them back. close() alone keeps them for a reopen after Escape or blur.
+		function reset() {
+			close();
+			listbox.textContent = '';
+			options = [];
+			shownQuery = '';
+		}
+
 		function abort() {
 			if ( controller ) {
 				controller.abort();
@@ -174,13 +202,21 @@
 			}
 		}
 
-		function go( url ) {
+		// The visitor left or dismissed the suggestions: a search still waiting on the debounce timer or on
+		// the network must not reopen the panel when it answers.
+		function dismiss() {
+			window.clearTimeout( timer );
+			abort();
 			close();
+		}
+
+		function go( url ) {
+			dismiss();
 			window.location.assign( url );
 		}
 
 		function submitSearch() {
-			close();
+			dismiss();
 			if ( input.form ) {
 				if ( typeof input.form.requestSubmit === 'function' ) {
 					input.form.requestSubmit();
@@ -195,6 +231,7 @@
 		function render( groups, total ) {
 			listbox.textContent = '';
 			options = [];
+			shownQuery = lastQuery;
 			groups.forEach( function ( group, groupIndex ) {
 				const labelId = prefix + '-group-' + groupIndex;
 				const groupNode = element( 'div', { class: 'meilisearch-ac__group', role: 'group', 'aria-labelledby': labelId, 'data-index': group.key } );
@@ -304,7 +341,9 @@
 			if ( config.indexes.products ) {
 				groups.push( { key: 'products', label: i18n.products, hits: hitsByIndex[ config.indexes.products ] || [] } );
 			}
-			groups.push( { key: 'content', label: i18n.posts, hits: hitsByIndex[ config.indexes.content ] || [] } );
+			if ( config.indexes.content ) {
+				groups.push( { key: 'content', label: i18n.posts, hits: hitsByIndex[ config.indexes.content ] || [] } );
+			}
 			return {
 				groups: groups.filter( function ( group ) {
 					return group.hits.length > 0;
@@ -317,14 +356,16 @@
 			abort();
 			lastQuery = q;
 			if ( q.length < limits.minChars ) {
-				close();
+				reset();
 				return;
 			}
 			const queries = [];
 			if ( config.indexes.products ) {
 				queries.push( buildQuery( config.indexes.products, q, limits.products, fieldsFor( 'products', PRODUCT_FIELDS ) ) );
 			}
-			queries.push( buildQuery( config.indexes.content, q, limits.content, fieldsFor( 'content', CONTENT_FIELDS ) ) );
+			if ( config.indexes.content ) {
+				queries.push( buildQuery( config.indexes.content, q, limits.content, fieldsFor( 'content', CONTENT_FIELDS ), contentFilter ) );
+			}
 
 			const current = new AbortController();
 			controller = current;
@@ -347,7 +388,7 @@
 				render( result.groups, result.total );
 			} catch ( error ) {
 				if ( ! current.signal.aborted ) {
-					close(); // Network or API error: hide silently, the form keeps working.
+					reset(); // Network or API error: hide silently, the form keeps working.
 				}
 			} finally {
 				if ( controller === current ) {
@@ -362,7 +403,7 @@
 			if ( q.length < limits.minChars ) {
 				abort();
 				lastQuery = q;
-				close();
+				reset();
 				return;
 			}
 			timer = window.setTimeout( function () {
@@ -375,6 +416,9 @@
 				return;
 			}
 			const expanded = ! panel.hidden;
+			if ( ! expanded && options.length > 0 && shownQuery !== input.value.trim() ) {
+				reset(); // Dismissed while a newer query was pending: the kept list is for older text.
+			}
 			switch ( event.key ) {
 				case 'ArrowDown':
 					if ( options.length === 0 ) {
@@ -399,8 +443,8 @@
 				case 'Escape':
 					if ( expanded ) {
 						event.preventDefault();
-						close();
 					}
+					dismiss();
 					break;
 				case 'Enter':
 					if ( expanded && active >= 0 ) {
@@ -411,20 +455,20 @@
 							go( options[ active ].url );
 						}
 					} else {
-						close(); // Normal form submission: the theme results page is canonical.
+						dismiss(); // Normal form submission: the theme results page is canonical.
 					}
 					break;
 				case 'Tab':
-					close();
+					dismiss();
 					break;
 			}
 		} );
 
-		input.addEventListener( 'blur', close );
+		input.addEventListener( 'blur', dismiss );
 
 		document.addEventListener( 'mousedown', function ( event ) {
 			if ( event.target !== input && ! panel.contains( event.target ) ) {
-				close();
+				dismiss();
 			}
 		} );
 	}

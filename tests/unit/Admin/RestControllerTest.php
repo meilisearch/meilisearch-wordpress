@@ -313,4 +313,30 @@ final class RestControllerTest extends TestCase {
 		$this->controller->enqueue_assets( 'toplevel_page_meilisearch' );
 		$this->addToAssertionCount( 2 );
 	}
+
+	/**
+	 * admin.js shows these two messages next to the progress bar when a status request fails: the
+	 * first while it keeps retrying, the second when the session is gone and only a reload helps.
+	 */
+	public function test_script_receives_the_messages_for_a_failed_progress_refresh(): void {
+		Functions\when( 'plugins_url' )->returnArg();
+		Functions\when( 'rest_url' )->returnArg();
+		Functions\when( 'wp_create_nonce' )->justReturn( 'nonce-123' );
+		Functions\when( 'wp_enqueue_script' )->justReturn( true );
+		$i18n = array();
+		Functions\when( 'wp_localize_script' )->alias(
+			static function ( $handle, $name, $data ) use ( &$i18n ) {
+				$i18n = $data['i18n'];
+				return true;
+			}
+		);
+
+		$this->controller->enqueue_assets( 'toplevel_page_meilisearch' );
+
+		self::assertArrayHasKey( 'retrying', $i18n );
+		self::assertArrayHasKey( 'reload', $i18n );
+		self::assertNotSame( '', $i18n['retrying'] );
+		self::assertNotSame( '', $i18n['reload'] );
+		self::assertNotSame( $i18n['retrying'], $i18n['reload'] );
+	}
 }

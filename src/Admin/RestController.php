@@ -268,6 +268,8 @@ final class RestController implements Registrable {
 					/* translators: %s: error message. */
 					'failed'        => __( 'Last reindex failed: %s', 'meilisearch' ),
 					'abandoned'     => __( 'The previous reindex stopped responding. Start a new one.', 'meilisearch' ),
+					'retrying'      => __( 'Could not refresh the progress. Retrying…', 'meilisearch' ),
+					'reload'        => __( 'Could not refresh the progress. Reload the page to see the current state.', 'meilisearch' ),
 				),
 			)
 		);

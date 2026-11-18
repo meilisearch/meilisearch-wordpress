@@ -57,6 +57,51 @@ final class AutocompleteTest extends TestCase {
 		$this->assertFalse( wp_script_is( Autocomplete::HANDLE, 'enqueued' ) );
 	}
 
+	/**
+	 * A type that is indexed but registered with exclude_from_search is absent from the results page;
+	 * the filter shipped to the browser keeps it out of the suggestions (and of their total) too.
+	 */
+	public function test_content_filter_leaves_out_indexed_types_excluded_from_the_site_search(): void {
+		register_post_type(
+			'meili_hidden',
+			array(
+				'public'              => true,
+				'exclude_from_search' => true,
+			)
+		);
+		try {
+			update_option( Options::CONTENT, array_merge( (array) get_option( Options::CONTENT ), array( 'post_types' => array( 'post', 'page', 'meili_hidden' ) ) ) );
+			Plugin::instance()->get( 'index_manager' )->ensure_index( 'content' );
+			$post_id   = self::factory()->post->create( array( 'post_title' => 'Zyxquark field notes' ) );
+			$hidden_id = self::factory()->post->create(
+				array(
+					'post_type'  => 'meili_hidden',
+					'post_title' => 'Zyxquark internal record',
+				)
+			);
+			Plugin::instance()->get( 'collector' )->flush();
+			$this->run_actions();
+			$this->wait_for_tasks();
+
+			$config = Plugin::instance()->get( 'autocomplete' )->config();
+			$this->assertSame( 'post_type IN ["post", "page"]', $config['filters']['content'] );
+
+			// The query assets/js/autocomplete.js sends, with and without the filter.
+			$query    = array(
+				'indexUid' => $config['indexes']['content'],
+				'q'        => 'zyxquark',
+			);
+			$filtered = $this->meili( 'POST', '/multi-search', array( 'queries' => array( $query + array( 'filter' => $config['filters']['content'] ) ) ) )['results'][0];
+			$open     = $this->meili( 'POST', '/multi-search', array( 'queries' => array( $query ) ) )['results'][0];
+
+			$this->assertEqualsCanonicalizing( array( $post_id, $hidden_id ), array_map( 'intval', array_column( $open['hits'], 'id' ) ), 'Both documents are indexed.' );
+			$this->assertSame( array( $post_id ), array_map( 'intval', array_column( $filtered['hits'], 'id' ) ) );
+			$this->assertSame( 1, $filtered['estimatedTotalHits'] );
+		} finally {
+			unregister_post_type( 'meili_hidden' );
+		}
+	}
+
 	public function test_products_index_and_store_currency_when_woocommerce_is_active(): void {
 		$this->skip_without_woocommerce();
 		$this->enable_products();
