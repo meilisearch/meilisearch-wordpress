@@ -965,6 +965,30 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
+	 * A stored Content post type that is not registered as public is never selected: not counted, not
+	 * scanned, and its documents are stale for the sweep.
+	 */
+	public function test_non_public_stored_type_is_not_selected(): void {
+		$this->option_store[ Options::CONTENT ]['post_types'] = array( 'post', 'shop_coupon', 'page' );
+		$this->add_post(
+			array(
+				'ID'        => 10,
+				'post_type' => 'shop_coupon',
+			)
+		);
+		$wpdb = $this->install_wpdb( array( array(), array( 10 ) ), '3' );
+
+		$this->reindexer()->count_indexable( 'content' );
+		$this->reindexer()->indexable_ids_after( 'content', 0, 10 );
+		$stale = $this->reindexer()->non_indexable( 'content', array( 10 ) );
+
+		$this->assertSame( array( 'post', 'page' ), $wpdb->prepared[0][1] );
+		$this->assertSame( array( 'post', 'page', 0, 10 ), $wpdb->prepared[1][1] );
+		$this->assertSame( array( 10, 'post', 'page' ), $wpdb->prepared[2][1] );
+		$this->assertSame( array( 10 ), $stale );
+	}
+
+	/**
 	 * Status exposes the stored state.
 	 */
 	public function test_status_returns_stored_state(): void {

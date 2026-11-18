@@ -11,6 +11,13 @@ use Meilisearch\WordPress\Tests\Unit\TestCase;
 
 final class IndexabilityTest extends TestCase {
 
+	/**
+	 * Registered post types: name => properties matched by get_post_types().
+	 *
+	 * @var array<string, array<string, bool>>
+	 */
+	private array $registered = array();
+
 	protected function set_up(): void {
 		parent::set_up();
 		$this->stub_options(
@@ -24,6 +31,95 @@ final class IndexabilityTest extends TestCase {
 		);
 		Functions\when( 'wp_is_post_revision' )->justReturn( false );
 		Functions\when( 'wp_is_post_autosave' )->justReturn( false );
+		$this->registered = array(
+			'post'        => array(
+				'public'              => true,
+				'exclude_from_search' => false,
+			),
+			'page'        => array(
+				'public'              => true,
+				'exclude_from_search' => false,
+			),
+			'attachment'  => array(
+				'public'              => true,
+				'exclude_from_search' => false,
+			),
+			'product'     => array(
+				'public'              => true,
+				'exclude_from_search' => false,
+			),
+			'shop_coupon' => array(
+				'public'              => false,
+				'exclude_from_search' => true,
+			),
+		);
+		// Like WordPress: the types whose properties match every requested one.
+		Functions\when( 'get_post_types' )->alias(
+			function ( $args = array() ): array {
+				$names = array();
+				foreach ( $this->registered as $name => $props ) {
+					foreach ( (array) $args as $key => $value ) {
+						if ( ! array_key_exists( $key, $props ) || $props[ $key ] !== $value ) {
+							continue 2;
+						}
+					}
+					$names[ $name ] = $name;
+				}
+				return $names;
+			}
+		);
+	}
+
+	/**
+	 * Stores the Content post types.
+	 *
+	 * @param list<string> $types Post types.
+	 */
+	private function enable( array $types ): void {
+		$this->stub_options(
+			array(
+				Options::CONTENT => array(
+					'post_types' => $types,
+					'taxonomies' => array(),
+					'meta_keys'  => array(),
+				),
+			)
+		);
+	}
+
+	public function test_stored_non_public_type_is_not_indexable(): void {
+		$this->enable( array( 'post', 'shop_coupon' ) );
+		$indexability = new Indexability( new Options() );
+
+		$this->assertFalse( $indexability->is_indexable( $this->post( array( 'post_type' => 'shop_coupon' ) ) ) );
+		$this->assertNull( $indexability->index_for_type( 'shop_coupon' ) );
+		$this->assertSame( 'content', $indexability->index_for_type( 'post' ) );
+		$this->assertSame( array( 'post' ), $indexability->content_post_types() );
+	}
+
+	public function test_stored_type_that_is_not_registered_is_not_indexed(): void {
+		$this->enable( array( 'post', 'event' ) );
+		$indexability = new Indexability( new Options() );
+
+		$this->assertNull( $indexability->index_for_type( 'event' ) );
+		$this->assertSame( array( 'post' ), $indexability->content_post_types() );
+	}
+
+	public function test_type_made_non_public_is_searched_in_the_database(): void {
+		$this->enable( array( 'post', 'page', 'event' ) );
+		$this->registered['event'] = array(
+			'public'              => true,
+			'exclude_from_search' => false,
+		);
+		$indexability              = new Indexability( new Options() );
+		$this->assertSame( 'content', $indexability->index_for_type( 'event' ) );
+		$this->assertSame( array( 'product' ), $indexability->unindexed_searchable_types() );
+
+		// Re-registered hidden from the public, still in default searches: no index answers for it.
+		$this->registered['event']['public'] = false;
+
+		$this->assertNull( $indexability->index_for_type( 'event' ) );
+		$this->assertSame( array( 'product', 'event' ), $indexability->unindexed_searchable_types() );
 	}
 
 	private function post( array $props = array() ): \WP_Post {
@@ -153,17 +249,14 @@ final class IndexabilityTest extends TestCase {
 	}
 
 	public function test_unindexed_searchable_types(): void {
-		Functions\expect( 'get_post_types' )
-			->with( array( 'exclude_from_search' => false ) )
-			->andReturn(
-				array(
-					'post'       => 'post',
-					'page'       => 'page',
-					'attachment' => 'attachment',
-					'event'      => 'event',
-					'product'    => 'product',
-				)
-			);
+		$this->registered = array_slice( $this->registered, 0, 3, true )
+			+ array(
+				'event' => array(
+					'public'              => true,
+					'exclude_from_search' => false,
+				),
+			)
+			+ array_slice( $this->registered, 3, null, true );
 
 		$this->assertSame( array( 'event', 'product' ), ( new Indexability( new Options() ) )->unindexed_searchable_types() );
 		$this->assertSame( array( 'event' ), ( new Indexability( new Options(), static fn(): bool => true ) )->unindexed_searchable_types() );

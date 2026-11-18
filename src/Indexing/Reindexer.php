@@ -822,7 +822,8 @@ final class Reindexer implements Registrable {
 	 */
 	private function post_types( string $logical ): array {
 		if ( 'content' === $logical ) {
-			return $this->options->enabled_post_types();
+			// The Indexability rule's list: an enabled type that is not public is never selected.
+			return $this->indexability->content_post_types();
 		}
 		if ( 'products' === $logical && $this->options->products_enabled() ) {
 			return array( 'product' );

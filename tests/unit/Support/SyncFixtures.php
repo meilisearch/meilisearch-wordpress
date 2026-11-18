@@ -122,6 +122,15 @@ trait SyncFixtures {
 		Functions\when( 'wp_is_post_revision' )->justReturn( false );
 		Functions\when( 'wp_is_post_autosave' )->justReturn( false );
 		Functions\when( 'post_type_exists' )->justReturn( true );
+		// The public post types registered by WordPress and WooCommerce (Indexability only indexes public ones).
+		Functions\when( 'get_post_types' )->justReturn(
+			array(
+				'post'       => 'post',
+				'page'       => 'page',
+				'attachment' => 'attachment',
+				'product'    => 'product',
+			)
+		);
 		Functions\when( 'taxonomy_exists' )->justReturn( true );
 		Functions\when( 'get_current_blog_id' )->justReturn( 1 );
 		Functions\when( 'is_multisite' )->justReturn( false );
