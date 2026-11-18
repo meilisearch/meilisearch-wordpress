@@ -166,6 +166,21 @@ final class Autocomplete implements Registrable {
 	}
 
 	/**
+	 * Why visitors' browsers cannot use the browser host (BrowserHost::warning()), or null when they can or
+	 * autocomplete is off. The site's URL is home_url(), which visitors open.
+	 *
+	 * @param Options $options Plugin options.
+	 * @return string|null Plain text.
+	 */
+	public static function host_warning( Options $options ): ?string {
+		if ( ! $options->search()['autocomplete'] || ! $options->is_configured() ) {
+			return null;
+		}
+
+		return BrowserHost::warning( self::browser_host_for( $options ), home_url( '/' ) );
+	}
+
+	/**
 	 * The field shown under each suggestion of an index, or null for none. SettingsBuilder adds it to the
 	 * displayed attributes of the indexes the plugin creates, so the browser key can read it.
 	 *
@@ -188,7 +203,17 @@ final class Autocomplete implements Registrable {
 	 * Meilisearch on a private address (loopback, internal network) returns the public URL here.
 	 */
 	public function browser_host(): string {
-		$host = $this->options->host();
+		return self::browser_host_for( $this->options );
+	}
+
+	/**
+	 * The Meilisearch URL visitors' browsers use, for the given options (see browser_host()).
+	 *
+	 * @param Options $options Plugin options.
+	 * @return string
+	 */
+	public static function browser_host_for( Options $options ): string {
+		$host = $options->host();
 		/**
 		 * Filters the Meilisearch URL the autocomplete script calls from the browser.
 		 *

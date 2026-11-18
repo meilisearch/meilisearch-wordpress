@@ -402,4 +402,24 @@ final class AutocompleteTest extends TestCase {
 
 		self::assertSame( $options->host(), $this->autocomplete()->config()['host'] );
 	}
+
+	public function test_host_warning_checks_the_filtered_browser_host_against_the_site(): void {
+		$this->stub_options( array_replace_recursive( self::options(), array( Options::CONNECTION => array( 'host' => 'http://127.0.0.1:7700' ) ) ) );
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.example.com' . $path );
+
+		self::assertStringContainsString( 'http://127.0.0.1:7700', (string) Autocomplete::host_warning( new Options() ) );
+
+		Filters\expectApplied( 'meilisearch_autocomplete_host' )->once()->andReturn( 'https://search.example.com' );
+		self::assertNull( Autocomplete::host_warning( new Options() ), 'A public URL from the filter is what browsers use.' );
+	}
+
+	public function test_no_host_warning_when_autocomplete_is_off_or_the_site_is_local(): void {
+		$this->stub_options( array_replace_recursive( self::options(), array( Options::CONNECTION => array( 'host' => 'http://127.0.0.1:7700' ) ) ) );
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'http://localhost:8080' . $path );
+		self::assertNull( Autocomplete::host_warning( new Options() ), 'Local development site.' );
+
+		$this->stub_options( array_replace_recursive( self::options(), array( Options::SEARCH => array( 'autocomplete' => false ) ) ) );
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.example.com' . $path );
+		self::assertNull( Autocomplete::host_warning( new Options() ) );
+	}
 }

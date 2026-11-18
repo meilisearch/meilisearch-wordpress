@@ -14,6 +14,7 @@ defined( 'ABSPATH' ) || exit;
 use Meilisearch\WordPress\Admin\Menu;
 use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\ClientFactory;
+use Meilisearch\WordPress\Frontend\Autocomplete;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Indexing\Reindexer;
@@ -48,6 +49,7 @@ final class SiteHealth implements Registrable {
 	public const TEST_COVERAGE   = 'meilisearch_search_coverage';
 	public const TEST_DISPLAYED  = 'meilisearch_displayed_attributes';
 	public const TEST_SQL        = 'meilisearch_sql_filters';
+	public const TEST_BROWSER    = 'meilisearch_autocomplete_host';
 
 	/**
 	 * Memoized results for this request.
@@ -146,6 +148,7 @@ final class SiteHealth implements Registrable {
 			$results[] = $this->checked( self::TEST_DISPLAYED, $usable, fn (): array => $this->displayed_result() );
 			$results[] = self::evaluate_coverage( $this->options->search()['replace'], $this->indexability->unindexed_searchable_types(), Menu::url( 'content' ) );
 			$results[] = $this->sql_filters_result();
+			$results[] = self::evaluate_browser_host( Autocomplete::host_warning( $this->options ), Menu::url( 'search' ) );
 		}
 
 		$results[] = self::evaluate_queue( $this->queue->count( 'pending' ), $this->queue->count( 'failed' ), $status_url );
@@ -473,6 +476,32 @@ final class SiteHealth implements Registrable {
 	}
 
 	/**
+	 * Reports an autocomplete host that visitors' browsers cannot use (Autocomplete::host_warning()).
+	 *
+	 * @param string|null $warning    Why the host does not work for visitors; null when it does or autocomplete is off.
+	 * @param string      $search_url URL of the Search tab.
+	 * @return Result
+	 */
+	public static function evaluate_browser_host( ?string $warning, string $search_url ): array {
+		if ( null === $warning ) {
+			return self::make(
+				self::TEST_BROWSER,
+				'good',
+				__( 'Visitors\' browsers can reach Meilisearch for autocomplete', 'meilisearch' ),
+				__( 'Autocomplete is disabled, or its Meilisearch URL is one that visitors\' browsers can use.', 'meilisearch' )
+			);
+		}
+
+		return self::make(
+			self::TEST_BROWSER,
+			'recommended',
+			__( 'Autocomplete cannot reach Meilisearch from visitors\' browsers', 'meilisearch' ),
+			$warning,
+			$search_url
+		);
+	}
+
+	/**
 	 * Reports other code on WP_Query's SQL filters while "Replace site search" is on: searches answered by
 	 * Meilisearch skip the SQL those callbacks build, so the constraints they add do not apply.
 	 *
@@ -666,6 +695,7 @@ final class SiteHealth implements Registrable {
 			self::TEST_COVERAGE   => __( 'Meilisearch search coverage', 'meilisearch' ),
 			self::TEST_DISPLAYED  => __( 'Meilisearch fields visible to visitors', 'meilisearch' ),
 			self::TEST_SQL        => __( 'Meilisearch and SQL query filters', 'meilisearch' ),
+			self::TEST_BROWSER    => __( 'Meilisearch autocomplete URL', 'meilisearch' ),
 		);
 	}
 

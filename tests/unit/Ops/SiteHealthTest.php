@@ -348,4 +348,13 @@ final class SiteHealthTest extends TestCase {
 		self::assertStringContainsString( 'cb10; 3 more', $description );
 		self::assertStringNotContainsString( 'cb11', $description );
 	}
+
+	public function test_browser_host_warning_is_recommended(): void {
+		self::assertSame( 'good', SiteHealth::evaluate_browser_host( null, self::URL )['status'] );
+
+		$result = SiteHealth::evaluate_browser_host( 'Browsers block http://x.', self::URL );
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertSame( SiteHealth::TEST_BROWSER, $result['test'] );
+		self::assertSame( '<p>Browsers block http://x.</p>', $result['description'] );
+	}
 }

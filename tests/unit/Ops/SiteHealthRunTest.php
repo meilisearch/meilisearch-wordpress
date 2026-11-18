@@ -155,6 +155,19 @@ final class SiteHealthRunTest extends TestCase {
 		self::assertSame( 0, $this->transport->pending() );
 	}
 
+	public function test_loopback_autocomplete_host_on_a_public_site_is_recommended(): void {
+		$this->option_store[ Options::CONNECTION ]['host']     = 'http://127.0.0.1:7700';
+		$this->option_store[ Options::SEARCH ]['autocomplete'] = true;
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.example.com' . $path );
+		$this->transport->fail( new \RuntimeException( 'unreachable' ) );
+
+		$by_test = array_column( $this->health()->run_all(), null, 'test' );
+
+		self::assertSame( 'recommended', $by_test[ SiteHealth::TEST_BROWSER ]['status'] );
+		self::assertStringContainsString( 'http://127.0.0.1:7700', $by_test[ SiteHealth::TEST_BROWSER ]['description'] );
+		self::assertStringContainsString( 'tab=search', $by_test[ SiteHealth::TEST_BROWSER ]['actions'] );
+	}
+
 	public function test_unexpected_exceptions_are_redacted_in_not_checked_results(): void {
 		$this->transport->respond( 200, array( 'pkgVersion' => '1.53.1' ) );
 		$this->transport->fail( new \RuntimeException( 'boom with ' . self::ADMIN_KEY . ' and ' . self::SEARCH_KEY ) );
