@@ -405,7 +405,7 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 			esc_attr( Options::CONNECTION ),
 			checked( (bool) $connection['delete_on_uninstall'], true, false )
 		);
-		echo esc_html__( 'Delete the indexes and the search key from Meilisearch when the plugin is uninstalled.', 'meilisearch' ) . '</label></td></tr>';
+		echo esc_html__( 'Delete the indexes and the search key from Meilisearch when the plugin is uninstalled or, on a multisite network, when this site is deleted.', 'meilisearch' ) . '</label></td></tr>';
 
 		echo '<tr><th scope="row">' . esc_html__( 'Status', 'meilisearch' ) . '</th><td><p class="meilisearch-status">';
 		if ( ! $this->options->is_configured() ) {

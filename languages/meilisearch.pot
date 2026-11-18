@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-11-18T18:29:44+00:00\n"
+"POT-Creation-Date: 2026-11-18T18:33:53+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: meilisearch\n"
@@ -135,7 +135,7 @@ msgid "Uninstall"
 msgstr ""
 
 #: src/Admin/ConnectionTab.php:408
-msgid "Delete the indexes and the search key from Meilisearch when the plugin is uninstalled."
+msgid "Delete the indexes and the search key from Meilisearch when the plugin is uninstalled or, on a multisite network, when this site is deleted."
 msgstr ""
 
 #: src/Admin/ConnectionTab.php:410
