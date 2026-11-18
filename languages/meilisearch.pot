@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-11-13T07:13:28+00:00\n"
+"POT-Creation-Date: 2026-11-18T14:51:27+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: meilisearch\n"
@@ -17,9 +17,9 @@ msgstr ""
 #. Plugin Name of the plugin
 #. Author of the plugin
 #: meilisearch.php
-#: src/Admin/Menu.php:70
 #: src/Admin/Menu.php:71
-#: src/Admin/Menu.php:141
+#: src/Admin/Menu.php:72
+#: src/Admin/Menu.php:158
 msgid "Meilisearch"
 msgstr ""
 
@@ -38,132 +38,140 @@ msgstr ""
 msgid "https://www.meilisearch.com"
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:71
+#: src/Admin/ConnectionTab.php:78
 msgid "Connection"
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:156
+#: src/Admin/ConnectionTab.php:163
 msgid "The host must be an http:// or https:// URL. The previous value was kept."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:223
+#: src/Admin/ConnectionTab.php:179
+msgid "The search key contains a line break, a tab or another character that cannot be part of a key. The previous key was kept."
+msgstr ""
+
+#: src/Admin/ConnectionTab.php:204
+msgid "The admin API key contains a line break, a tab or another character that cannot be part of a key. The previous key was kept."
+msgstr ""
+
+#: src/Admin/ConnectionTab.php:276
 msgid "Enter the Meilisearch host URL and an admin API key."
 msgstr ""
 
 #. translators: %s: error message.
-#: src/Admin/ConnectionTab.php:234
+#: src/Admin/ConnectionTab.php:289
 #, php-format
 msgid "Could not connect to Meilisearch: %s"
 msgstr ""
 
 #. translators: %s: Meilisearch version.
-#: src/Admin/ConnectionTab.php:250
+#: src/Admin/ConnectionTab.php:306
 #, php-format
 msgid "Connected to Meilisearch %s. Indexes are ready."
 msgstr ""
 
 #. translators: %s: Meilisearch version.
-#: src/Admin/ConnectionTab.php:250
-#: src/Admin/ConnectionTab.php:362
+#: src/Admin/ConnectionTab.php:306
+#: src/Admin/ConnectionTab.php:419
 msgid "(version not readable with this key)"
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:253
+#: src/Admin/ConnectionTab.php:309
 msgid "A search-only key was created for autocomplete."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:258
+#: src/Admin/ConnectionTab.php:314
 msgid "Your admin key cannot create API keys: paste a search-only key below to enable autocomplete."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:269
+#: src/Admin/ConnectionTab.php:325
 msgid "The search key is not a search-only key for this site's indexes (it is the admin or master key, Meilisearch does not know it, or it allows more than \"search\"). It is not sent to visitors: replace it with a search-only key."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:272
+#: src/Admin/ConnectionTab.php:328
 msgid "The search key could not be verified. Make sure it only allows the \"search\" action."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:296
+#: src/Admin/ConnectionTab.php:352
 msgid "Host URL"
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:298
+#: src/Admin/ConnectionTab.php:354
 msgid "Defined by MEILISEARCH_HOST in wp-config.php."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:308
+#: src/Admin/ConnectionTab.php:364
 msgid "Admin API key"
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:310
+#: src/Admin/ConnectionTab.php:366
 msgid "Defined by MEILISEARCH_ADMIN_KEY in wp-config.php."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:317
+#: src/Admin/ConnectionTab.php:373
 msgid "Leave empty to keep the saved key. The key is never displayed."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:321
+#: src/Admin/ConnectionTab.php:377
 msgid "Index prefix"
 msgstr ""
 
 #. translators: %s: index prefix in use.
-#: src/Admin/ConnectionTab.php:331
+#: src/Admin/ConnectionTab.php:387
 #, php-format
 msgid "Lowercase letters, digits and underscores. Leave empty for the default. In use: %s. Changing it requires a full reindex."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:337
+#: src/Admin/ConnectionTab.php:393
 msgid "Search key"
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:343
+#: src/Admin/ConnectionTab.php:399
 msgid "A key allowed only the \"search\" action on this site's indexes. It is sent to visitors' browsers for autocomplete."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:346
+#: src/Admin/ConnectionTab.php:402
 msgid "Uninstall"
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:352
+#: src/Admin/ConnectionTab.php:408
 msgid "Delete the indexes and the search key from Meilisearch when the plugin is uninstalled."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:354
+#: src/Admin/ConnectionTab.php:410
 #: src/Admin/StatusTab.php:78
 msgid "Status"
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:356
+#: src/Admin/ConnectionTab.php:412
 #: src/Admin/StatusTab.php:298
 msgid "Not connected."
 msgstr ""
 
 #. translators: %s: Meilisearch version.
-#: src/Admin/ConnectionTab.php:361
+#: src/Admin/ConnectionTab.php:418
 #: src/Admin/RestController.php:259
 #, php-format
 msgid "Connected to Meilisearch %s."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:366
+#: src/Admin/ConnectionTab.php:423
 msgid "Search key: missing."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:368
+#: src/Admin/ConnectionTab.php:425
 msgid "Search key: OK."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:370
+#: src/Admin/ConnectionTab.php:427
 msgid "Search key: not verified, so autocomplete stays off. Save to verify it."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:374
+#: src/Admin/ConnectionTab.php:431
 msgid "Saved but not verified yet. Save to test the connection."
 msgstr ""
 
-#: src/Admin/ConnectionTab.php:379
+#: src/Admin/ConnectionTab.php:436
 msgid "Save and connect"
 msgstr ""
 
@@ -172,19 +180,19 @@ msgstr ""
 msgid "Content"
 msgstr ""
 
-#: src/Admin/ContentTab.php:152
+#: src/Admin/ContentTab.php:186
 msgid "Choose what is sent to Meilisearch. Only published, public content is ever indexed. Content of unchecked post types is removed from Meilisearch when you save; new post types and fields are indexed by the next full reindex."
 msgstr ""
 
-#: src/Admin/ContentTab.php:197
+#: src/Admin/ContentTab.php:231
 msgid "Taxonomies"
 msgstr ""
 
-#: src/Admin/ContentTab.php:222
+#: src/Admin/ContentTab.php:256
 msgid "Meta keys (one per line; scalar values only)"
 msgstr ""
 
-#: src/Admin/Menu.php:143
+#: src/Admin/Menu.php:160
 msgid "Meilisearch settings"
 msgstr ""
 
@@ -215,41 +223,46 @@ msgstr ""
 msgid "Dismiss this notice"
 msgstr ""
 
-#: src/Admin/Notices.php:316
+#: src/Admin/Notices.php:317
 msgid "Meilisearch could not create a search-only key with your admin key. Paste a search-only key in the Connection tab to enable autocomplete."
 msgstr ""
 
-#: src/Admin/Notices.php:318
+#: src/Admin/Notices.php:319
+#: src/Admin/Notices.php:338
 msgid "Open the Connection tab"
 msgstr ""
 
-#: src/Admin/Notices.php:340
+#: src/Admin/Notices.php:336
+msgid "Meilisearch: the host, admin key or index prefix changed since the last connection. Site search uses the database and autocomplete is off until you save the Connection tab (or run \"wp meilisearch connect\") and then reindex."
+msgstr ""
+
+#: src/Admin/Notices.php:360
 msgid "content"
 msgstr ""
 
-#: src/Admin/Notices.php:341
+#: src/Admin/Notices.php:361
 msgid "products"
 msgstr ""
 
 #. translators: %s: comma-separated index names ("content", "products").
-#: src/Admin/Notices.php:348
+#: src/Admin/Notices.php:368
 #, php-format
 msgid "Meilisearch: run a full reindex of %s so your latest settings take effect."
 msgstr ""
 
-#: src/Admin/Notices.php:352
+#: src/Admin/Notices.php:372
 msgid "Go to the Status tab"
 msgstr ""
 
 #. translators: %d: number of errors.
-#: src/Admin/Notices.php:372
+#: src/Admin/Notices.php:392
 #, php-format
 msgid "Meilisearch logged %d error in the last 24 hours."
 msgid_plural "Meilisearch logged %d errors in the last 24 hours."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/Admin/Notices.php:376
+#: src/Admin/Notices.php:396
 msgid "View errors"
 msgstr ""
 
@@ -328,8 +341,16 @@ msgstr ""
 msgid "The previous reindex stopped responding. Start a new one."
 msgstr ""
 
+#: src/Admin/RestController.php:271
+msgid "Could not refresh the progress. Retrying…"
+msgstr ""
+
+#: src/Admin/RestController.php:272
+msgid "Could not refresh the progress. Reload the page to see the current state."
+msgstr ""
+
 #: src/Admin/SearchTab.php:48
-#: src/Ops/SiteHealth.php:769
+#: src/Ops/SiteHealth.php:776
 msgid "Search"
 msgstr ""
 
@@ -503,7 +524,7 @@ msgid "Enqueued at"
 msgstr ""
 
 #: src/Admin/StatusTab.php:367
-#: src/Frontend/Autocomplete.php:139
+#: src/Frontend/Autocomplete.php:160
 msgid "Products"
 msgstr ""
 
@@ -523,7 +544,7 @@ msgstr ""
 
 #: src/Api/ClientFactory.php:60
 #: src/Api/ClientFactory.php:86
-#: src/Indexing/Reindexer.php:115
+#: src/Indexing/Reindexer.php:135
 msgid "Meilisearch is not configured."
 msgstr ""
 
@@ -545,56 +566,60 @@ msgstr ""
 msgid "Meilisearch task %d was canceled."
 msgstr ""
 
-#: src/Frontend/Autocomplete.php:140
+#: src/Frontend/Autocomplete.php:161
 msgid "Posts"
 msgstr ""
 
-#: src/Frontend/Autocomplete.php:141
+#: src/Frontend/Autocomplete.php:162
 msgid "Search suggestions"
 msgstr ""
 
-#: src/Frontend/Autocomplete.php:142
+#: src/Frontend/Autocomplete.php:163
 msgid "No suggestions found."
 msgstr ""
 
-#: src/Frontend/Autocomplete.php:143
+#: src/Frontend/Autocomplete.php:164
 msgid "1 suggestion available. Use the up and down arrow keys to browse."
 msgstr ""
 
 #. translators: %d: number of suggestions.
-#: src/Frontend/Autocomplete.php:145
+#: src/Frontend/Autocomplete.php:166
 #, php-format
 msgid "%d suggestions available. Use the up and down arrow keys to browse."
 msgstr ""
 
 #. translators: %s: the search terms.
-#: src/Frontend/Autocomplete.php:147
+#: src/Frontend/Autocomplete.php:168
 #, php-format
 msgid "See all results for “%s”"
 msgstr ""
 
 #. translators: 1: number of results, 2: the search terms.
-#: src/Frontend/Autocomplete.php:149
+#: src/Frontend/Autocomplete.php:170
 #, php-format
 msgid "See all %1$d results for “%2$s”"
 msgstr ""
 
 #. translators: 1: version found on the server, 2: minimum supported version.
-#: src/Indexing/IndexManager.php:65
+#: src/Indexing/IndexManager.php:76
 #, php-format
 msgid "Meilisearch %1$s is not supported. Version %2$s or newer is required."
 msgstr ""
 
-#: src/Indexing/IndexManager.php:66
+#: src/Indexing/IndexManager.php:77
 msgid "(unknown)"
 msgstr ""
 
-#: src/Indexing/IndexManager.php:271
+#: src/Indexing/IndexManager.php:375
 msgid "Meilisearch did not return the search key."
 msgstr ""
 
-#: src/Indexing/Reindexer.php:94
+#: src/Indexing/Reindexer.php:114
 msgid "The first reindex batch could not be scheduled."
+msgstr ""
+
+#: src/Indexing/Reindexer.php:500
+msgid "The Meilisearch host, admin key or index prefix changed since the last connection. Save the Connection tab (or run \"wp meilisearch connect\"), then reindex."
 msgstr ""
 
 #: src/Ops/Privacy.php:42
@@ -632,7 +657,7 @@ msgstr ""
 #. translators: %s: error message returned by Meilisearch or by the HTTP request.
 #: src/Ops/SiteHealth.php:172
 #, php-format
-msgid "The last request to Meilisearch failed: %s. Search falls back to the WordPress database and content changes wait in the queue until the connection works again."
+msgid "The last request to Meilisearch failed: %s. Search falls back to the WordPress database. Content changes are retried for several hours; if the connection is not back by then, the plugin asks for a full reindex."
 msgstr ""
 
 #: src/Ops/SiteHealth.php:183
@@ -664,137 +689,137 @@ msgid "The plugin can reach your Meilisearch instance with the configured admin 
 msgstr ""
 
 #. translators: %s: index UID.
-#: src/Ops/SiteHealth.php:228
+#: src/Ops/SiteHealth.php:231
 #, php-format
 msgid "The index %s does not exist yet."
 msgstr ""
 
 #. translators: 1: index UID, 2: number of documents in Meilisearch, 3: number of searchable items in WordPress.
-#: src/Ops/SiteHealth.php:236
+#: src/Ops/SiteHealth.php:242
 #, php-format
 msgid "%1$s holds %2$d documents but WordPress has %3$d searchable items."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:248
+#: src/Ops/SiteHealth.php:254
 msgid "Meilisearch has all your searchable content"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:249
+#: src/Ops/SiteHealth.php:255
 msgid "Document counts in Meilisearch match the published content WordPress expects to find (within 2%)."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:256
+#: src/Ops/SiteHealth.php:262
 msgid "Some content is missing from Meilisearch or out of date"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:257
+#: src/Ops/SiteHealth.php:263
 msgid "Run a full reindex from the Status tab or with \"wp meilisearch reindex\"."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:281
+#: src/Ops/SiteHealth.php:287
 msgid "Meilisearch index settings are complete"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:282
+#: src/Ops/SiteHealth.php:288
 msgid "Every attribute the plugin filters or sorts on is configured in Meilisearch."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:289
+#: src/Ops/SiteHealth.php:295
 msgid "Some required index settings are missing"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:290
+#: src/Ops/SiteHealth.php:296
 msgid "Search filters and sorting need these attributes to be filterable or sortable:"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:290
+#: src/Ops/SiteHealth.php:296
 msgid "Save the Connection tab to apply them again."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:313
+#: src/Ops/SiteHealth.php:319
 msgid "No browser search key is in use"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:314
+#: src/Ops/SiteHealth.php:320
 msgid "Autocomplete is disabled, so no Meilisearch key is sent to visitors' browsers."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:321
+#: src/Ops/SiteHealth.php:327
 msgid "Autocomplete has no search key"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:322
+#: src/Ops/SiteHealth.php:328
 msgid "Autocomplete is enabled but no search key is stored, so the suggestions stay hidden. Save the Connection tab to create one, or paste a search-only key."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:331
+#: src/Ops/SiteHealth.php:337
 msgid "The browser search key is not a search-only key"
 msgstr ""
 
 #. translators: %s: Meilisearch error code, or "none".
-#: src/Ops/SiteHealth.php:334
+#: src/Ops/SiteHealth.php:340
 #, php-format
 msgid "The stored search key is the admin or master key, is unknown to Meilisearch, or can call more than \"search\" (Meilisearch answer: %s). It is not sent to visitors. Save the Connection tab or paste a search-only key."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:335
+#: src/Ops/SiteHealth.php:341
 msgid "none"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:345
+#: src/Ops/SiteHealth.php:351
 msgid "The browser search key could not be verified"
 msgstr ""
 
 #. translators: %s: error message.
-#: src/Ops/SiteHealth.php:348
+#: src/Ops/SiteHealth.php:354
 #, php-format
 msgid "The admin key cannot read the details of the search key (%s). Check in Meilisearch that this key only allows the \"search\" action on this site's indexes, because every visitor can see it."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:349
+#: src/Ops/SiteHealth.php:355
 msgid "unknown error"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:362
+#: src/Ops/SiteHealth.php:368
 msgid "The browser search key is restricted to search"
 msgstr ""
 
 #. translators: %s: comma-separated index UIDs.
-#: src/Ops/SiteHealth.php:365
+#: src/Ops/SiteHealth.php:371
 #, php-format
 msgid "The key used by visitors' browsers can only search %s."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:374
+#: src/Ops/SiteHealth.php:380
 msgid "The browser search key has too many permissions"
 msgstr ""
 
 #. translators: 1: actions the key allows, 2: indexes the key allows, 3: this site's index UIDs.
-#: src/Ops/SiteHealth.php:377
+#: src/Ops/SiteHealth.php:383
 #, php-format
 msgid "Every visitor can read this key. It allows the actions [%1$s] on the indexes [%2$s], but it must allow only \"search\" on %3$s. Save the Connection tab to replace it with a restricted key."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:400
+#: src/Ops/SiteHealth.php:406
 msgid "Meilisearch can answer your site searches"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:401
+#: src/Ops/SiteHealth.php:407
 msgid "Every post type included in site searches is indexed, or Meilisearch search is turned off."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:408
+#: src/Ops/SiteHealth.php:414
 msgid "Some site searches are not answered by Meilisearch"
 msgstr ""
 
 #. translators: %s: comma-separated post type names.
-#: src/Ops/SiteHealth.php:411
+#: src/Ops/SiteHealth.php:417
 #, php-format
 msgid "These post types are included in site searches but are not indexed: %s. Searches that include them, such as the default theme search, keep using the WordPress database. Index them in the Content tab (products in the WooCommerce tab)."
 msgstr ""
 
 #. translators: %d: number of failed sync jobs.
-#: src/Ops/SiteHealth.php:431
+#: src/Ops/SiteHealth.php:437
 #, php-format
 msgid "%d sync job failed after all retries."
 msgid_plural "%d sync jobs failed after all retries."
@@ -802,124 +827,124 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %d: number of pending sync jobs.
-#: src/Ops/SiteHealth.php:438
+#: src/Ops/SiteHealth.php:444
 #, php-format
 msgid "%d sync job is waiting to run."
 msgid_plural "%d sync jobs are waiting to run."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/Ops/SiteHealth.php:440
+#: src/Ops/SiteHealth.php:446
 msgid "Make sure WP-Cron (or a server cron calling wp-cron.php) runs regularly."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:447
+#: src/Ops/SiteHealth.php:453
 msgid "The Meilisearch sync queue is healthy"
 msgstr ""
 
 #. translators: %d: number of pending sync jobs.
-#: src/Ops/SiteHealth.php:450
+#: src/Ops/SiteHealth.php:456
 #, php-format
 msgid "%d sync job is waiting and none failed."
 msgid_plural "%d sync jobs are waiting and none failed."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/Ops/SiteHealth.php:459
+#: src/Ops/SiteHealth.php:465
 msgid "Some Meilisearch sync jobs failed"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:459
+#: src/Ops/SiteHealth.php:465
 msgid "The Meilisearch sync queue is backed up"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:460
+#: src/Ops/SiteHealth.php:466
 msgid "Recent errors are listed in the Status tab."
 msgstr ""
 
 #. translators: %s: index name (content or products).
-#: src/Ops/SiteHealth.php:480
+#: src/Ops/SiteHealth.php:486
 #, php-format
 msgid "The %s index needs a full reindex after a settings change."
 msgstr ""
 
 #. translators: 1: index name (content or products), 2: error message.
-#: src/Ops/SiteHealth.php:488
+#: src/Ops/SiteHealth.php:494
 #, php-format
 msgid "The last reindex of the %1$s index failed: %2$s"
 msgstr ""
 
 #. translators: %s: index name (content or products).
-#: src/Ops/SiteHealth.php:497
+#: src/Ops/SiteHealth.php:503
 #, php-format
 msgid "The reindex of the %s index stopped making progress. Start it again from the Status tab."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:506
+#: src/Ops/SiteHealth.php:512
 msgid "No Meilisearch reindex is needed"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:507
+#: src/Ops/SiteHealth.php:513
 msgid "The indexes match the current plugin settings."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:514
+#: src/Ops/SiteHealth.php:520
 msgid "A Meilisearch reindex is needed"
 msgstr ""
 
 #. translators: %s: name of the Site Health check.
-#: src/Ops/SiteHealth.php:535
+#: src/Ops/SiteHealth.php:541
 #, php-format
 msgid "This check could not run: %s"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:560
+#: src/Ops/SiteHealth.php:566
 msgid "Meilisearch connection"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:561
+#: src/Ops/SiteHealth.php:567
 msgid "Meilisearch document counts"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:562
+#: src/Ops/SiteHealth.php:568
 msgid "Meilisearch index settings"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:563
+#: src/Ops/SiteHealth.php:569
 msgid "Meilisearch browser search key"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:564
+#: src/Ops/SiteHealth.php:570
 msgid "Meilisearch sync queue"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:565
+#: src/Ops/SiteHealth.php:571
 msgid "Meilisearch reindex status"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:566
+#: src/Ops/SiteHealth.php:572
 msgid "Meilisearch search coverage"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:597
+#: src/Ops/SiteHealth.php:603
 msgid "This check does not apply to the current configuration."
 msgstr ""
 
-#: src/Ops/SiteHealth.php:610
+#: src/Ops/SiteHealth.php:616
 msgid "Meilisearch must be reachable and up to date for this check."
 msgstr ""
 
 #. translators: %s: Meilisearch error code.
-#: src/Ops/SiteHealth.php:690
+#: src/Ops/SiteHealth.php:697
 #, php-format
 msgid "Meilisearch refused the key lookup (%s)"
 msgstr ""
 
-#: src/Ops/SiteHealth.php:776
+#: src/Ops/SiteHealth.php:783
 msgid "Open the Meilisearch settings"
 msgstr ""
 
-#: src/Search/Searcher.php:159
+#: src/Search/Searcher.php:199
 msgid "Meilisearch answered the search without a list of hits."
 msgstr ""
 
