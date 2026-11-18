@@ -123,7 +123,7 @@ final class IndexManager {
 	 */
 	public function connect(): array {
 		$version     = $this->check_connection();
-		$fingerprint = md5( $this->options->host() . '|' . $this->options->admin_key() . '|' . $this->names->prefix() );
+		$fingerprint = $this->options->connection_fingerprint( $this->names->prefix() );
 		$changed     = $fingerprint !== (string) $this->options->state( 'fingerprint', '' );
 		if ( $changed ) {
 			// The indexes behind the new host, key or prefix are not known to hold this site's content.

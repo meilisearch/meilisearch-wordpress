@@ -51,6 +51,37 @@ final class AutocompleteTest extends TestCase {
 		$this->assertSame( 'defer', wp_scripts()->get_data( Autocomplete::HANDLE, 'strategy' ) );
 	}
 
+	/**
+	 * The readiness check runs on every front-end page view and reads non-autoloaded options (connection,
+	 * admin key, state): without a persistent object cache they are loaded together, in one query.
+	 */
+	public function test_enqueue_reads_the_plugin_options_in_a_single_query(): void {
+		$this->enable_autocomplete();
+		$options = Plugin::instance()->get( 'options' );
+		$options->set_state( 'fingerprint', $options->connection_fingerprint( Plugin::instance()->get( 'names' )->prefix() ) );
+
+		// A fresh request without a persistent object cache.
+		wp_cache_flush();
+		wp_load_alloptions();
+
+		$queries = array();
+		$log     = static function ( $query ) use ( &$queries ) {
+			if ( str_contains( (string) $query, "'meilisearch_" ) ) {
+				$queries[] = $query;
+			}
+			return $query;
+		};
+		add_filter( 'query', $log );
+		try {
+			do_action( 'wp_enqueue_scripts' );
+		} finally {
+			remove_filter( 'query', $log );
+		}
+
+		$this->assertTrue( wp_script_is( Autocomplete::HANDLE, 'enqueued' ) );
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+	}
+
 	public function test_not_enqueued_when_disabled(): void {
 		do_action( 'wp_enqueue_scripts' );
 

@@ -35,7 +35,7 @@ use Meilisearch\WordPress\Sync\Queue;
  *    finalizing phase) until the recorded settings task has succeeded; a failed one fails the run.
  * 4. Phase "finalizing": wait until no recorded task is enqueued/processing; a failed or canceled
  *    task fails the run, otherwise the run is done and the index is marked populated (search is
- *    intercepted only for populated indexes).
+ *    intercepted only for populated indexes), unless the content settings changed while it ran.
  *
  * A step that hits a transient error (no response, HTTP 408, 429 or 5xx) is retried: the background
  * run reschedules it after RETRY_BACKOFF[n] seconds (the counter, "retries", is kept in the state and
@@ -418,7 +418,7 @@ final class Reindexer implements Registrable {
 	 * @param string $logical Logical index.
 	 * @return array<string, mixed>
 	 * @throws \InvalidArgumentException For an inactive logical index.
-	 * @throws \RuntimeException 'already_running'.
+	 * @throws \RuntimeException 'already_running', or connection_changed_message() when the connection changed since connect().
 	 */
 	private function begin( string $logical ): array {
 		if ( ! isset( $this->builders[ $logical ] ) || ! in_array( $logical, $this->names->active_logicals(), true ) ) {
@@ -427,6 +427,10 @@ final class Reindexer implements Registrable {
 		$current = $this->status( $logical );
 		if ( null !== $current && self::is_active( $current ) && ! $this->is_abandoned( $logical, $current ) ) {
 			throw new \RuntimeException( 'already_running' );
+		}
+		if ( $this->options->connection_changed() ) {
+			// The run would fill the indexes of a connection whose key and state were never set up; connect() does that.
+			throw new \RuntimeException( self::connection_changed_message() );
 		}
 
 		// No wait: a settings task still being processed is recorded and awaited before the sweep.
@@ -448,10 +452,23 @@ final class Reindexer implements Registrable {
 		if ( null !== $settings_task ) {
 			$state['settings_task'] = $settings_task;
 		}
+		if ( 'content' === $logical ) {
+			// Compared at finalize: posts sent before a mid-run settings change were built without it.
+			$state['content_signature'] = $this->options->content_signature();
+		}
 		// Flags raised from now on (settings changed mid-run) survive the run: finalize does not clear them.
 		$this->options->flag_reindex( $logical, false );
 		$this->options->set_reindex_state( $logical, $state );
 		return $state;
+	}
+
+	/**
+	 * Why a reindex is refused after the host, admin key or index prefix changed outside the connection flow.
+	 *
+	 * @return string
+	 */
+	private static function connection_changed_message(): string {
+		return __( 'The Meilisearch host, admin key or index prefix changed since the last connection. Save the Connection tab (or run "wp meilisearch connect"), then reindex.', 'meilisearch' );
 	}
 
 	/**
@@ -614,7 +631,9 @@ final class Reindexer implements Registrable {
 		$state['error']  = '';
 		$state           = $this->save( $logical, $state );
 		$this->options->set_state( 'first_reindex_done', true );
-		$this->options->set_populated( $logical, true );
+		if ( ! isset( $state['content_signature'] ) || $state['content_signature'] === $this->options->content_signature() ) {
+			$this->options->set_populated( $logical, true );
+		}
 		return $state;
 	}
 

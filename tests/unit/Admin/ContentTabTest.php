@@ -148,6 +148,78 @@ final class ContentTabTest extends TestCase {
 		$this->assertTrue( ( new Options() )->needs_reindex( 'content' ) );
 	}
 
+	/**
+	 * Until a full reindex has sent the existing posts of a newly indexed type, or the field of a newly
+	 * indexed taxonomy or meta key, Meilisearch would answer without them: the database answers instead.
+	 *
+	 * @dataProvider provide_additions
+	 *
+	 * @param array<string, mixed> $value New option value.
+	 */
+	public function test_adding_a_type_taxonomy_or_meta_key_unpopulates_the_content_index( array $value ): void {
+		$this->store[ Options::STATE ] = array( 'populated' => array( 'content', 'products' ) );
+		$tab                           = new ContentTab( new Options() );
+
+		$tab->on_update( $this->store[ Options::CONTENT ], $value );
+
+		$options = new Options();
+		$this->assertTrue( $options->needs_reindex( 'content' ) );
+		$this->assertFalse( $options->is_populated( 'content' ) );
+		$this->assertTrue( $options->is_populated( 'products' ), 'The products index is not concerned.' );
+	}
+
+	public static function provide_additions(): array {
+		return array(
+			'post type' => array(
+				array(
+					'post_types' => array( 'post', 'book' ),
+					'taxonomies' => array( 'post' => array( 'category' ) ),
+					'meta_keys'  => array( 'post' => array( 'price' ) ),
+				),
+			),
+			'taxonomy'  => array(
+				array(
+					'post_types' => array( 'post' ),
+					'taxonomies' => array( 'post' => array( 'category', 'post_tag' ) ),
+					'meta_keys'  => array( 'post' => array( 'price' ) ),
+				),
+			),
+			'meta key'  => array(
+				array(
+					'post_types' => array( 'post' ),
+					'taxonomies' => array( 'post' => array( 'category' ) ),
+					'meta_keys'  => array( 'post' => array( 'price', 'rating' ) ),
+				),
+			),
+		);
+	}
+
+	/**
+	 * Removing things only narrows what search may ask for; the index still holds everything that remains.
+	 */
+	public function test_removing_a_type_taxonomy_or_meta_key_keeps_the_index_populated(): void {
+		$this->store[ Options::STATE ] = array( 'populated' => array( 'content' ) );
+		$tab                           = new ContentTab( new Options() );
+		$old                           = array(
+			'post_types' => array( 'post', 'page' ),
+			'taxonomies' => array( 'post' => array( 'category', 'post_tag' ) ),
+			'meta_keys'  => array( 'post' => array( 'price' ) ),
+		);
+
+		$tab->on_update(
+			$old,
+			array(
+				'post_types' => array( 'post' ),
+				'taxonomies' => array( 'post' => array( 'category' ) ),
+				'meta_keys'  => array(),
+			)
+		);
+
+		$options = new Options();
+		$this->assertTrue( $options->needs_reindex( 'content' ) );
+		$this->assertTrue( $options->is_populated( 'content' ) );
+	}
+
 	public function test_same_field_set_in_other_order_does_not_flag(): void {
 		$tab = new ContentTab( new Options() );
 		$old = array(
