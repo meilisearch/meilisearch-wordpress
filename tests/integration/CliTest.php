@@ -10,6 +10,8 @@ use Meilisearch\WordPress\Indexing\Reindexer;
 use Meilisearch\WordPress\Ops\Cli;
 use Meilisearch\WordPress\Ops\SiteHealth;
 use Meilisearch\WordPress\Plugin;
+use Meilisearch\WordPress\Search\CircuitBreaker;
+use Meilisearch\WordPress\Search\Interceptor;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\Queue;
@@ -349,6 +351,71 @@ final class CliTest extends TestCase {
 			)
 		);
 		self::assertSame( 0, $this->documents() );
+	}
+
+	public function test_clear_hands_search_back_to_the_database_until_the_next_reindex(): void {
+		self::factory()->post->create(
+			array(
+				'post_status' => 'publish',
+				'post_title'  => 'Clitestfoxtrot',
+			)
+		);
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		delete_transient( CircuitBreaker::TRANSIENT );
+		$options = $this->service( 'options', Options::class );
+		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+
+		$this->go_to( home_url( '/?s=Clitestfoxtrot' ) );
+		self::assertTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ), 'Precondition: Meilisearch answers.' );
+		self::assertCount( 1, $GLOBALS['wp_query']->posts );
+
+		$this->cli()->clear(
+			array(),
+			array(
+				'index' => 'content',
+				'yes'   => true,
+			)
+		);
+		self::assertSame( 0, $this->documents() );
+		self::assertFalse( $options->is_populated( 'content' ) );
+		self::assertTrue( $options->needs_reindex( 'content' ), 'The admin is told the index needs a reindex.' );
+
+		$this->go_to( home_url( '/?s=Clitestfoxtrot' ) );
+		self::assertNotTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ), 'The emptied index does not answer.' );
+		self::assertCount( 1, $GLOBALS['wp_query']->posts, 'The database finds the post.' );
+
+		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+		$this->go_to( home_url( '/?s=Clitestfoxtrot' ) );
+		self::assertTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ), 'A completed reindex hands search back to Meilisearch.' );
+		self::assertCount( 1, $GLOBALS['wp_query']->posts );
+		self::assertFalse( $options->needs_reindex( 'content' ) );
+	}
+
+	public function test_clear_is_refused_while_a_reindex_runs(): void {
+		self::factory()->post->create(
+			array(
+				'post_status' => 'publish',
+				'post_title'  => 'Clitestgolf',
+			)
+		);
+		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+		$this->service( 'reindexer', Reindexer::class )->start( 'content' );
+		WP_CLI::reset();
+
+		$this->expect_exit(
+			fn () => $this->cli()->clear(
+				array(),
+				array(
+					'index' => 'content',
+					'yes'   => true,
+				)
+			),
+			1
+		);
+
+		self::assertStringContainsString( 'is running', $this->messages( 'error' )[0] ?? '' );
+		self::assertSame( 1, $this->hits( 'Clitestgolf' ) );
+		self::assertTrue( $this->service( 'options', Options::class )->is_populated( 'content' ) );
 	}
 
 	public function test_status_lists_every_active_index(): void {
