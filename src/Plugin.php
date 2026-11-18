@@ -207,6 +207,7 @@ final class Plugin {
 
 		// Task 26 — lifecycle.
 		$this->add( 'site_seeder', new Lifecycle\SiteSeeder() );
+		$this->add( 'site_cleaner', new Lifecycle\SiteCleaner() );
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			\WP_CLI::add_command( 'meilisearch', new Ops\Cli( $reindexer, $sync_job, $clients, $names, $health, $indexability, $queue, $options, $indexes ) );
