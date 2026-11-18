@@ -49,10 +49,15 @@ final class Autocomplete implements Registrable {
 	}
 
 	/**
-	 * Registers, configures and enqueues the script and style when autocomplete is usable.
+	 * Registers, configures and enqueues the script and style when autocomplete is usable and at
+	 * least one index holds a post type of the site search (otherwise the script has nothing to query).
 	 */
 	public function enqueue(): void {
 		if ( ! $this->should_enqueue() ) {
+			return;
+		}
+		$config = $this->config();
+		if ( null === $config['indexes']['content'] && null === $config['indexes']['products'] ) {
 			return;
 		}
 		wp_register_script(
@@ -65,7 +70,7 @@ final class Autocomplete implements Registrable {
 				'strategy'  => 'defer',
 			)
 		);
-		wp_localize_script( self::HANDLE, self::OBJECT_NAME, $this->config() );
+		wp_localize_script( self::HANDLE, self::OBJECT_NAME, $config );
 		wp_enqueue_script( self::HANDLE );
 		wp_enqueue_style( self::HANDLE, plugins_url( 'assets/css/autocomplete.css', MEILISEARCH_FILE ), array(), MEILISEARCH_VERSION );
 	}

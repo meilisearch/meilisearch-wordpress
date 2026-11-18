@@ -255,6 +255,17 @@ final class AutocompleteTest extends TestCase {
 		self::assertSame( array( 'content' => null ), $config['filters'] );
 	}
 
+	public function test_nothing_is_enqueued_when_no_index_holds_a_type_of_the_site_search(): void {
+		$options                     = self::options();
+		$options[ Options::CONTENT ] = array( 'post_types' => array( 'secret_doc' ) );
+		$this->stub_options( $options );
+
+		$this->autocomplete()->enqueue();
+
+		// The script would have nothing to query: no request for it or its stylesheet on every page.
+		self::assertSame( array(), $this->calls );
+	}
+
 	/**
 	 * @runInSeparateProcess
 	 * @preserveGlobalState disabled
