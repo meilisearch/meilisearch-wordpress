@@ -646,13 +646,141 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
-	 * An exception during a batch marks the run failed and is rethrown for Action Scheduler.
+	 * Errors worth retrying: no response, request timeout, rate limit, server or proxy errors.
+	 *
+	 * @return array<string, array{0: ApiError}>
 	 */
-	public function test_batch_error_fails_run_and_rethrows(): void {
+	public static function transient_errors(): array {
+		return array(
+			'transport' => array( ApiError::transport( 'cURL error 28' ) ),
+			'408'       => array( new ApiError( 'Request timeout.', 'http_408', 408 ) ),
+			'429'       => array( new ApiError( 'Too many requests.', 'too_many_requests', 429 ) ),
+			'502'       => array( new ApiError( 'Bad gateway.', 'http_502', 502 ) ),
+			'503'       => array( new ApiError( 'Service unavailable.', 'http_503', 503 ) ),
+		);
+	}
+
+	/**
+	 * A transient error keeps the run running and reschedules the same step with backoff; the counter lives in the state.
+	 *
+	 * @dataProvider transient_errors
+	 *
+	 * @param ApiError $error Error thrown by the upsert request.
+	 */
+	public function test_transient_batch_error_reschedules_the_step( ApiError $error ): void {
+		$this->seed_run( array( 'updated_at' => 1 ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( $error );
+		$this->expect_next_step( Reindexer::RETRY_BACKOFF[0] );
+
+		$this->handle();
+
+		$state = $this->state();
+		$this->assertSame( 'running', $state['status'] );
+		$this->assertSame( 'upsert', $state['phase'] );
+		$this->assertSame( 0, $state['last_id'], 'The failed batch is sent again.' );
+		$this->assertSame( 1, $state['retries'] );
+		$this->assertGreaterThan( time() - 5, $state['updated_at'] );
+	}
+
+	/**
+	 * Each further transient error waits longer.
+	 */
+	public function test_retries_back_off(): void {
+		$this->seed_run( array( 'retries' => 1 ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( new ApiError( 'Bad gateway.', 'http_502', 502 ) );
+		$this->expect_next_step( Reindexer::RETRY_BACKOFF[1] );
+
+		$this->handle();
+
+		$this->assertSame( 2, $this->state()['retries'] );
+	}
+
+	/**
+	 * A successful step resets the counter: the limit is per step, not per run.
+	 */
+	public function test_successful_step_resets_the_retry_counter(): void {
+		$this->seed_run( array( 'retries' => 2 ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( self::task_response( 7 ) );
+		$this->expect_next_step( 0 );
+
+		$this->handle();
+
+		$this->assertArrayNotHasKey( 'retries', $this->state() );
+	}
+
+	/**
+	 * Errors that a retry cannot fix fail the run at once.
+	 *
+	 * @return array<string, array{0: ApiError}>
+	 */
+	public static function permanent_errors(): array {
+		return array(
+			'invalid key'     => array( new ApiError( 'The provided API key is invalid.', 'invalid_api_key', 403 ) ),
+			'missing index'   => array( new ApiError( 'Index not found.', 'index_not_found', 404 ) ),
+			'payload too big' => array( new ApiError( 'Payload too large.', 'payload_too_large', 413 ) ),
+			'task timeout'    => array( new ApiError( 'Timed out.', 'task_timeout' ) ),
+		);
+	}
+
+	/**
+	 * A non-retryable error fails the run at once and is rethrown for Action Scheduler.
+	 *
+	 * @dataProvider permanent_errors
+	 *
+	 * @param ApiError $error Error thrown by the upsert request.
+	 */
+	public function test_permanent_batch_error_fails_at_once( ApiError $error ): void {
+		$this->seed_run();
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( $error );
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		try {
+			$this->handle();
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( $error->error_code, $e->error_code );
+		}
+
+		$this->assertSame( 'failed', $this->state()['status'] );
+	}
+
+	/**
+	 * When the retry cannot be scheduled the run fails instead of hanging.
+	 */
+	public function test_unschedulable_retry_fails_the_run(): void {
 		$this->seed_run();
 		$this->add_post( array( 'ID' => 10 ) );
 		$this->install_wpdb( array( array( 10 ) ) );
 		$this->transport->queue( ApiError::transport( 'cURL error 28' ) );
+		Functions\expect( 'as_schedule_single_action' )->once()->andReturn( 0 );
+
+		try {
+			$this->handle();
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( 'transport_error', $e->error_code );
+		}
+
+		$this->assertSame( 'failed', $this->state()['status'] );
+	}
+
+	/**
+	 * A transient error that outlasts every retry marks the run failed and is rethrown for Action Scheduler.
+	 */
+	public function test_batch_error_fails_run_and_rethrows(): void {
+		$this->seed_run( array( 'retries' => count( Reindexer::RETRY_BACKOFF ) ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( ApiError::transport( 'cURL error 28' ) );
+		Functions\expect( 'as_schedule_single_action' )->never();
 
 		try {
 			$this->handle();
@@ -976,7 +1104,8 @@ final class ReindexerTest extends TestCase {
 		$this->seed_run();
 		$this->add_post( array( 'ID' => 10 ) );
 		$this->install_wpdb( array( array( 10 ) ) );
-		$this->transport->queue( ApiError::transport( 'cURL error 28' ) );
+		// Not retryable, so the failure path runs (a transient error would be retried instead).
+		$this->transport->queue( new ApiError( 'Payload too large.', 'payload_too_large', 413 ) );
 		$replace = function (): void {
 			$state                                = $this->option_store[ Options::STATE ];
 			$state['reindex']['content']['run']   = 'r2';
@@ -991,15 +1120,44 @@ final class ReindexerTest extends TestCase {
 
 		try {
 			$this->handle();
-			$this->fail( 'The transport error must be rethrown.' );
+			$this->fail( 'The error must be rethrown.' );
 		} catch ( ApiError $e ) {
-			$this->assertSame( 'transport_error', $e->error_code );
+			$this->assertSame( 'payload_too_large', $e->error_code );
 		}
 
 		$stored = $this->state();
 		$this->assertSame( 'r2', $stored['run'] );
 		$this->assertSame( 'running', $stored['status'] );
 		$this->assertFalse( $this->options->needs_reindex( 'content' ) );
+	}
+
+	/**
+	 * A transient error of a run replaced mid-step neither reschedules it nor touches the new run.
+	 */
+	public function test_transient_error_of_a_replaced_run_is_not_retried(): void {
+		$this->seed_run();
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( ApiError::transport( 'cURL error 28' ) );
+		$replace = function (): void {
+			$state                                = $this->option_store[ Options::STATE ];
+			$state['reindex']['content']['run']   = 'r2';
+			$this->option_store[ Options::STATE ] = $state;
+		};
+		Filters\expectApplied( 'meilisearch_reindex_batch_size' )->once()->andReturnUsing(
+			static function ( $size ) use ( $replace ) {
+				$replace();
+				return $size;
+			}
+		);
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		$this->handle();
+
+		$stored = $this->state();
+		$this->assertSame( 'r2', $stored['run'] );
+		$this->assertSame( 'running', $stored['status'] );
+		$this->assertArrayNotHasKey( 'retries', $stored );
 	}
 
 	/**
@@ -1115,5 +1273,73 @@ final class ReindexerTest extends TestCase {
 		$this->assertSame( 'done', $this->state()['status'] );
 		// Upsert, sweep, finalize.
 		$this->assertSame( 3, $flushes );
+	}
+
+	/**
+	 * Queues the answers of begin() for a missing index whose tasks succeed at once, then an empty scan.
+	 */
+	private function queue_cli_begin(): void {
+		Functions\when( 'wp_cache_supports' )->justReturn( false );
+		Functions\when( 'wp_generate_password' )->justReturn( 'abcd' );
+		$this->install_wpdb( array( array() ), '0' );
+		$this->transport
+			->respond(
+				404,
+				array(
+					'code'    => 'index_not_found',
+					'message' => 'missing',
+				)
+			)
+			->queue( self::task_response( 1 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 1,
+					'status' => 'succeeded',
+				)
+			)
+			->queue( self::task_response( 2 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 2,
+					'status' => 'succeeded',
+				)
+			);
+	}
+
+	/**
+	 * WP-CLI runs retry a step that hit a transient error in place instead of failing the whole run.
+	 */
+	public function test_run_sync_retries_a_transient_error(): void {
+		$this->queue_cli_begin();
+		$this->transport
+			->fail( new ApiError( 'Service unavailable.', 'http_503', 503 ) )
+			->respond( 200, array( 'results' => array() ) );
+
+		$this->reindexer()->run_sync( 'content', 100, static function (): void {} );
+
+		$this->assertSame( 'done', $this->state()['status'] );
+		$this->assertSame( 0, $this->transport->pending() );
+	}
+
+	/**
+	 * WP-CLI runs still fail at once on an error a retry cannot fix.
+	 */
+	public function test_run_sync_fails_at_once_on_a_permanent_error(): void {
+		$this->queue_cli_begin();
+		$this->transport
+			->fail( new ApiError( 'The provided API key is invalid.', 'invalid_api_key', 403 ) )
+			->respond( 200, array( 'results' => array() ) );
+
+		try {
+			$this->reindexer()->run_sync( 'content', 100, static function (): void {} );
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( 'invalid_api_key', $e->error_code );
+		}
+
+		$this->assertSame( 'failed', $this->state()['status'] );
+		$this->assertSame( 1, $this->transport->pending(), 'Not retried.' );
 	}
 }

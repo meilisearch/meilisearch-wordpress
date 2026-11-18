@@ -37,6 +37,12 @@ use Meilisearch\WordPress\Sync\Queue;
  *    task fails the run, otherwise the run is done and the index is marked populated (search is
  *    intercepted only for populated indexes).
  *
+ * A step that hits a transient error (no response, HTTP 408, 429 or 5xx) is retried: the background
+ * run reschedules it after RETRY_BACKOFF[n] seconds (the counter, "retries", is kept in the state and
+ * reset by the next successful step), the WP-CLI run retries it in place after CLI_RETRY_BACKOFF[n].
+ * Re-running a step is safe: the state only advances once the step succeeded, upserts are
+ * add-or-replace and deletes are by id. Any other error, or the last retry failing, fails the run.
+ *
  * Recorded task UIDs are pruned once TASK_PRUNE_AT accumulate: finished ones are checked for failure
  * and dropped, so the stored state stays small. Real-time sync keeps writing to the same index;
  * both always write the current state of a post, so they never conflict.
@@ -49,6 +55,16 @@ final class Reindexer implements Registrable {
 	public const FINALIZE_POLL    = 10;
 	public const STALE_AFTER      = 900;
 	public const CLI_TASK_TIMEOUT = 3600;
+
+	/**
+	 * Seconds before each retry of a background step that hit a transient error.
+	 */
+	public const RETRY_BACKOFF = array( 30, 120, 600 );
+
+	/**
+	 * Seconds before each in-place retry of a WP-CLI step that hit a transient error.
+	 */
+	public const CLI_RETRY_BACKOFF = array( 1, 5, 15 );
 
 	private const TASK_UID_CHUNK = 100;
 	private const TASK_PRUNE_AT  = 20;
@@ -120,6 +136,10 @@ final class Reindexer implements Registrable {
 			return;
 		}
 
+		// Consecutive transient failures of this step; a successful step stores the state without it.
+		$retries = (int) ( $state['retries'] ?? 0 );
+		unset( $state['retries'] );
+
 		try {
 			$state = $this->step( $logical, $state, $this->batch_size() );
 			if ( self::is_active( $state ) ) {
@@ -133,9 +153,100 @@ final class Reindexer implements Registrable {
 				// A newer run owns the state now; this action has nothing left to do.
 				return;
 			}
+			if ( self::is_transient( $e ) && $retries < count( self::RETRY_BACKOFF ) && $this->retry_later( $logical, $run, $retries + 1, $e ) ) {
+				return;
+			}
 			$this->fail( $logical, $state, $e->getMessage() );
 			throw $e;
 		}
+	}
+
+	/**
+	 * Reschedules the step of a run that hit a transient error, after RETRY_BACKOFF[attempt - 1] seconds.
+	 * The counter is stored in the state, not in the payload: is_abandoned() looks the pending action up
+	 * by its exact payload.
+	 *
+	 * @param string     $logical Logical index.
+	 * @param string     $run     Run ID.
+	 * @param int        $attempt Retry number, from 1.
+	 * @param \Throwable $error   The transient error.
+	 * @return bool False when the retry could not be scheduled (the run must then fail).
+	 */
+	private function retry_later( string $logical, string $run, int $attempt, \Throwable $error ): bool {
+		$current = $this->status( $logical );
+		if ( null === $current || ( $current['run'] ?? '' ) !== $run || ! self::is_active( $current ) ) {
+			// Superseded or already finished: nothing left to retry.
+			return true;
+		}
+		$delay              = self::RETRY_BACKOFF[ $attempt - 1 ];
+		$current['retries'] = $attempt;
+		$this->save( $logical, $current );
+		if ( 0 === $this->queue->schedule( Queue::REINDEX_BATCH, $this->payload( $logical, $run ), $delay ) ) {
+			return false;
+		}
+		$this->log->add(
+			'reindex',
+			sprintf(
+				'Reindex of the %1$s index hit a temporary error, retry %2$d of %3$d in %4$d seconds: %5$s',
+				$logical,
+				$attempt,
+				count( self::RETRY_BACKOFF ),
+				$delay,
+				$this->options->redact( $error->getMessage() )
+			)
+		);
+		return true;
+	}
+
+	/**
+	 * Whether an error may go away on its own: no response, request timeout, rate limit, server or proxy error.
+	 *
+	 * @param \Throwable $error Error.
+	 * @return bool
+	 */
+	private static function is_transient( \Throwable $error ): bool {
+		if ( ! $error instanceof ApiError ) {
+			return false;
+		}
+		if ( 'transport_error' === $error->error_code ) {
+			return true;
+		}
+		return 408 === $error->http_status || 429 === $error->http_status || ( $error->http_status >= 500 && $error->http_status < 600 );
+	}
+
+	/**
+	 * WP-CLI step: retries a step that hit a transient error in place, after CLI_RETRY_BACKOFF[n] seconds.
+	 *
+	 * @param string               $logical    Logical index.
+	 * @param string               $run        Run ID.
+	 * @param array<string, mixed> $state      Running state.
+	 * @param int                  $batch_size Upsert batch size.
+	 * @return array<string, mixed>
+	 * @throws \RuntimeException 'superseded' when another run took over while waiting.
+	 * @throws ApiError A permanent error, or a transient one after the last retry.
+	 */
+	private function cli_step( string $logical, string $run, array $state, int $batch_size ): array {
+		$retries = 0;
+		while ( true ) {
+			try {
+				return $this->step( $logical, $state, $batch_size );
+			} catch ( ApiError $e ) {
+				if ( ! self::is_transient( $e ) || $retries >= count( self::CLI_RETRY_BACKOFF ) ) {
+					throw $e;
+				}
+				sleep( self::CLI_RETRY_BACKOFF[ $retries ] );
+				++$retries;
+				// Retry from the stored state: the failed step may have saved part of its work.
+				$current = $this->status( $logical );
+				if ( null === $current || ( $current['run'] ?? '' ) !== $run ) {
+					throw new \RuntimeException( self::SUPERSEDED );
+				}
+				if ( ! self::is_active( $current ) ) {
+					return $current;
+				}
+				$state = $current;
+			}//end try
+		}//end while
 	}
 
 	/**
@@ -170,7 +281,7 @@ final class Reindexer implements Registrable {
 					$deadline = 0;
 				}
 				$was_upsert = 'upsert' === $state['phase'];
-				$state      = $this->step( $logical, $state, $batch_size );
+				$state      = $this->cli_step( $logical, $run, $state, $batch_size );
 				// One long process: drop the posts, meta and terms cached by this step (when the object
 				// cache supports it; otherwise WordPress reports _doing_it_wrong on every call).
 				if ( wp_cache_supports( 'flush_runtime' ) ) {
