@@ -56,7 +56,7 @@ final class TermJob implements Registrable {
 	 */
 	public function on_edited_term( mixed $term_id, mixed $tt_id, mixed $taxonomy ): void {
 		$term_id = (int) $term_id;
-		if ( $term_id <= 0 || ! is_string( $taxonomy ) || ! $this->is_tracked( $taxonomy ) ) {
+		if ( $term_id <= 0 || ! is_string( $taxonomy ) || ! $this->options->is_configured() || ! $this->is_tracked( $taxonomy ) ) {
 			return;
 		}
 		$this->queue->schedule(
@@ -80,7 +80,7 @@ final class TermJob implements Registrable {
 	 */
 	public function on_pre_delete_term( mixed $term, mixed $taxonomy ): void {
 		$term_id = (int) $term;
-		if ( $term_id <= 0 || ! is_string( $taxonomy ) || ! $this->is_tracked( $taxonomy ) || ! is_taxonomy_hierarchical( $taxonomy ) ) {
+		if ( $term_id <= 0 || ! is_string( $taxonomy ) || ! $this->options->is_configured() || ! $this->is_tracked( $taxonomy ) || ! is_taxonomy_hierarchical( $taxonomy ) ) {
 			return;
 		}
 		$children = get_terms(

@@ -202,6 +202,18 @@ final class AuthorJobTest extends TestCase {
 	}
 
 	/**
+	 * Without a host and an admin key, a new display name schedules nothing.
+	 */
+	public function test_profile_update_schedules_nothing_when_not_configured(): void {
+		unset( $this->option_store[ Options::ADMIN_KEY ] );
+		$this->users[5] = 'After Name';
+
+		$this->job->on_profile_update( 5, (object) array( 'display_name' => 'Before Name' ) );
+
+		$this->assertSame( array(), $this->scheduled );
+	}
+
+	/**
 	 * The handler feeds one page of the author's posts to the collector, flushes, and chains the next
 	 * page while a page comes back full.
 	 */

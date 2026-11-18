@@ -89,7 +89,7 @@ final class AuthorJob implements Registrable {
 	 */
 	public function on_profile_update( mixed $user_id, mixed $old_user_data ): void {
 		$user_id = (int) $user_id;
-		if ( $user_id <= 0 || ! is_object( $old_user_data ) || ! isset( $old_user_data->display_name ) ) {
+		if ( $user_id <= 0 || ! is_object( $old_user_data ) || ! isset( $old_user_data->display_name ) || ! $this->options->is_configured() ) {
 			return;
 		}
 		$user = get_userdata( $user_id );

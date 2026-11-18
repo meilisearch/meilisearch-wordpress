@@ -168,6 +168,25 @@ final class SyncTest extends TestCase {
 	}
 
 	/**
+	 * Saving a draft that was never published collects nothing; publishing it later indexes it.
+	 */
+	public function test_never_published_draft_is_not_collected_until_published(): void {
+		$id = self::factory()->post->create( array( 'post_status' => 'draft' ) );
+		wp_update_post(
+			array(
+				'ID'           => $id,
+				'post_content' => 'Autosaved body',
+			)
+		);
+		$this->assertSame( array(), $this->collector()->pending() );
+
+		wp_publish_post( $id );
+		$this->sync();
+
+		$this->assertSame( array( $id ), $this->indexed_ids() );
+	}
+
+	/**
 	 * Adding a password removes the post.
 	 */
 	public function test_password_protected_post_is_removed(): void {

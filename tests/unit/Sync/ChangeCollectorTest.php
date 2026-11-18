@@ -54,8 +54,9 @@ final class ChangeCollectorTest extends TestCase {
 		$this->add_post( array( 'ID' => 11 ) );
 		$this->add_post(
 			array(
-				'ID'          => 12,
-				'post_status' => 'draft',
+				'ID'            => 12,
+				'post_status'   => 'draft',
+				'post_date_gmt' => '2026-10-01 08:00:00',
 			)
 		);
 		$this->add_post(
@@ -105,7 +106,8 @@ final class ChangeCollectorTest extends TestCase {
 	}
 
 	/**
-	 * The save_post hook collects the post in its logical index, whatever its status.
+	 * The save_post hook collects the post in its logical index, whatever its status (12 is a draft
+	 * that was published before: its document may still have to be deleted).
 	 */
 	public function test_save_post_collects_id(): void {
 		$this->collector->on_save_post( 10 );
@@ -149,6 +151,99 @@ final class ChangeCollectorTest extends TestCase {
 		$this->collector->on_deleted_term_relationships( '11' );
 
 		$this->assertSame( array( 'content' => array( 11 ) ), $this->collector->pending() );
+	}
+
+	/**
+	 * Drafts and pending posts that were never published (floating date: post_date_gmt is zero) have no
+	 * document, so the post hooks skip them: each block-editor autosave of a draft saves the post itself.
+	 * Deleting one and direct additions (product and term jobs) still collect it.
+	 */
+	public function test_never_published_posts_are_not_collected_by_the_post_hooks(): void {
+		$this->add_post(
+			array(
+				'ID'          => 13,
+				'post_status' => 'draft',
+			)
+		);
+		$this->add_post(
+			array(
+				'ID'            => 14,
+				'post_status'   => 'auto-draft',
+				'post_date_gmt' => '',
+			)
+		);
+		$this->add_post(
+			array(
+				'ID'          => 15,
+				'post_status' => 'pending',
+			)
+		);
+
+		foreach ( array( 13, 14, 15 ) as $id ) {
+			$this->collector->on_transition_post_status( $this->posts[ $id ]->post_status, 'draft', $this->posts[ $id ] );
+			$this->collector->on_save_post( $id );
+			$this->collector->on_set_object_terms( $id );
+			$this->collector->on_deleted_term_relationships( $id );
+			$this->collector->on_meta_change( 5, $id, 'price' );
+		}
+		$this->assertSame( array(), $this->collector->pending() );
+
+		$this->collector->on_before_delete_post( 13 );
+		$this->collector->add( 14 );
+		$this->assertSame( array( 'content' => array( 13, 14 ) ), $this->collector->pending() );
+	}
+
+	/**
+	 * A post leaving publish is collected even if its date was cleared.
+	 */
+	public function test_transition_out_of_publish_is_always_collected(): void {
+		$this->add_post(
+			array(
+				'ID'          => 13,
+				'post_status' => 'draft',
+			)
+		);
+
+		$this->collector->on_transition_post_status( 'draft', 'publish', $this->posts[13] );
+
+		$this->assertSame( array( 'content' => array( 13 ) ), $this->collector->pending() );
+	}
+
+	/**
+	 * An hour of draft autosaves (one request a minute) schedules no job.
+	 */
+	public function test_draft_autosaves_schedule_nothing(): void {
+		$this->record_schedules();
+		$this->add_post(
+			array(
+				'ID'          => 13,
+				'post_status' => 'draft',
+			)
+		);
+		for ( $i = 0; $i < 60; $i++ ) {
+			$this->collector->on_transition_post_status( 'draft', 'draft', $this->posts[13] );
+			$this->collector->on_save_post( 13 );
+			$this->collector->flush();
+			ChangeCollector::clear_pending( array( 13 ) );
+		}
+
+		$this->assertSame( array(), $this->scheduled );
+	}
+
+	/**
+	 * Without a host and an admin key there is nowhere to sync to: the flush schedules nothing,
+	 * sets no marker and still empties the set.
+	 */
+	public function test_flush_schedules_nothing_when_not_configured(): void {
+		$this->record_schedules();
+		unset( $this->option_store[ Options::ADMIN_KEY ] );
+		$this->collector->on_save_post( 10 );
+
+		$this->collector->flush();
+
+		$this->assertSame( array(), $this->scheduled );
+		$this->assertSame( array(), $this->transient_store );
+		$this->assertSame( array(), $this->collector->pending() );
 	}
 
 	/**

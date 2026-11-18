@@ -187,6 +187,20 @@ final class TermJobTest extends TestCase {
 	}
 
 	/**
+	 * Without a host and an admin key, term edits and parent deletions schedule nothing.
+	 */
+	public function test_term_hooks_schedule_nothing_when_not_configured(): void {
+		unset( $this->option_store[ Options::ADMIN_KEY ] );
+		Functions\when( 'is_taxonomy_hierarchical' )->justReturn( true );
+		Functions\when( 'get_terms' )->justReturn( array( 8 ) );
+
+		$this->job->on_edited_term( 7, 70, 'category' );
+		$this->job->on_pre_delete_term( 7, 'category' );
+
+		$this->assertSame( array(), $this->scheduled );
+	}
+
+	/**
 	 * Deleting a term collects the objects that had it (string IDs from $wpdb are accepted).
 	 */
 	public function test_delete_term_collects_object_ids(): void {
