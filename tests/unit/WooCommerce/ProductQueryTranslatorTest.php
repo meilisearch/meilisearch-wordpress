@@ -355,6 +355,35 @@ final class ProductQueryTranslatorTest extends TestCase {
 		self::assertSame( array(), $result['filters'] );
 	}
 
+	public function test_attribute_filters_are_not_translated_while_a_products_reindex_is_pending(): void {
+		// A newly selected or newly created attribute is in the schema but neither in the index's
+		// filterableAttributes nor in the existing documents until the reindex the flag asks for.
+		( new Options() )->flag_reindex( 'products', true );
+
+		self::assertNull( $this->translator()->constraints( $this->query( array(), array( $this->clause( 'pa_color', array( 'red' ), 'IN', 'slug' ) ) ) ) );
+		self::assertNull( $this->translator()->constraints( $this->query( array(), array( $this->clause( 'pa_color', array(), 'EXISTS' ) ) ) ) );
+
+		$_GET = array( 'filter_color' => 'red' );
+		self::assertNull( $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) ) );
+	}
+
+	public function test_non_attribute_filters_are_still_translated_while_a_products_reindex_is_pending(): void {
+		( new Options() )->flag_reindex( 'products', true );
+		$_GET = array( 'min_price' => '10' );
+
+		$result = $this->translator()->constraints(
+			$this->query( array( 'wc_query' => 'product_query' ), array( $this->clause( 'product_visibility', array( 3 ), 'IN' ) ) )
+		);
+
+		self::assertSame(
+			array(
+				FilterBuilder::compare( 'featured', '=', true ),
+				FilterBuilder::compare( 'price', '>=', 10.0 ),
+			),
+			$result['filters'] ?? null
+		);
+	}
+
 	public function test_price_range(): void {
 		$_GET   = array(
 			'min_price' => '10',

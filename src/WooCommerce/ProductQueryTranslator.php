@@ -77,7 +77,7 @@ final class ProductQueryTranslator implements ProductTranslator {
 			return null;
 		}
 
-		$filterable = ( new ProductSchema( $this->options ) )->filterable();
+		$filterable = $this->filterable();
 		$filters    = array();
 		$handled    = array();
 
@@ -164,6 +164,25 @@ final class ProductQueryTranslator implements ProductTranslator {
 			default:
 				return null;
 		}//end switch
+	}
+
+	/**
+	 * Products fields an attribute filter may use. The attribute list comes from the current
+	 * WordPress state (WooCommerce tab, global attributes), while the index's filterableAttributes
+	 * and its documents follow it only after a full reindex: a newly selected or newly created
+	 * attribute is unknown to Meilisearch (`invalid_search_filter`, which opens the circuit
+	 * breaker) or missing from existing documents (incomplete results). While a products reindex
+	 * is pending, attribute fields are left out, so attribute filters fall back to MySQL.
+	 *
+	 * @return list<string>
+	 */
+	private function filterable(): array {
+		$schema     = new ProductSchema( $this->options );
+		$filterable = $schema->filterable();
+		if ( ! $this->options->needs_reindex( 'products' ) ) {
+			return $filterable;
+		}
+		return array_values( array_diff( $filterable, $schema->attribute_fields() ) );
 	}
 
 	/**

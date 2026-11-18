@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Tests\Integration\WooCommerce;
 
+use Meilisearch\WordPress\Plugin;
+use Meilisearch\WordPress\Search\CircuitBreaker;
 use Meilisearch\WordPress\Search\Interceptor;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Tests\Integration\TestCase;
@@ -52,6 +54,7 @@ final class ProductSearchTest extends TestCase {
 			$this->remove_attributes();
 			\WC_Query::reset_chosen_attributes();
 		}
+		delete_transient( CircuitBreaker::TRANSIENT );
 		parent::tear_down();
 	}
 
@@ -210,6 +213,34 @@ final class ProductSearchTest extends TestCase {
 		);
 
 		$this->assertSame( array( $this->ids['charlie'], $this->ids['alpha'] ), $ids );
+	}
+
+	public function test_filter_on_an_attribute_added_after_the_index_falls_back_without_opening_the_breaker(): void {
+		delete_transient( CircuitBreaker::TRANSIENT );
+		Plugin::instance()->get( 'error_log' )->clear();
+
+		// The merchant adds a global attribute once the index exists and has not reindexed yet:
+		// attr_material is not in the index's filterableAttributes.
+		$material = $this->create_attribute( 'material', array( 'Cotton' ) );
+		$cotton   = $this->create_simple_product( 'Meili Shirt Delta', '40', array(), $material, array( 'Cotton' ) )->get_id();
+		$this->sync_products();
+		$this->assertTrue( Plugin::instance()->get( 'options' )->needs_reindex( 'products' ) );
+
+		$ids = $this->search(
+			array(
+				's'               => 'Meili Shirt',
+				'filter_material' => 'cotton',
+			)
+		);
+
+		$this->assertSame( array( $cotton ), $ids, 'MySQL answers the filtered search' );
+		$this->assertFalse( get_transient( CircuitBreaker::TRANSIENT ), 'the circuit breaker stays closed' );
+		$this->assertSame( array(), Plugin::instance()->get( 'error_log' )->all() );
+		$this->assertSame(
+			array( $this->ids['bravo'], $this->ids['charlie'], $this->ids['alpha'], $cotton ),
+			$this->search( array( 'orderby' => 'price' ) ),
+			'other searches are still answered by Meilisearch'
+		);
 	}
 
 	public function test_product_category_clause_is_translated_by_the_query_translator(): void {
