@@ -57,6 +57,9 @@ final class OptionsTest extends TestCase {
 			'surrounding whitespace'    => [ "  https://ms-123.meilisearch.io \n", 'https://ms-123.meilisearch.io' ],
 			'query and fragment'        => [ 'https://example.com:8443/meili/?x=1#top', 'https://example.com:8443/meili' ],
 			'credentials are dropped'   => [ 'https://user:pass@example.com', 'https://example.com' ],
+			'underscore service name'   => [ 'http://meili_search:7700', 'http://meili_search:7700' ],
+			'compose v1 container name' => [ 'http://project_meilisearch_1:7700', 'http://project_meilisearch_1:7700' ],
+			'underscore in a subdomain' => [ 'https://search_eu.example.com', 'https://search_eu.example.com' ],
 			'empty'                     => [ '', '' ],
 			'whitespace only'           => [ '   ', '' ],
 			'scheme only'               => [ 'http://', '' ],
@@ -168,6 +171,18 @@ final class OptionsTest extends TestCase {
 		);
 		$this->assertFalse( $this->options()->is_configured() );
 		$this->assertSame( '', $this->options()->host() );
+	}
+
+	public function test_a_host_constant_with_an_underscore_is_configured(): void {
+		$options = $this->options(
+			[
+				'MEILISEARCH_HOST'      => 'http://meili_search:7700',
+				'MEILISEARCH_ADMIN_KEY' => 'key',
+			]
+		);
+
+		$this->assertSame( 'http://meili_search:7700', $options->host() );
+		$this->assertTrue( $options->is_configured() );
 	}
 
 	public function test_prefix_override_is_sanitized(): void {

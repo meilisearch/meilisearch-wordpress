@@ -121,6 +121,61 @@ final class SettingsGroupsTest extends TestCase {
 		update_option( Options::ADMIN_KEY, $original );
 	}
 
+	/**
+	 * The key is a secret, not text: what the admin typed is what Meilisearch must receive.
+	 *
+	 * @dataProvider provide_admin_keys
+	 */
+	public function test_admin_key_is_stored_verbatim( string $key ): void {
+		if ( defined( 'MEILISEARCH_ADMIN_KEY' ) ) {
+			$this->markTestSkipped( 'The admin key is defined as a constant.' );
+		}
+		$original = (string) get_option( Options::ADMIN_KEY, '' );
+		$this->register_settings();
+
+		try {
+			// options.php receives the field slashed.
+			$this->submit( 'meilisearch_connection', array( Options::ADMIN_KEY => wp_slash( $key ) ) );
+
+			$this->assertSame( $key, get_option( Options::ADMIN_KEY ) );
+			$this->assertSame( $key, Plugin::instance()->get( 'options' )->admin_key() );
+		} finally {
+			update_option( Options::ADMIN_KEY, $original );
+		}
+	}
+
+	/**
+	 * @return array<string, array{string}>
+	 */
+	public static function provide_admin_keys(): array {
+		return array(
+			'percent and tag'  => array( 'S3cret%2Fkey<prod>2026xx' ),
+			'percent only'     => array( 'my%20master%2Fkey%AB1234' ),
+			'lone less-than'   => array( 'abcdefgh<ijklmnopqrstu' ),
+			'inner spaces'     => array( 'correct  horse battery' ),
+			'quote, backslash' => array( 'it\'s a "key" with \\ in it' ),
+			'hex key'          => array( '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' ),
+		);
+	}
+
+	public function test_admin_key_with_a_control_character_is_rejected_and_the_stored_key_kept(): void {
+		if ( defined( 'MEILISEARCH_ADMIN_KEY' ) ) {
+			$this->markTestSkipped( 'The admin key is defined as a constant.' );
+		}
+		$original = (string) get_option( Options::ADMIN_KEY, '' );
+		$this->register_settings();
+
+		try {
+			$this->submit( 'meilisearch_connection', array( Options::ADMIN_KEY => "first-half\nX-Injected: 1" ) );
+
+			$this->assertSame( $original, get_option( Options::ADMIN_KEY ) );
+			$this->assertSame( array( 'meilisearch_invalid_admin_key' ), array_column( get_settings_errors( 'meilisearch_connection' ), 'code' ) );
+		} finally {
+			update_option( Options::ADMIN_KEY, $original );
+			$GLOBALS['wp_settings_errors'] = array();
+		}
+	}
+
 	public function test_saving_search_does_not_modify_connection_or_content(): void {
 		$content = array(
 			'post_types' => array( 'page' ),

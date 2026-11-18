@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Meilisearch\WordPress\Tests\Unit\Admin;
 
 use Brain\Monkey\Functions;
+use Meilisearch\WordPress\Admin\HandlesSave;
 use Meilisearch\WordPress\Admin\Menu;
 use Meilisearch\WordPress\Admin\Tab;
 use Meilisearch\WordPress\Registrable;
@@ -152,6 +153,78 @@ final class MenuTest extends TestCase {
 
 		$_GET['tab'] = 'SEARCH<script>';
 		$this->assertSame( 'content', $menu->current_tab()->slug() );
+	}
+
+	private function saving_tab( string $slug, bool $visible = true ): Tab {
+		return new class( $slug, $visible ) implements Tab, HandlesSave {
+			public int $saves = 0;
+			public function __construct( private string $slug, private bool $visible ) {}
+			public function slug(): string {
+				return $this->slug;
+			}
+			public function label(): string {
+				return ucfirst( $this->slug );
+			}
+			public function is_visible(): bool {
+				return $this->visible;
+			}
+			public function register_settings(): void {}
+			public function render(): void {}
+			public function after_save(): void {
+				++$this->saves;
+			}
+		};
+	}
+
+	public function test_register_hooks_the_page_load(): void {
+		$menu = new Menu( array( $this->tab( 'connection' ) ) );
+
+		$menu->register();
+
+		$this->assertNotFalse( has_action( 'load-toplevel_page_meilisearch', array( $menu, 'after_save' ) ) );
+	}
+
+	/**
+	 * The menu link has no ?tab=, and options.php redirects back to the URL the form was shown on:
+	 * the tab that handles the save is the one that rendered, not the one named in the URL.
+	 *
+	 * @dataProvider provide_saved_tabs
+	 *
+	 * @param string|null $requested Value of ?tab=, null when absent.
+	 * @param int         $first     Expected after_save() calls on the first tab.
+	 * @param int         $second    Expected after_save() calls on the second tab.
+	 */
+	public function test_after_save_runs_for_the_tab_that_rendered( ?string $requested, int $first, int $second ): void {
+		$connection = $this->saving_tab( 'connection' );
+		$search     = $this->saving_tab( 'search' );
+		if ( null !== $requested ) {
+			$_GET['tab'] = $requested;
+		}
+
+		( new Menu( array( $connection, $this->tab( 'content' ), $search ) ) )->after_save();
+
+		$this->assertSame( array( $first, $second ), array( $connection->saves, $search->saves ) );
+	}
+
+	/**
+	 * @return array<string, array{?string, int, int}>
+	 */
+	public static function provide_saved_tabs(): array {
+		return array(
+			'menu link, no tab'     => array( null, 1, 0 ),
+			'unknown tab'           => array( 'no-such-tab', 1, 0 ),
+			'named tab'             => array( 'connection', 1, 0 ),
+			'another saving tab'    => array( 'search', 0, 1 ),
+			'tab without a handler' => array( 'content', 0, 0 ),
+		);
+	}
+
+	public function test_after_save_skips_a_tab_the_user_cannot_see(): void {
+		$connection = $this->saving_tab( 'connection', false );
+
+		( new Menu( array( $connection ) ) )->after_save();
+
+		$this->assertSame( 0, $connection->saves );
 	}
 
 	public function test_render_page_shows_visible_tabs_only(): void {

@@ -133,7 +133,8 @@ final class Options {
 		if ( ! in_array( $scheme, array( 'http', 'https' ), true ) ) {
 			return '';
 		}
-		if ( 1 !== preg_match( '/^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/', $host ) ) {
+		// Underscores are not valid in DNS hostnames but are in Docker service and container names, which resolve.
+		if ( 1 !== preg_match( '/^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])$/', $host ) ) {
 			return '';
 		}
 
@@ -207,6 +208,20 @@ final class Options {
 	 */
 	public function is_configured(): bool {
 		return '' !== $this->host() && '' !== $this->admin_key();
+	}
+
+	/**
+	 * Identifies the connection a successful attempt was made with: host, admin key and index prefix.
+	 *
+	 * Stored in the `last_connect` state so the Connection screen says "Connected" only while
+	 * the configuration is still the one that was tested (constants and direct option writes
+	 * change it without running the connection flow).
+	 *
+	 * @param string $prefix Index prefix in use (IndexNames::prefix()).
+	 * @return string
+	 */
+	public function connection_fingerprint( string $prefix ): string {
+		return md5( $this->host() . '|' . $this->admin_key() . '|' . $prefix );
 	}
 
 	/**

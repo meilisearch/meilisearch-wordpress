@@ -52,6 +52,7 @@ final class Menu implements Registrable {
 		add_action( 'admin_menu', array( $this, 'add_menu' ) );
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+		add_action( 'load-' . self::HOOK_SUFFIX, array( $this, 'after_save' ) );
 
 		foreach ( $this->tabs as $tab ) {
 			if ( $tab instanceof Registrable ) {
@@ -124,6 +125,22 @@ final class Menu implements Registrable {
 		}
 
 		return $visible[0] ?? $this->tabs[0];
+	}
+
+	/**
+	 * Lets the tab that is about to render act on a save (load-toplevel_page_meilisearch).
+	 *
+	 * The tab is resolved as render_page() resolves it, not from the raw `?tab=`: the menu
+	 * link (admin.php?page=meilisearch) shows the first visible tab without naming it, and
+	 * options.php redirects back to that same URL.
+	 *
+	 * @return void
+	 */
+	public function after_save(): void {
+		$current = $this->current_tab();
+		if ( $current instanceof HandlesSave && $current->is_visible() ) {
+			$current->after_save();
+		}
 	}
 
 	/**
