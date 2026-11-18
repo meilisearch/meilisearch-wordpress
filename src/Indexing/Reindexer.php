@@ -25,10 +25,14 @@ use Meilisearch\WordPress\Sync\Queue;
  * index settings, including embedders and their API keys, are never read back or rewritten):
  *
  * 1. start(): ensure_index() (creates it with the required settings if missing), store the run state.
+ *    The settings task is not waited for: on a large index Meilisearch can take minutes to apply it.
+ *    Documents sent meanwhile are queued behind it; its UID is kept in the state (settings_task).
  * 2. Phase "upsert": keyset pagination on post ID (never OFFSET); indexable posts are sent with
  *    add-or-replace. The cursor advances to the last scanned row even when every row is vetoed.
  * 3. Phase "sweep": page through the index's document IDs (documents/fetch, id > last, sorted by id)
  *    and delete those whose post is missing or no longer indexable (orphans, missed unpublishes).
+ *    That read needs id to be filterable and sortable, so the phase first waits (polling like the
+ *    finalizing phase) until the recorded settings task has succeeded; a failed one fails the run.
  * 4. Phase "finalizing": wait until no recorded task is enqueued/processing; a failed or canceled
  *    task fails the run, otherwise the run is done and the index is marked populated (search is
  *    intercepted only for populated indexes).
@@ -119,7 +123,7 @@ final class Reindexer implements Registrable {
 		try {
 			$state = $this->step( $logical, $state, $this->batch_size() );
 			if ( self::is_active( $state ) ) {
-				$delay = 'finalizing' === $state['phase'] ? self::FINALIZE_POLL : 0;
+				$delay = self::is_waiting( $state ) ? self::FINALIZE_POLL : 0;
 				if ( 0 === $this->queue->schedule( Queue::REINDEX_BATCH, $this->payload( $logical, $run ), $delay ) ) {
 					throw new \RuntimeException( 'The next reindex step could not be scheduled.' );
 				}
@@ -157,11 +161,13 @@ final class Reindexer implements Registrable {
 				if ( null === $current || ( $current['run'] ?? '' ) !== $run ) {
 					throw new \RuntimeException( self::SUPERSEDED );
 				}
-				if ( 'finalizing' === $state['phase'] ) {
+				if ( self::is_waiting( $state ) ) {
 					$deadline = 0 === $deadline ? time() + self::CLI_TASK_TIMEOUT : $deadline;
 					if ( time() >= $deadline ) {
 						throw new ApiError( 'Timed out waiting for Meilisearch to process the reindex.', 'task_timeout' );
 					}
+				} else {
+					$deadline = 0;
 				}
 				$was_upsert = 'upsert' === $state['phase'];
 				$state      = $this->step( $logical, $state, $batch_size );
@@ -172,7 +178,7 @@ final class Reindexer implements Registrable {
 				}
 				if ( $was_upsert ) {
 					$progress( (int) $state['sent'], (int) $state['total'] );
-				} elseif ( self::is_active( $state ) && 'finalizing' === $state['phase'] ) {
+				} elseif ( self::is_active( $state ) && self::is_waiting( $state ) ) {
 					usleep( 500000 );
 				}
 			}//end while
@@ -312,7 +318,8 @@ final class Reindexer implements Registrable {
 			throw new \RuntimeException( 'already_running' );
 		}
 
-		$this->indexes->ensure_index( $logical );
+		// No wait: a settings task still being processed is recorded and awaited before the sweep.
+		$settings_task = $this->indexes->ensure_index( $logical, null, 0.0 );
 
 		$state = array(
 			'run'        => strtolower( gmdate( 'YmdHis' ) . wp_generate_password( 4, false ) ),
@@ -327,6 +334,9 @@ final class Reindexer implements Registrable {
 			'status'     => 'running',
 			'error'      => '',
 		);
+		if ( null !== $settings_task ) {
+			$state['settings_task'] = $settings_task;
+		}
 		// Flags raised from now on (settings changed mid-run) survive the run: finalize does not clear them.
 		$this->options->flag_reindex( $logical, false );
 		$this->options->set_reindex_state( $logical, $state );
@@ -348,6 +358,15 @@ final class Reindexer implements Registrable {
 				$state = $this->upsert_batch( $client, $logical, $state, $batch_size );
 				break;
 			case 'sweep':
+				if ( isset( $state['settings_task'] ) ) {
+					$state = $this->await_settings( $client, $logical, $state );
+					if ( ! self::is_active( $state ) ) {
+						return $state;
+					}
+					if ( isset( $state['settings_task'] ) ) {
+						return $this->save( $logical, $state );
+					}
+				}
 				$state = $this->sweep_page( $client, $logical, $state );
 				break;
 			default:
@@ -394,6 +413,29 @@ final class Reindexer implements Registrable {
 		if ( $scan['exhausted'] ) {
 			$state['phase']   = 'sweep';
 			$state['last_id'] = 0;
+		}
+		return $state;
+	}
+
+	/**
+	 * Checks the settings task recorded at the start of the run. The sweep filters and sorts on id,
+	 * which only works once those settings are applied.
+	 *
+	 * @param Client               $client  Client.
+	 * @param string               $logical Logical index.
+	 * @param array<string, mixed> $state   Run state with a settings_task.
+	 * @return array<string, mixed> Without settings_task once it succeeded, unchanged while it is being
+	 *                              processed, failed when the task failed or was canceled.
+	 */
+	private function await_settings( Client $client, string $logical, array $state ): array {
+		$task   = $client->get_task( (int) $state['settings_task'] );
+		$status = $task['status'] ?? '';
+		if ( 'succeeded' === $status ) {
+			unset( $state['settings_task'] );
+			return $state;
+		}
+		if ( 'failed' === $status || 'canceled' === $status ) {
+			return $this->fail( $logical, $state, self::task_error( $task ) );
 		}
 		return $state;
 	}
@@ -728,6 +770,17 @@ final class Reindexer implements Registrable {
 			'logical' => $logical,
 			'run'     => $run,
 		);
+	}
+
+	/**
+	 * Whether the next step only polls Meilisearch: the finalizing phase, or a sweep held back by the settings task.
+	 *
+	 * @param array<string, mixed> $state Run state.
+	 * @return bool
+	 */
+	private static function is_waiting( array $state ): bool {
+		$phase = $state['phase'] ?? '';
+		return 'finalizing' === $phase || ( 'sweep' === $phase && isset( $state['settings_task'] ) );
 	}
 
 	/**

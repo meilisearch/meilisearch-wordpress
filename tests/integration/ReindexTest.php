@@ -114,6 +114,25 @@ final class ReindexTest extends TestCase {
 	}
 
 	/**
+	 * Starting a run does not wait for the index creation and settings tasks: the sweep, which filters
+	 * and sorts on id, holds until Meilisearch has applied them.
+	 */
+	public function test_reindex_of_a_missing_index_waits_for_its_settings_before_the_sweep(): void {
+		$this->meili( 'DELETE', '/indexes/' . $this->uid );
+		$this->wait_for_tasks();
+		$published = self::factory()->post->create_many( 3 );
+		sort( $published );
+
+		$state = $this->reindex();
+
+		$this->assertSame( 'done', $state['status'], (string) $state['error'] );
+		$this->assertArrayNotHasKey( 'settings_task', $state );
+		$this->assertSame( $published, $this->indexed_ids() );
+		$settings = $this->meili( 'GET', '/indexes/' . $this->uid . '/settings', null );
+		$this->assertContains( 'id', $settings['sortableAttributes'] );
+	}
+
+	/**
 	 * Synonyms, ranking rules and embedders configured in Meilisearch are untouched by a reindex.
 	 */
 	public function test_meilisearch_side_settings_survive(): void {

@@ -357,6 +357,126 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
+	 * Starting a run does not wait for (or fail on) a settings task Meilisearch is still processing: the task is recorded.
+	 */
+	public function test_start_records_a_settings_task_still_processing(): void {
+		Functions\when( 'wp_generate_password' )->justReturn( 'abcd' );
+		$this->install_wpdb( array(), '2' );
+		$this->transport
+			->respond(
+				404,
+				array(
+					'code'    => 'index_not_found',
+					'message' => 'missing',
+				)
+			)
+			->queue( self::task_response( 1 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 1,
+					'status' => 'processing',
+				)
+			)
+			->queue( self::task_response( 2 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 2,
+					'status' => 'enqueued',
+				)
+			);
+		Functions\expect( 'as_schedule_single_action' )->once()->andReturn( 9 );
+
+		$state = $this->reindexer()->start( 'content' );
+
+		$this->assertSame( 'running', $state['status'] );
+		$this->assertSame( 'upsert', $state['phase'] );
+		$this->assertSame( 2, $state['settings_task'] );
+		$this->assertCount( 5, $this->transport->requests(), 'One poll per task, no waiting.' );
+	}
+
+	/**
+	 * The sweep reads the index with a filter and a sort on id: it waits until the settings task has been applied.
+	 */
+	public function test_sweep_waits_for_the_settings_task(): void {
+		$this->seed_run(
+			array(
+				'phase'         => 'sweep',
+				'settings_task' => 2,
+			)
+		);
+		$this->transport->respond(
+			200,
+			array(
+				'uid'    => 2,
+				'status' => 'processing',
+			)
+		);
+		$this->expect_next_step( Reindexer::FINALIZE_POLL );
+
+		$this->handle();
+
+		$requests = $this->transport->requests();
+		$this->assertCount( 1, $requests );
+		$this->assertStringEndsWith( '/tasks/2', $requests[0]['url'] );
+		$state = $this->state();
+		$this->assertSame( 'sweep', $state['phase'] );
+		$this->assertSame( 2, $state['settings_task'] );
+		$this->assertSame( 'running', $state['status'] );
+	}
+
+	/**
+	 * Once the settings task has succeeded the sweep runs in the same step.
+	 */
+	public function test_sweep_runs_once_the_settings_task_succeeded(): void {
+		$this->seed_run(
+			array(
+				'phase'         => 'sweep',
+				'settings_task' => 2,
+			)
+		);
+		$this->transport
+			->queue( self::succeeded_task( 2 ) )
+			->queue( self::json_response( 200, array( 'results' => array() ) ) );
+		$this->expect_next_step( Reindexer::FINALIZE_POLL );
+
+		$this->handle();
+
+		$this->assertStringContainsString( '/documents/fetch', $this->transport->requests()[1]['url'] );
+		$state = $this->state();
+		$this->assertSame( 'finalizing', $state['phase'] );
+		$this->assertArrayNotHasKey( 'settings_task', $state );
+	}
+
+	/**
+	 * A settings task that failed fails the run with the engine's message before anything is swept.
+	 */
+	public function test_failed_settings_task_fails_the_run(): void {
+		$this->seed_run(
+			array(
+				'phase'         => 'sweep',
+				'settings_task' => 2,
+			)
+		);
+		$this->transport->respond(
+			200,
+			array(
+				'uid'    => 2,
+				'status' => 'failed',
+				'error'  => array( 'message' => 'Invalid filterable attribute.' ),
+			)
+		);
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		$this->handle();
+
+		$this->assertCount( 1, $this->transport->requests() );
+		$this->assertSame( 'failed', $this->state()['status'] );
+		$this->assertSame( 'Invalid filterable attribute.', $this->state()['error'] );
+	}
+
+	/**
 	 * Actions of a superseded or finished run are ignored.
 	 */
 	public function test_stale_run_is_ignored(): void {

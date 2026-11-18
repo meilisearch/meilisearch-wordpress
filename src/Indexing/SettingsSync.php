@@ -79,7 +79,9 @@ final class SettingsSync implements Registrable {
 		}
 
 		try {
-			$this->indexes->ensure_all();
+			// A short wait: a settings task Meilisearch is still applying (large index, busy queue) is not a
+			// failure and must not hold the settings save for the full task timeout.
+			$this->indexes->ensure_all( IndexManager::SETTINGS_WAIT );
 		} catch ( \Throwable $e ) {
 			$this->log->add( 'settings', sprintf( 'Applying the index settings failed: %s', $e->getMessage() ) );
 		}
