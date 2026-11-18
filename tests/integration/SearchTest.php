@@ -372,4 +372,41 @@ final class SearchTest extends TestCase {
 		self::assertSame( 25, $this->main_query()->found_posts );
 		self::assertLessThan( 1.0, microtime( true ) - $started );
 	}
+
+	/**
+	 * Mixed author inclusion and exclusion: like core, only the exclusion applies.
+	 */
+	public function test_author_exclusion_wins_over_inclusion_like_mysql(): void {
+		$a = self::factory()->user->create();
+		$b = self::factory()->user->create();
+		wp_update_post(
+			array(
+				'ID'          => $this->matching[0],
+				'post_author' => $a,
+			)
+		);
+		wp_update_post(
+			array(
+				'ID'          => $this->matching[1],
+				'post_author' => $b,
+			)
+		);
+		Plugin::instance()->get( 'reindexer' )->run_sync(
+			'content',
+			200,
+			static function (): void {}
+		);
+		$url = home_url( '/?s=nebula&author=' . $a . ',-' . $b );
+
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => false ) ) );
+		$this->go_to( $url );
+		self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		$mysql = $this->main_query()->found_posts;
+
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		$this->go_to( $url );
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 24, $mysql );
+		self::assertSame( $mysql, $this->main_query()->found_posts );
+	}
 }

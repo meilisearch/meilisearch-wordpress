@@ -344,24 +344,62 @@ final class QueryTranslatorTest extends TestCase {
 	}
 
 	/**
-	 * The author, author__in and author__not_in vars are merged into author_id filters.
+	 * The author, author__in and author__not_in vars are merged like WP_Query does; as in core, an
+	 * exclusion wins and the inclusion list is then ignored (WP_Query::get_posts() uses elseif).
+	 *
+	 * @dataProvider author_cases
+	 *
+	 * @param array<string, mixed> $vars     Author query vars.
+	 * @param string[]             $expected Author filters.
 	 */
-	public function test_author_filters(): void {
+	public function test_author_filters( array $vars, array $expected ): void {
 		$request = $this->translate(
 			$this->make_query(
-				array(
-					's'              => 'x',
-					'post_type'      => 'post',
-					'author'         => '3,-4',
-					'author__in'     => array( 5, '3' ),
-					'author__not_in' => array( 6 ),
+				array_merge(
+					array(
+						's'         => 'x',
+						'post_type' => 'post',
+					),
+					$vars
 				)
 			)
 		);
 
-		self::assertSame(
-			array( 'post_type IN ["post"]', 'author_id IN [3, 5]', 'author_id NOT IN [4, 6]' ),
-			$request->filters['content']
+		self::assertSame( array_merge( array( 'post_type IN ["post"]' ), $expected ), $request->filters['content'] );
+	}
+
+	/**
+	 * Author vars => author filters.
+	 *
+	 * @return array<string, array{0: array<string, mixed>, 1: string[]}>
+	 */
+	public static function author_cases(): array {
+		return array(
+			'in and not in'      => array(
+				array(
+					'author'         => '3,-4',
+					'author__in'     => array( 5, '3' ),
+					'author__not_in' => array( 6 ),
+				),
+				array( 'author_id NOT IN [4, 6]' ),
+			),
+			'mixed author var'   => array( array( 'author' => '5,-3' ), array( 'author_id NOT IN [3]' ) ),
+			'in only'            => array(
+				array(
+					'author'     => '3',
+					'author__in' => array( 5, '3' ),
+				),
+				array( 'author_id IN [3, 5]' ),
+			),
+			'not in only'        => array( array( 'author__not_in' => array( 6, 7 ) ), array( 'author_id NOT IN [6, 7]' ) ),
+			'zero author part'   => array( array( 'author' => '5,0' ), array( 'author_id NOT IN [0]' ) ),
+			'in with empty excl' => array(
+				array(
+					'author__in'     => array( 5 ),
+					'author__not_in' => array(),
+				),
+				array( 'author_id IN [5]' ),
+			),
 		);
 	}
 

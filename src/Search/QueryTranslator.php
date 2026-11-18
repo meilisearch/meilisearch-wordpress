@@ -465,7 +465,9 @@ final class QueryTranslator {
 	}
 
 	/**
-	 * Author filters from author, author__in and author__not_in (merged like WP_Query does).
+	 * Author filters from author, author__in and author__not_in, merged like WP_Query::get_posts():
+	 * the author var is split into inclusions and exclusions, and when any exclusion is requested
+	 * core applies only the NOT IN clause and ignores the inclusions (elseif), so this does too.
 	 *
 	 * @param \WP_Query $query Query.
 	 * @return string[]|null
@@ -486,12 +488,14 @@ final class QueryTranslator {
 				$id = (int) $part;
 				if ( $id > 0 ) {
 					$in[] = $id;
-				} elseif ( $id < 0 ) {
+				} else {
 					$not_in[] = -$id;
+					// Core files 0 under author__not_in too.
 				}
 			}
 		}
 
+		$excludes     = array() !== $not_in || ! empty( $query->get( 'author__not_in' ) );
 		$extra_in     = self::id_list( $query->get( 'author__in' ) );
 		$extra_not_in = self::id_list( $query->get( 'author__not_in' ) );
 		if ( null === $extra_in || null === $extra_not_in ) {
@@ -500,14 +504,10 @@ final class QueryTranslator {
 		$in     = array_values( array_unique( array_merge( $in, $extra_in ) ) );
 		$not_in = array_values( array_unique( array_merge( $not_in, $extra_not_in ) ) );
 
-		$filters = array();
-		if ( array() !== $in ) {
-			$filters[] = FilterBuilder::in( 'author_id', $in );
+		if ( $excludes ) {
+			return array() === $not_in ? array() : array( FilterBuilder::not_in( 'author_id', $not_in ) );
 		}
-		if ( array() !== $not_in ) {
-			$filters[] = FilterBuilder::not_in( 'author_id', $not_in );
-		}
-		return $filters;
+		return array() === $in ? array() : array( FilterBuilder::in( 'author_id', $in ) );
 	}
 
 	/**
