@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Meilisearch\WordPress\Indexing;
 
 use Meilisearch\WordPress\Api\ApiError;
+use Meilisearch\WordPress\Api\Client;
 use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Api\Task;
 use Meilisearch\WordPress\Settings\IndexNames;
@@ -24,6 +25,16 @@ final class IndexManager {
 
 	public const MIN_VERSION  = '1.34.0';
 	public const TASK_TIMEOUT = 30.0;
+
+	/**
+	 * Wait used where a person is waiting for the request (saving the Content tab, starting a reindex).
+	 */
+	public const SETTINGS_WAIT = 5.0;
+
+	/**
+	 * State key: index uid => {task, hash} of the last settings task sent.
+	 */
+	private const SETTINGS_TASKS = 'settings_tasks';
 
 	/**
 	 * Constructor.
@@ -163,47 +174,59 @@ final class IndexManager {
 	/**
 	 * Creates the index if missing (initial settings), otherwise merges required settings.
 	 *
-	 * Waits for every task (TASK_TIMEOUT each).
+	 * Waits up to $wait seconds in total for the tasks. A task that is still enqueued or processing
+	 * when the time is up is not an error: Meilisearch applies tasks in order, so documents sent
+	 * afterwards are processed with the new settings, and a settings change on a large index (or behind
+	 * a busy task queue) legitimately takes longer than any request should block. The UID of the
+	 * settings task is returned so the caller can hold back what needs the settings to be applied.
 	 *
 	 * @param string      $logical Logical index.
 	 * @param string|null $uid     Index uid; defaults to the live uid.
-	 * @return void
+	 * @param float       $wait    Maximum seconds to wait for the tasks.
+	 * @return int|null UID of the settings task still being processed; null when everything is applied.
 	 *
 	 * @throws ApiError On Meilisearch errors or failed tasks.
 	 */
-	public function ensure_index( string $logical, ?string $uid = null ): void {
-		$uid    = $uid ?? $this->names->uid( $logical );
-		$client = $this->clients->client();
+	public function ensure_index( string $logical, ?string $uid = null, float $wait = self::TASK_TIMEOUT ): ?int {
+		$uid      = $uid ?? $this->names->uid( $logical );
+		$client   = $this->clients->client();
+		$deadline = microtime( true ) + max( 0.0, $wait );
 
 		if ( ! $client->index_exists( $uid ) ) {
-			$client->create_index( $uid, 'id' )->wait( self::TASK_TIMEOUT );
-			$client->update_settings( $uid, $this->settings->initial( $logical ) )->wait( self::TASK_TIMEOUT );
-			return;
+			self::settle( $client->create_index( $uid, 'id' ), $deadline );
+			return self::settle( $client->update_settings( $uid, $this->settings->initial( $logical ) ), $deadline );
 		}
 
 		$task = $this->sync_settings( $logical, $uid );
-		if ( null !== $task ) {
-			$task->wait( self::TASK_TIMEOUT );
-		}
+		return null === $task ? null : self::settle( $task, $deadline );
 	}
 
 	/**
 	 * Ensures every active logical index that has a schema.
 	 *
-	 * @return void
+	 * @param float $wait Maximum seconds to wait for the tasks of each index.
+	 * @return array<string, int> Logical index => UID of its settings task still being processed.
 	 *
 	 * @throws ApiError On Meilisearch errors or failed tasks.
 	 */
-	public function ensure_all(): void {
+	public function ensure_all( float $wait = self::TASK_TIMEOUT ): array {
+		$pending = array();
 		foreach ( $this->names->active_logicals() as $logical ) {
 			if ( $this->settings->has( $logical ) ) {
-				$this->ensure_index( $logical );
+				$task = $this->ensure_index( $logical, null, $wait );
+				if ( null !== $task ) {
+					$pending[ $logical ] = $task;
+				}
 			}
 		}
+		return $pending;
 	}
 
 	/**
 	 * PATCHes the missing required settings; does not wait.
+	 *
+	 * GET /settings only shows applied settings, so while a previous PATCH is still being processed the
+	 * same patch comes out again. That task is reused instead of enqueueing a duplicate.
 	 *
 	 * @param string $logical Logical index.
 	 * @param string $uid     Index uid.
@@ -212,10 +235,91 @@ final class IndexManager {
 	 * @throws ApiError On Meilisearch errors.
 	 */
 	public function sync_settings( string $logical, string $uid ): ?Task {
-		$client = $this->clients->client();
-		$patch  = $this->settings->patch( $logical, $client->get_settings( $uid ) );
+		$client     = $this->clients->client();
+		$patch      = $this->settings->patch( $logical, $client->get_settings( $uid ) );
+		$remembered = $this->options->state( self::SETTINGS_TASKS, array() );
+		$remembered = is_array( $remembered ) ? $remembered : array();
+		$known      = isset( $remembered[ $uid ] ) && is_array( $remembered[ $uid ] ) ? $remembered[ $uid ] : null;
 
-		return array() === $patch ? null : $client->update_settings( $uid, $patch );
+		if ( array() === $patch ) {
+			if ( null !== $known ) {
+				$this->remember_settings_task( $uid, null );
+			}
+			return null;
+		}
+
+		$hash = md5( (string) wp_json_encode( $patch ) );
+		if ( null !== $known && ( $known['hash'] ?? '' ) === $hash && $this->is_processing( $client, $uid, (int) ( $known['task'] ?? 0 ) ) ) {
+			return new Task( $client, (int) $known['task'] );
+		}
+
+		$task = $client->update_settings( $uid, $patch );
+		$this->remember_settings_task(
+			$uid,
+			array(
+				'task' => $task->uid,
+				'hash' => $hash,
+			)
+		);
+		return $task;
+	}
+
+	/**
+	 * Waits for a task until the deadline. A task still enqueued or processing at the deadline is reported, not thrown.
+	 *
+	 * @param Task  $task     Task.
+	 * @param float $deadline Timestamp (microtime) after which the wait stops.
+	 * @return int|null The task UID when it has not finished; null when it succeeded.
+	 *
+	 * @throws ApiError On a failed or canceled task and on polling errors.
+	 */
+	private static function settle( Task $task, float $deadline ): ?int {
+		try {
+			$task->wait( max( 0.0, $deadline - microtime( true ) ) );
+		} catch ( ApiError $error ) {
+			if ( 'task_timeout' !== $error->error_code ) {
+				throw $error;
+			}
+			return $task->uid;
+		}
+		return null;
+	}
+
+	/**
+	 * Whether a remembered task is a settings update of this index that Meilisearch has not finished.
+	 * Any doubt (unknown task, other index, lookup error) answers false: sending the settings again is harmless.
+	 *
+	 * @param Client $client   Client.
+	 * @param string $uid      Index uid.
+	 * @param int    $task_uid Task UID.
+	 * @return bool
+	 */
+	private function is_processing( Client $client, string $uid, int $task_uid ): bool {
+		try {
+			$task = $client->get_task( $task_uid );
+		} catch ( ApiError $error ) {
+			return false;
+		}
+		return 'settingsUpdate' === ( $task['type'] ?? '' )
+			&& ( $task['indexUid'] ?? '' ) === $uid
+			&& in_array( $task['status'] ?? '', array( 'enqueued', 'processing' ), true );
+	}
+
+	/**
+	 * Remembers (or forgets, with null) the last settings task sent to an index.
+	 *
+	 * @param string                              $uid    Index uid.
+	 * @param array{task: int, hash: string}|null $record Task UID and hash of its patch.
+	 */
+	private function remember_settings_task( string $uid, ?array $record ): void {
+		$all = $this->options->state( self::SETTINGS_TASKS, array() );
+		$all = is_array( $all ) ? $all : array();
+		if ( null === $record ) {
+			unset( $all[ $uid ] );
+		} else {
+			$all[ $uid ] = $record;
+		}
+		$this->options->set_state( self::SETTINGS_TASKS, $all );
 	}
 
 	/**

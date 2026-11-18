@@ -25,13 +25,23 @@ use Meilisearch\WordPress\Sync\Queue;
  * index settings, including embedders and their API keys, are never read back or rewritten):
  *
  * 1. start(): ensure_index() (creates it with the required settings if missing), store the run state.
+ *    The settings task is not waited for: on a large index Meilisearch can take minutes to apply it.
+ *    Documents sent meanwhile are queued behind it; its UID is kept in the state (settings_task).
  * 2. Phase "upsert": keyset pagination on post ID (never OFFSET); indexable posts are sent with
  *    add-or-replace. The cursor advances to the last scanned row even when every row is vetoed.
  * 3. Phase "sweep": page through the index's document IDs (documents/fetch, id > last, sorted by id)
  *    and delete those whose post is missing or no longer indexable (orphans, missed unpublishes).
+ *    That read needs id to be filterable and sortable, so the phase first waits (polling like the
+ *    finalizing phase) until the recorded settings task has succeeded; a failed one fails the run.
  * 4. Phase "finalizing": wait until no recorded task is enqueued/processing; a failed or canceled
  *    task fails the run, otherwise the run is done and the index is marked populated (search is
  *    intercepted only for populated indexes).
+ *
+ * A step that hits a transient error (no response, HTTP 408, 429 or 5xx) is retried: the background
+ * run reschedules it after RETRY_BACKOFF[n] seconds (the counter, "retries", is kept in the state and
+ * reset by the next successful step), the WP-CLI run retries it in place after CLI_RETRY_BACKOFF[n].
+ * Re-running a step is safe: the state only advances once the step succeeded, upserts are
+ * add-or-replace and deletes are by id. Any other error, or the last retry failing, fails the run.
  *
  * Recorded task UIDs are pruned once TASK_PRUNE_AT accumulate: finished ones are checked for failure
  * and dropped, so the stored state stays small. Real-time sync keeps writing to the same index;
@@ -45,6 +55,16 @@ final class Reindexer implements Registrable {
 	public const FINALIZE_POLL    = 10;
 	public const STALE_AFTER      = 900;
 	public const CLI_TASK_TIMEOUT = 3600;
+
+	/**
+	 * Seconds before each retry of a background step that hit a transient error.
+	 */
+	public const RETRY_BACKOFF = array( 30, 120, 600 );
+
+	/**
+	 * Seconds before each in-place retry of a WP-CLI step that hit a transient error.
+	 */
+	public const CLI_RETRY_BACKOFF = array( 1, 5, 15 );
 
 	private const TASK_UID_CHUNK = 100;
 	private const TASK_PRUNE_AT  = 20;
@@ -116,10 +136,14 @@ final class Reindexer implements Registrable {
 			return;
 		}
 
+		// Consecutive transient failures of this step; a successful step stores the state without it.
+		$retries = (int) ( $state['retries'] ?? 0 );
+		unset( $state['retries'] );
+
 		try {
 			$state = $this->step( $logical, $state, $this->batch_size() );
 			if ( self::is_active( $state ) ) {
-				$delay = 'finalizing' === $state['phase'] ? self::FINALIZE_POLL : 0;
+				$delay = self::is_waiting( $state ) ? self::FINALIZE_POLL : 0;
 				if ( 0 === $this->queue->schedule( Queue::REINDEX_BATCH, $this->payload( $logical, $run ), $delay ) ) {
 					throw new \RuntimeException( 'The next reindex step could not be scheduled.' );
 				}
@@ -129,9 +153,100 @@ final class Reindexer implements Registrable {
 				// A newer run owns the state now; this action has nothing left to do.
 				return;
 			}
+			if ( self::is_transient( $e ) && $retries < count( self::RETRY_BACKOFF ) && $this->retry_later( $logical, $run, $retries + 1, $e ) ) {
+				return;
+			}
 			$this->fail( $logical, $state, $e->getMessage() );
 			throw $e;
 		}
+	}
+
+	/**
+	 * Reschedules the step of a run that hit a transient error, after RETRY_BACKOFF[attempt - 1] seconds.
+	 * The counter is stored in the state, not in the payload: is_abandoned() looks the pending action up
+	 * by its exact payload.
+	 *
+	 * @param string     $logical Logical index.
+	 * @param string     $run     Run ID.
+	 * @param int        $attempt Retry number, from 1.
+	 * @param \Throwable $error   The transient error.
+	 * @return bool False when the retry could not be scheduled (the run must then fail).
+	 */
+	private function retry_later( string $logical, string $run, int $attempt, \Throwable $error ): bool {
+		$current = $this->status( $logical );
+		if ( null === $current || ( $current['run'] ?? '' ) !== $run || ! self::is_active( $current ) ) {
+			// Superseded or already finished: nothing left to retry.
+			return true;
+		}
+		$delay              = self::RETRY_BACKOFF[ $attempt - 1 ];
+		$current['retries'] = $attempt;
+		$this->save( $logical, $current );
+		if ( 0 === $this->queue->schedule( Queue::REINDEX_BATCH, $this->payload( $logical, $run ), $delay ) ) {
+			return false;
+		}
+		$this->log->add(
+			'reindex',
+			sprintf(
+				'Reindex of the %1$s index hit a temporary error, retry %2$d of %3$d in %4$d seconds: %5$s',
+				$logical,
+				$attempt,
+				count( self::RETRY_BACKOFF ),
+				$delay,
+				$this->options->redact( $error->getMessage() )
+			)
+		);
+		return true;
+	}
+
+	/**
+	 * Whether an error may go away on its own: no response, request timeout, rate limit, server or proxy error.
+	 *
+	 * @param \Throwable $error Error.
+	 * @return bool
+	 */
+	private static function is_transient( \Throwable $error ): bool {
+		if ( ! $error instanceof ApiError ) {
+			return false;
+		}
+		if ( 'transport_error' === $error->error_code ) {
+			return true;
+		}
+		return 408 === $error->http_status || 429 === $error->http_status || ( $error->http_status >= 500 && $error->http_status < 600 );
+	}
+
+	/**
+	 * WP-CLI step: retries a step that hit a transient error in place, after CLI_RETRY_BACKOFF[n] seconds.
+	 *
+	 * @param string               $logical    Logical index.
+	 * @param string               $run        Run ID.
+	 * @param array<string, mixed> $state      Running state.
+	 * @param int                  $batch_size Upsert batch size.
+	 * @return array<string, mixed>
+	 * @throws \RuntimeException 'superseded' when another run took over while waiting.
+	 * @throws ApiError A permanent error, or a transient one after the last retry.
+	 */
+	private function cli_step( string $logical, string $run, array $state, int $batch_size ): array {
+		$retries = 0;
+		while ( true ) {
+			try {
+				return $this->step( $logical, $state, $batch_size );
+			} catch ( ApiError $e ) {
+				if ( ! self::is_transient( $e ) || $retries >= count( self::CLI_RETRY_BACKOFF ) ) {
+					throw $e;
+				}
+				sleep( self::CLI_RETRY_BACKOFF[ $retries ] );
+				++$retries;
+				// Retry from the stored state: the failed step may have saved part of its work.
+				$current = $this->status( $logical );
+				if ( null === $current || ( $current['run'] ?? '' ) !== $run ) {
+					throw new \RuntimeException( self::SUPERSEDED );
+				}
+				if ( ! self::is_active( $current ) ) {
+					return $current;
+				}
+				$state = $current;
+			}//end try
+		}//end while
 	}
 
 	/**
@@ -157,14 +272,16 @@ final class Reindexer implements Registrable {
 				if ( null === $current || ( $current['run'] ?? '' ) !== $run ) {
 					throw new \RuntimeException( self::SUPERSEDED );
 				}
-				if ( 'finalizing' === $state['phase'] ) {
+				if ( self::is_waiting( $state ) ) {
 					$deadline = 0 === $deadline ? time() + self::CLI_TASK_TIMEOUT : $deadline;
 					if ( time() >= $deadline ) {
 						throw new ApiError( 'Timed out waiting for Meilisearch to process the reindex.', 'task_timeout' );
 					}
+				} else {
+					$deadline = 0;
 				}
 				$was_upsert = 'upsert' === $state['phase'];
-				$state      = $this->step( $logical, $state, $batch_size );
+				$state      = $this->cli_step( $logical, $run, $state, $batch_size );
 				// One long process: drop the posts, meta and terms cached by this step (when the object
 				// cache supports it; otherwise WordPress reports _doing_it_wrong on every call).
 				if ( wp_cache_supports( 'flush_runtime' ) ) {
@@ -172,7 +289,7 @@ final class Reindexer implements Registrable {
 				}
 				if ( $was_upsert ) {
 					$progress( (int) $state['sent'], (int) $state['total'] );
-				} elseif ( self::is_active( $state ) && 'finalizing' === $state['phase'] ) {
+				} elseif ( self::is_active( $state ) && self::is_waiting( $state ) ) {
 					usleep( 500000 );
 				}
 			}//end while
@@ -217,6 +334,7 @@ final class Reindexer implements Registrable {
 	 * @param string $logical 'content' or 'products'.
 	 * @param int[]  $ids     Document IDs.
 	 * @return list<int>
+	 * @throws DatabaseReadError When the candidate query failed (the IDs must not be read as stale).
 	 */
 	public function non_indexable( string $logical, array $ids ): array {
 		$ids = array_values( array_unique( array_filter( array_map( 'intval', $ids ), static fn ( int $id ): bool => $id > 0 ) ) );
@@ -232,14 +350,13 @@ final class Reindexer implements Registrable {
 		$id_placeholders   = implode( ', ', array_fill( 0, count( $ids ), '%d' ) );
 		$type_placeholders = implode( ', ', array_fill( 0, count( $types ), '%s' ) );
 		// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
-		$rows = $wpdb->get_col(
+		$candidates = self::select_ids(
 			$wpdb->prepare(
 				"SELECT ID FROM {$wpdb->posts} WHERE ID IN ({$id_placeholders}) AND post_type IN ({$type_placeholders}) AND post_status = 'publish' AND post_password = ''",
 				array_merge( $ids, $types )
 			)
 		);
 		// phpcs:enable
-		$candidates = array_map( 'intval', (array) $rows );
 
 		$keep = array();
 		if ( array() !== $candidates ) {
@@ -264,6 +381,7 @@ final class Reindexer implements Registrable {
 	 * @param int    $last_id Cursor.
 	 * @param int    $limit   Rows to scan.
 	 * @return list<int>
+	 * @throws DatabaseReadError When the scan query failed.
 	 */
 	public function indexable_ids_after( string $logical, int $last_id, int $limit ): array {
 		return $this->scan( $logical, $last_id, $limit )['ids'];
@@ -311,7 +429,8 @@ final class Reindexer implements Registrable {
 			throw new \RuntimeException( 'already_running' );
 		}
 
-		$this->indexes->ensure_index( $logical );
+		// No wait: a settings task still being processed is recorded and awaited before the sweep.
+		$settings_task = $this->indexes->ensure_index( $logical, null, 0.0 );
 
 		$state = array(
 			'run'        => strtolower( gmdate( 'YmdHis' ) . wp_generate_password( 4, false ) ),
@@ -326,6 +445,9 @@ final class Reindexer implements Registrable {
 			'status'     => 'running',
 			'error'      => '',
 		);
+		if ( null !== $settings_task ) {
+			$state['settings_task'] = $settings_task;
+		}
 		// Flags raised from now on (settings changed mid-run) survive the run: finalize does not clear them.
 		$this->options->flag_reindex( $logical, false );
 		$this->options->set_reindex_state( $logical, $state );
@@ -347,6 +469,15 @@ final class Reindexer implements Registrable {
 				$state = $this->upsert_batch( $client, $logical, $state, $batch_size );
 				break;
 			case 'sweep':
+				if ( isset( $state['settings_task'] ) ) {
+					$state = $this->await_settings( $client, $logical, $state );
+					if ( ! self::is_active( $state ) ) {
+						return $state;
+					}
+					if ( isset( $state['settings_task'] ) ) {
+						return $this->save( $logical, $state );
+					}
+				}
 				$state = $this->sweep_page( $client, $logical, $state );
 				break;
 			default:
@@ -393,6 +524,29 @@ final class Reindexer implements Registrable {
 		if ( $scan['exhausted'] ) {
 			$state['phase']   = 'sweep';
 			$state['last_id'] = 0;
+		}
+		return $state;
+	}
+
+	/**
+	 * Checks the settings task recorded at the start of the run. The sweep filters and sorts on id,
+	 * which only works once those settings are applied.
+	 *
+	 * @param Client               $client  Client.
+	 * @param string               $logical Logical index.
+	 * @param array<string, mixed> $state   Run state with a settings_task.
+	 * @return array<string, mixed> Without settings_task once it succeeded, unchanged while it is being
+	 *                              processed, failed when the task failed or was canceled.
+	 */
+	private function await_settings( Client $client, string $logical, array $state ): array {
+		$task   = $client->get_task( (int) $state['settings_task'] );
+		$status = $task['status'] ?? '';
+		if ( 'succeeded' === $status ) {
+			unset( $state['settings_task'] );
+			return $state;
+		}
+		if ( 'failed' === $status || 'canceled' === $status ) {
+			return $this->fail( $logical, $state, self::task_error( $task ) );
 		}
 		return $state;
 	}
@@ -565,6 +719,7 @@ final class Reindexer implements Registrable {
 	 * @param int    $last_id Cursor.
 	 * @param int    $limit   Rows to scan.
 	 * @return array{ids: list<int>, last_scanned: int, exhausted: bool}
+	 * @throws DatabaseReadError When the scan query failed (it must not be read as "no posts left").
 	 */
 	private function scan( string $logical, int $last_id, int $limit ): array {
 		global $wpdb;
@@ -579,14 +734,13 @@ final class Reindexer implements Registrable {
 
 		$placeholders = implode( ', ', array_fill( 0, count( $types ), '%s' ) );
 		// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
-		$rows = $wpdb->get_col(
+		$rows = self::select_ids(
 			$wpdb->prepare(
 				"SELECT ID FROM {$wpdb->posts} WHERE post_type IN ({$placeholders}) AND post_status = 'publish' AND post_password = '' AND ID > %d ORDER BY ID ASC LIMIT %d",
 				array_merge( $types, array( $last_id, $limit ) )
 			)
 		);
 		// phpcs:enable
-		$rows = array_map( 'intval', (array) $rows );
 		if ( array() === $rows ) {
 			return array(
 				'ids'          => array(),
@@ -611,6 +765,27 @@ final class Reindexer implements Registrable {
 			'last_scanned' => max( $rows ),
 			'exhausted'    => count( $rows ) < $limit,
 		);
+	}
+
+	/**
+	 * Runs a prepared SELECT of post IDs. wpdb::get_col() answers a failed query with an empty array,
+	 * which the sweep would read as "every document is stale" and the upsert phase as "no posts left",
+	 * so the query is run directly and its result checked. The message stays generic: the wpdb error
+	 * can contain SQL.
+	 *
+	 * @param string|null $sql Prepared query (null when wpdb::prepare() rejected it).
+	 * @return list<int>
+	 * @throws DatabaseReadError When the query failed or could not be run.
+	 */
+	private static function select_ids( ?string $sql ): array {
+		global $wpdb;
+		// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- Prepared by the callers; get_col( null ) reads the rows of the query just run.
+		if ( null === $sql || '' === $sql || false === $wpdb->query( $sql ) ) {
+			throw new DatabaseReadError( 'The WordPress database did not answer a query of the reindex. Nothing was changed for this step.' );
+		}
+		$rows = $wpdb->get_col( null );
+		// phpcs:enable
+		return array_values( array_map( 'intval', (array) $rows ) );
 	}
 
 	/**
@@ -647,7 +822,8 @@ final class Reindexer implements Registrable {
 	 */
 	private function post_types( string $logical ): array {
 		if ( 'content' === $logical ) {
-			return $this->options->enabled_post_types();
+			// The Indexability rule's list: an enabled type that is not public is never selected.
+			return $this->indexability->content_post_types();
 		}
 		if ( 'products' === $logical && $this->options->products_enabled() ) {
 			return array( 'product' );
@@ -706,6 +882,17 @@ final class Reindexer implements Registrable {
 			'logical' => $logical,
 			'run'     => $run,
 		);
+	}
+
+	/**
+	 * Whether the next step only polls Meilisearch: the finalizing phase, or a sweep held back by the settings task.
+	 *
+	 * @param array<string, mixed> $state Run state.
+	 * @return bool
+	 */
+	private static function is_waiting( array $state ): bool {
+		$phase = $state['phase'] ?? '';
+		return 'finalizing' === $phase || ( 'sweep' === $phase && isset( $state['settings_task'] ) );
 	}
 
 	/**
