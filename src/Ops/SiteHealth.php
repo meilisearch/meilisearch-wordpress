@@ -47,6 +47,7 @@ final class SiteHealth implements Registrable {
 	public const TEST_REINDEX    = 'meilisearch_reindex';
 	public const TEST_COVERAGE   = 'meilisearch_search_coverage';
 	public const TEST_DISPLAYED  = 'meilisearch_displayed_attributes';
+	public const TEST_SQL        = 'meilisearch_sql_filters';
 
 	/**
 	 * Memoized results for this request.
@@ -65,13 +66,14 @@ final class SiteHealth implements Registrable {
 	/**
 	 * Wires the services.
 	 *
-	 * @param ClientFactory $clients   Client factory.
-	 * @param IndexManager  $indexes   Index manager.
-	 * @param IndexNames    $names     Index names.
-	 * @param Reindexer     $reindexer Reindexer.
-	 * @param Queue         $queue     Sync queue.
-	 * @param Options       $options   Options.
-	 * @param Indexability  $indexability Indexability rule (which post types are indexed).
+	 * @param ClientFactory       $clients   Client factory.
+	 * @param IndexManager        $indexes   Index manager.
+	 * @param IndexNames          $names     Index names.
+	 * @param Reindexer           $reindexer Reindexer.
+	 * @param Queue               $queue     Sync queue.
+	 * @param Options             $options   Options.
+	 * @param Indexability        $indexability Indexability rule (which post types are indexed).
+	 * @param SqlFilterAudit|null $sql_filters Finds other code on WP_Query's SQL filters.
 	 */
 	public function __construct(
 		private readonly ClientFactory $clients,
@@ -80,7 +82,8 @@ final class SiteHealth implements Registrable {
 		private readonly Reindexer $reindexer,
 		private readonly Queue $queue,
 		private readonly Options $options,
-		private readonly Indexability $indexability
+		private readonly Indexability $indexability,
+		private readonly ?SqlFilterAudit $sql_filters = null
 	) {}
 
 	/**
@@ -142,6 +145,7 @@ final class SiteHealth implements Registrable {
 			$results[] = $this->checked( self::TEST_SEARCH_KEY, $usable, fn (): array => $this->search_key_result( $connection_url ) );
 			$results[] = $this->checked( self::TEST_DISPLAYED, $usable, fn (): array => $this->displayed_result() );
 			$results[] = self::evaluate_coverage( $this->options->search()['replace'], $this->indexability->unindexed_searchable_types(), Menu::url( 'content' ) );
+			$results[] = $this->sql_filters_result();
 		}
 
 		$results[] = self::evaluate_queue( $this->queue->count( 'pending' ), $this->queue->count( 'failed' ), $status_url );
@@ -469,6 +473,49 @@ final class SiteHealth implements Registrable {
 	}
 
 	/**
+	 * Reports other code on WP_Query's SQL filters while "Replace site search" is on: searches answered by
+	 * Meilisearch skip the SQL those callbacks build, so the constraints they add do not apply.
+	 *
+	 * @param bool     $replace    Whether "Replace site search" is on.
+	 * @param string[] $callbacks  "hook: callback (owner)" for each foreign callback.
+	 * @param string   $search_url URL of the Search tab.
+	 * @return Result
+	 */
+	public static function evaluate_sql_filters( bool $replace, array $callbacks, string $search_url ): array {
+		if ( ! $replace || array() === $callbacks ) {
+			return self::make(
+				self::TEST_SQL,
+				'good',
+				__( 'No other code changes the search queries Meilisearch answers', 'meilisearch' ),
+				__( 'No plugin or theme adds SQL conditions to WordPress queries, or Meilisearch search is turned off.', 'meilisearch' )
+			);
+		}
+
+		$listed = array_slice( array_values( $callbacks ), 0, SqlFilterAudit::MAX_LISTED );
+		$more   = count( $callbacks ) - count( $listed );
+		$list   = implode( '; ', $listed );
+		if ( $more > 0 ) {
+			$list .= '; ' . sprintf(
+				/* translators: %d: number of other callbacks. */
+				_n( '%d more', '%d more', $more, 'meilisearch' ),
+				$more
+			);
+		}
+
+		return self::make(
+			self::TEST_SQL,
+			'recommended',
+			__( 'Other code adds SQL conditions that Meilisearch searches ignore', 'meilisearch' ),
+			sprintf(
+				/* translators: %s: semicolon-separated list of "filter: callback (plugin or theme)". */
+				__( 'These callbacks change the SQL of WordPress queries: %s. Searches answered by Meilisearch do not run that SQL, so whatever these callbacks restrict (a language, members-only content, hidden items) does not apply to their results. If one of them must restrict search results, return false from the meilisearch_should_intercept filter for those searches so that WordPress answers them, or keep the posts out of the index with the meilisearch_should_index_post filter.', 'meilisearch' ),
+				$list
+			),
+			$search_url
+		);
+	}
+
+	/**
 	 * Reports a backed-up or failing sync queue.
 	 *
 	 * @param int    $pending    Pending sync jobs.
@@ -618,6 +665,7 @@ final class SiteHealth implements Registrable {
 			self::TEST_REINDEX    => __( 'Meilisearch reindex status', 'meilisearch' ),
 			self::TEST_COVERAGE   => __( 'Meilisearch search coverage', 'meilisearch' ),
 			self::TEST_DISPLAYED  => __( 'Meilisearch fields visible to visitors', 'meilisearch' ),
+			self::TEST_SQL        => __( 'Meilisearch and SQL query filters', 'meilisearch' ),
 		);
 	}
 
@@ -722,6 +770,20 @@ final class SiteHealth implements Registrable {
 		}
 
 		return $missing;
+	}
+
+	/**
+	 * Evaluates the callbacks other code attaches to WP_Query's SQL filters (no remote call).
+	 *
+	 * @return Result
+	 */
+	private function sql_filters_result(): array {
+		$replace = $this->options->search()['replace'];
+		return self::evaluate_sql_filters(
+			$replace,
+			$replace ? ( $this->sql_filters ?? new SqlFilterAudit() )->foreign_callbacks() : array(),
+			Menu::url( 'search' )
+		);
 	}
 
 	/**

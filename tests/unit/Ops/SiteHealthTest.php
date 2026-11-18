@@ -325,4 +325,27 @@ final class SiteHealthTest extends TestCase {
 		self::assertStringContainsString( 'wp_test_products: id, title, price.', $result['description'] );
 		self::assertStringContainsString( 'full reindex', $result['description'] );
 	}
+
+	public function test_sql_filter_callbacks_are_recommended_only_when_search_is_replaced(): void {
+		$callbacks = array( 'posts_where: Groups_Post_Access::posts_where (plugin groups)' );
+
+		self::assertSame( 'good', SiteHealth::evaluate_sql_filters( false, $callbacks, self::URL )['status'] );
+		self::assertSame( 'good', SiteHealth::evaluate_sql_filters( true, array(), self::URL )['status'] );
+
+		$result = SiteHealth::evaluate_sql_filters( true, $callbacks, self::URL );
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertSame( SiteHealth::TEST_SQL, $result['test'] );
+		self::assertStringContainsString( 'Groups_Post_Access::posts_where (plugin groups)', $result['description'] );
+		self::assertStringContainsString( 'meilisearch_should_intercept', $result['description'] );
+		self::assertStringContainsString( 'meilisearch_should_index_post', $result['description'] );
+	}
+
+	public function test_long_sql_filter_lists_are_truncated(): void {
+		$callbacks = array_map( static fn ( int $i ): string => 'posts_where: cb' . $i, range( 1, 13 ) );
+
+		$description = SiteHealth::evaluate_sql_filters( true, $callbacks, self::URL )['description'];
+
+		self::assertStringContainsString( 'cb10; 3 more', $description );
+		self::assertStringNotContainsString( 'cb11', $description );
+	}
 }
