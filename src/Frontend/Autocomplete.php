@@ -79,11 +79,17 @@ final class Autocomplete implements Registrable {
 	 * Front end only, enabled in the Search tab, connected, a browser search key exists, and its hash is
 	 * the one recorded as servable: by rotate_search_key() for a plugin-created key, or by the last
 	 * successful verification of a manually pasted key.
+	 *
+	 * Runs on every front-end page view: once autocomplete is known to be on (an autoloaded option), the
+	 * non-autoloaded options the other checks read are loaded in a single query.
 	 */
 	public function should_enqueue(): bool {
-		return ! is_admin()
-			&& $this->options->search()['autocomplete']
-			&& '' !== $this->options->search_key()
+		if ( is_admin() || ! $this->options->search()['autocomplete'] ) {
+			return false;
+		}
+		$this->options->prime_connection();
+
+		return '' !== $this->options->search_key()
 			&& $this->options->is_configured()
 			&& $this->options->search_key_is_verified();
 	}

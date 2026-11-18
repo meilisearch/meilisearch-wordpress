@@ -25,6 +25,13 @@ final class AutocompleteTest extends TestCase {
 
 	private array $calls = array();
 
+	/**
+	 * Option names passed to each wp_prime_option_caches() call.
+	 *
+	 * @var list<list<string>>
+	 */
+	private array $primed = array();
+
 	protected function set_up(): void {
 		parent::set_up();
 		$this->calls = array();
@@ -36,6 +43,12 @@ final class AutocompleteTest extends TestCase {
 		Functions\when( 'plugins_url' )->alias(
 			static function ( $path = '', $plugin = '' ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 				return 'https://shop.test/wp-content/plugins/meilisearch/' . $path;
+			}
+		);
+		$this->primed = array();
+		Functions\when( 'wp_prime_option_caches' )->alias(
+			function ( array $names ): void {
+				$this->primed[] = $names;
 			}
 		);
 		foreach ( array( 'wp_register_script', 'wp_localize_script', 'wp_enqueue_script', 'wp_enqueue_style' ) as $function ) {
@@ -88,6 +101,45 @@ final class AutocompleteTest extends TestCase {
 	}
 
 	public function test_enqueued_when_enabled_configured_and_search_key_present(): void {
+		self::assertTrue( $this->autocomplete()->should_enqueue() );
+	}
+
+	/**
+	 * The check runs on every page view: the non-autoloaded options it reads are loaded in one query.
+	 */
+	public function test_readiness_check_loads_its_options_in_one_query(): void {
+		$this->autocomplete()->should_enqueue();
+
+		self::assertSame( array( array( Options::CONNECTION, Options::STATE, Options::ADMIN_KEY ) ), $this->primed );
+	}
+
+	public function test_admin_key_constant_is_not_loaded_from_the_database(): void {
+		$options = new Options( static fn ( string $name ): ?string => 'MEILISEARCH_ADMIN_KEY' === $name ? 'admin-key-value' : null );
+		( new Autocomplete( $options, new IndexNames( $options ) ) )->should_enqueue();
+
+		self::assertSame( array( array( Options::CONNECTION, Options::STATE ) ), $this->primed );
+	}
+
+	public function test_nothing_is_loaded_while_autocomplete_is_off(): void {
+		$this->stub_options( array_merge( self::options(), array( Options::SEARCH => array( 'autocomplete' => false ) ) ) );
+
+		$this->autocomplete()->should_enqueue();
+
+		self::assertSame( array(), $this->primed );
+	}
+
+	/**
+	 * The key was minted for the connection last set up; once the host (here), admin key or prefix
+	 * changed without the connection flow, it may belong to another instance.
+	 */
+	public function test_key_is_not_served_after_a_connection_change_outside_the_connection_flow(): void {
+		$options                                  = self::options();
+		$options[ Options::STATE ]['fingerprint'] = md5( 'http://previous.test:7700|admin-key-value|wp_test' );
+		$this->stub_options( $options );
+		self::assertFalse( $this->autocomplete()->should_enqueue() );
+
+		$options[ Options::STATE ]['fingerprint'] = md5( 'http://meili.test:7700|admin-key-value|wp_test' );
+		$this->stub_options( $options );
 		self::assertTrue( $this->autocomplete()->should_enqueue() );
 	}
 

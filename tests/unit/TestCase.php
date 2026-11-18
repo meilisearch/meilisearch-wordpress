@@ -44,6 +44,8 @@ abstract class TestCase extends PolyfillTestCase {
 		Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
 		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
 		Functions\when( 'wp_cache_delete' )->justReturn( true );
+		// Priming the option cache is a no-op for the in-memory option table.
+		Functions\when( 'wp_prime_option_caches' )->justReturn( null );
 		$this->option_store    = [];
 		$this->option_autoload = [];
 	}

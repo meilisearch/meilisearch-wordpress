@@ -158,6 +158,18 @@ final class Options {
 	}
 
 	/**
+	 * Loads the non-autoloaded options the connection checks read (connection, admin key unless it is a
+	 * constant, state) in one query, for code that runs on every page view. No-op for those already cached.
+	 */
+	public function prime_connection(): void {
+		$names = array( self::CONNECTION, self::STATE );
+		if ( null === $this->constant( 'MEILISEARCH_ADMIN_KEY' ) ) {
+			$names[] = self::ADMIN_KEY;
+		}
+		wp_prime_option_caches( $names );
+	}
+
+	/**
 	 * Normalized host; the MEILISEARCH_HOST constant wins.
 	 *
 	 * @return string '' when not configured or invalid.
