@@ -125,14 +125,7 @@ final class Autocomplete implements Registrable {
 
 		$subtitles = array();
 		foreach ( array( 'content', 'products' ) as $logical ) {
-			/**
-			 * Filters the document field shown as a second line under each autocomplete suggestion.
-			 *
-			 * @param string|null $field   Field name (top-level, [A-Za-z0-9_.]), or null for none.
-			 * @param string      $logical 'content' | 'products'.
-			 */
-			$field                 = apply_filters( 'meilisearch_autocomplete_subtitle_field', null, $logical );
-			$subtitles[ $logical ] = is_string( $field ) && 1 === preg_match( '/^[A-Za-z0-9_.]+$/', $field ) ? $field : null;
+			$subtitles[ $logical ] = self::subtitle_field( $logical );
 		}
 
 		return array(
@@ -170,6 +163,24 @@ final class Autocomplete implements Registrable {
 				'seeAllCount' => __( 'See all %1$d results for “%2$s”', 'meilisearch' ),
 			),
 		);
+	}
+
+	/**
+	 * The field shown under each suggestion of an index, or null for none. SettingsBuilder adds it to the
+	 * displayed attributes of the indexes the plugin creates, so the browser key can read it.
+	 *
+	 * @param string $logical 'content' | 'products'.
+	 * @return string|null
+	 */
+	public static function subtitle_field( string $logical ): ?string {
+		/**
+		 * Filters the document field shown as a second line under each autocomplete suggestion.
+		 *
+		 * @param string|null $field   Field name (top-level, [A-Za-z0-9_.]), or null for none.
+		 * @param string      $logical 'content' | 'products'.
+		 */
+		$field = apply_filters( 'meilisearch_autocomplete_subtitle_field', null, $logical );
+		return is_string( $field ) && 1 === preg_match( '/^[A-Za-z0-9_.]+$/', $field ) ? $field : null;
 	}
 
 	/**

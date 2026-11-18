@@ -312,4 +312,17 @@ final class SiteHealthTest extends TestCase {
 		self::assertSame( SiteHealth::TEST_COVERAGE, $result['test'] );
 		self::assertStringContainsString( 'event, product', $result['description'] );
 	}
+
+	public function test_index_displaying_every_attribute_is_recommended_when_autocomplete_is_on(): void {
+		$exposed = array( 'wp_test_products' => array( 'id', 'title', 'price' ) );
+
+		self::assertSame( 'good', SiteHealth::evaluate_displayed( true, array() )['status'] );
+		self::assertSame( 'good', SiteHealth::evaluate_displayed( false, $exposed )['status'], 'No key reaches visitors without autocomplete.' );
+
+		$result = SiteHealth::evaluate_displayed( true, $exposed );
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertSame( SiteHealth::TEST_DISPLAYED, $result['test'] );
+		self::assertStringContainsString( 'wp_test_products: id, title, price.', $result['description'] );
+		self::assertStringContainsString( 'full reindex', $result['description'] );
+	}
 }

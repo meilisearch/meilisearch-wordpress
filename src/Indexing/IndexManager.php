@@ -327,19 +327,42 @@ final class IndexManager {
 	 * attributes, plus "comparison disabled for X" when a filterable object rule
 	 * shadows a range-filtered field with `features.filter.comparison` off.
 	 *
-	 * @param string $logical Logical index.
+	 * @param string                    $logical Logical index.
+	 * @param array<string, mixed>|null $current Settings already read from the live index; fetched when null.
 	 * @return string[]
 	 *
 	 * @throws ApiError On Meilisearch errors (index_not_found when the index does not exist).
 	 */
-	public function drift( string $logical ): array {
-		$current = $this->clients->client()->get_settings( $this->names->uid( $logical ) );
+	public function drift( string $logical, ?array $current = null ): array {
+		$current = $current ?? $this->live_settings( $logical );
 		$drift   = $this->settings->missing( $logical, $current );
 		foreach ( $this->settings->comparison_disabled( $logical, $current ) as $field ) {
 			$drift[] = 'comparison disabled for ' . $field;
 		}
 
 		return $drift;
+	}
+
+	/**
+	 * GET /indexes/{uid}/settings of the live index.
+	 *
+	 * @param string $logical Logical index.
+	 * @return array<string, mixed>
+	 *
+	 * @throws ApiError On Meilisearch errors (index_not_found when the index does not exist).
+	 */
+	public function live_settings( string $logical ): array {
+		return $this->clients->client()->get_settings( $this->names->uid( $logical ) );
+	}
+
+	/**
+	 * Attributes the plugin displays on the indexes it creates (SettingsBuilder::displayed()).
+	 *
+	 * @param string $logical Logical index.
+	 * @return list<string>
+	 */
+	public function displayed_attributes( string $logical ): array {
+		return $this->settings->displayed( $logical );
 	}
 
 	/**

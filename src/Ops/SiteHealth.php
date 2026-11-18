@@ -17,6 +17,7 @@ use Meilisearch\WordPress\Api\ClientFactory;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Indexing\Reindexer;
+use Meilisearch\WordPress\Indexing\SettingsBuilder;
 use Meilisearch\WordPress\Registrable;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
@@ -45,6 +46,7 @@ final class SiteHealth implements Registrable {
 	public const TEST_QUEUE      = 'meilisearch_queue';
 	public const TEST_REINDEX    = 'meilisearch_reindex';
 	public const TEST_COVERAGE   = 'meilisearch_search_coverage';
+	public const TEST_DISPLAYED  = 'meilisearch_displayed_attributes';
 
 	/**
 	 * Memoized results for this request.
@@ -52,6 +54,13 @@ final class SiteHealth implements Registrable {
 	 * @var list<Result>|null
 	 */
 	private ?array $results = null;
+
+	/**
+	 * Live settings read during this request: logical index => GET /settings response.
+	 *
+	 * @var array<string, array<string, mixed>>
+	 */
+	private array $live_settings = array();
 
 	/**
 	 * Wires the services.
@@ -131,6 +140,7 @@ final class SiteHealth implements Registrable {
 			$results[] = $this->checked( self::TEST_DOCUMENTS, $usable, fn (): array => self::evaluate_documents( $this->document_counts(), $status_url ) );
 			$results[] = $this->checked( self::TEST_SETTINGS, $usable, fn (): array => self::evaluate_settings( $this->missing_settings(), $connection_url ) );
 			$results[] = $this->checked( self::TEST_SEARCH_KEY, $usable, fn (): array => $this->search_key_result( $connection_url ) );
+			$results[] = $this->checked( self::TEST_DISPLAYED, $usable, fn (): array => $this->displayed_result() );
 			$results[] = self::evaluate_coverage( $this->options->search()['replace'], $this->indexability->unindexed_searchable_types(), Menu::url( 'content' ) );
 		}
 
@@ -390,6 +400,43 @@ final class SiteHealth implements Registrable {
 	}
 
 	/**
+	 * Reports indexes that display every attribute while autocomplete hands visitors a key to search them.
+	 * Indexes the plugin creates display only public fields; existing indexes are never changed.
+	 *
+	 * @param bool                        $autocomplete Whether autocomplete is enabled.
+	 * @param array<string, list<string>> $exposed      Index UID => the attributes the plugin would display, for each index displaying ["*"].
+	 * @return Result
+	 */
+	public static function evaluate_displayed( bool $autocomplete, array $exposed ): array {
+		if ( ! $autocomplete || array() === $exposed ) {
+			return self::make(
+				self::TEST_DISPLAYED,
+				'good',
+				__( 'Visitors can only read public fields from Meilisearch', 'meilisearch' ),
+				$autocomplete
+					? __( 'The search key sent to visitors\' browsers only returns the public fields of your indexes.', 'meilisearch' )
+					: __( 'Autocomplete is disabled, so no Meilisearch key is sent to visitors\' browsers.', 'meilisearch' )
+			);
+		}
+
+		$lines = array();
+		foreach ( $exposed as $uid => $fields ) {
+			$lines[] = sprintf( '%1$s: %2$s.', $uid, implode( ', ', $fields ) );
+		}
+
+		return self::make(
+			self::TEST_DISPLAYED,
+			'recommended',
+			__( 'Visitors can read every indexed field', 'meilisearch' ),
+			sprintf(
+				/* translators: %s: comma-separated index UIDs. */
+				__( 'Autocomplete sends a search key to every visitor\'s browser, and %s still display every indexed field, so anyone can read data your site does not show, such as total sales, exact stock quantities, author IDs and custom field values. The plugin only lists public fields on the indexes it creates and never changes the settings of an existing index. Set the displayed attributes of each index in Meilisearch to the fields below, or delete the index and run a full reindex so that the plugin creates it again:', 'meilisearch' ),
+				implode( ', ', array_keys( $exposed ) )
+			) . ' ' . implode( ' ', $lines )
+		);
+	}
+
+	/**
 	 * Reports searchable post types that no index holds while "Replace site search" is on: searches
 	 * that include them (the default theme search does) are never answered by Meilisearch.
 	 *
@@ -570,6 +617,7 @@ final class SiteHealth implements Registrable {
 			self::TEST_QUEUE      => __( 'Meilisearch sync queue', 'meilisearch' ),
 			self::TEST_REINDEX    => __( 'Meilisearch reindex status', 'meilisearch' ),
 			self::TEST_COVERAGE   => __( 'Meilisearch search coverage', 'meilisearch' ),
+			self::TEST_DISPLAYED  => __( 'Meilisearch fields visible to visitors', 'meilisearch' ),
 		);
 	}
 
@@ -664,7 +712,7 @@ final class SiteHealth implements Registrable {
 		$missing = array();
 		foreach ( $this->names->active_logicals() as $logical ) {
 			try {
-				$missing[ $this->names->uid( $logical ) ] = $this->indexes->drift( $logical );
+				$missing[ $this->names->uid( $logical ) ] = $this->indexes->drift( $logical, $this->settings_of( $logical ) );
 			} catch ( ApiError $e ) {
 				// A missing index is reported by the document-count test.
 				if ( 'index_not_found' !== $e->error_code ) {
@@ -674,6 +722,57 @@ final class SiteHealth implements Registrable {
 		}
 
 		return $missing;
+	}
+
+	/**
+	 * Evaluates what the browser search key can read; the indexes are only read when autocomplete is on.
+	 *
+	 * @return Result
+	 */
+	private function displayed_result(): array {
+		$autocomplete = $this->options->search()['autocomplete'];
+		return self::evaluate_displayed( $autocomplete, $autocomplete ? $this->fully_displayed() : array() );
+	}
+
+	/**
+	 * Index UID => attributes the plugin displays, for each live index that displays every attribute.
+	 *
+	 * @return array<string, list<string>>
+	 * @throws ApiError On errors other than a missing index.
+	 */
+	private function fully_displayed(): array {
+		$exposed = array();
+		foreach ( $this->names->active_logicals() as $logical ) {
+			try {
+				$settings = $this->settings_of( $logical );
+			} catch ( ApiError $e ) {
+				// A missing index is reported by the document-count test.
+				if ( 'index_not_found' !== $e->error_code ) {
+					throw $e;
+				}
+				continue;
+			}
+			if ( SettingsBuilder::displays_everything( $settings ) ) {
+				$exposed[ $this->names->uid( $logical ) ] = $this->indexes->displayed_attributes( $logical );
+			}
+		}
+
+		return $exposed;
+	}
+
+	/**
+	 * Live settings of an index, read once per request.
+	 *
+	 * @param string $logical Logical index.
+	 * @return array<string, mixed>
+	 * @throws ApiError On Meilisearch errors.
+	 */
+	private function settings_of( string $logical ): array {
+		if ( ! isset( $this->live_settings[ $logical ] ) ) {
+			$this->live_settings[ $logical ] = $this->indexes->live_settings( $logical );
+		}
+
+		return $this->live_settings[ $logical ];
 	}
 
 	/**

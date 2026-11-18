@@ -48,4 +48,11 @@ final class ContentSchemaTest extends TestCase {
 			( new ContentSchema( new Options() ) )->searchable()
 		);
 	}
+
+	public function test_displayed_lists_public_fields_and_taxonomies_but_no_author_id_or_meta(): void {
+		$this->assertSame(
+			array( 'id', 'post_type', 'title', 'content', 'excerpt', 'permalink', 'date', 'modified', 'author_name', 'thumbnail_url', 'tax_category', 'tax_category_ids', 'tax_post_tag', 'tax_post_tag_ids' ),
+			( new ContentSchema( new Options() ) )->displayed()
+		);
+	}
 }

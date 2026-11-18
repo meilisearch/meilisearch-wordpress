@@ -135,6 +135,26 @@ final class SiteHealthRunTest extends TestCase {
 		self::assertSame( 0, $this->transport->pending() );
 	}
 
+	public function test_index_displaying_every_attribute_reuses_the_settings_read_for_drift(): void {
+		$this->option_store[ Options::SEARCH ]['autocomplete'] = true;
+		$this->queue_until_key_lookup();
+		$this->transport->respond(
+			200,
+			array(
+				'actions' => array( 'search' ),
+				'indexes' => array( 'wp_test_content' ),
+			)
+		);
+
+		$by_test  = array_column( $this->health()->run_all(), null, 'test' );
+		$settings = array_filter( $this->transport->requests(), static fn ( array $request ): bool => str_ends_with( $request['url'], '/settings' ) );
+
+		self::assertSame( 'recommended', $by_test[ SiteHealth::TEST_DISPLAYED ]['status'] );
+		self::assertStringContainsString( 'wp_test_content: id, post_type, title', $by_test[ SiteHealth::TEST_DISPLAYED ]['description'] );
+		self::assertCount( 1, $settings );
+		self::assertSame( 0, $this->transport->pending() );
+	}
+
 	public function test_unexpected_exceptions_are_redacted_in_not_checked_results(): void {
 		$this->transport->respond( 200, array( 'pkgVersion' => '1.53.1' ) );
 		$this->transport->fail( new \RuntimeException( 'boom with ' . self::ADMIN_KEY . ' and ' . self::SEARCH_KEY ) );
