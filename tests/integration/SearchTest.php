@@ -268,6 +268,57 @@ final class SearchTest extends TestCase {
 	}
 
 	/**
+	 * Meilisearch counts every match but serves only the first pagination.maxTotalHits (1000) of
+	 * an index. The totals stop there: every advertised page has posts, and a query for all posts
+	 * reports the number it returns.
+	 */
+	public function test_totals_stop_at_the_hits_the_engine_serves(): void {
+		for ( $i = 1; $i <= 1020; $i++ ) {
+			self::factory()->post->create(
+				array(
+					'post_title'   => 'Quasar note ' . $i,
+					'post_content' => 'x',
+				)
+			);
+		}
+		Plugin::instance()->get( 'reindexer' )->run_sync(
+			'content',
+			500,
+			static function (): void {}
+		);
+		$this->wait_for_tasks();
+
+		$this->go_to( home_url( '/?s=quasar' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 1000, $this->main_query()->found_posts );
+		self::assertSame( 100, $this->main_query()->max_num_pages );
+		self::assertCount( 10, $this->main_query()->posts );
+
+		$this->go_to( home_url( '/?s=quasar&paged=100' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 100, $this->main_query()->max_num_pages );
+		self::assertCount( 10, $this->main_query()->posts, 'The last advertised page has posts.' );
+		self::assertFalse( is_404() );
+
+		$all = new \WP_Query(
+			array(
+				's'                   => 'quasar',
+				'posts_per_page'      => -1,
+				'meilisearch'         => true,
+				'post_type'           => 'post',
+				'ignore_sticky_posts' => true,
+			)
+		);
+
+		self::assertTrue( $all->get( Interceptor::QUERY_FLAG ) );
+		self::assertCount( 1000, $all->posts );
+		self::assertSame( 1000, $all->found_posts );
+		self::assertSame( 1, $all->max_num_pages );
+	}
+
+	/**
 	 * URL taxonomy vars (cat) reach Meilisearch through $query->tax_query.
 	 */
 	public function test_category_query_var_filters_results(): void {
@@ -320,5 +371,115 @@ final class SearchTest extends TestCase {
 		self::assertSame( 1, $this->search_requests );
 		self::assertSame( 25, $this->main_query()->found_posts );
 		self::assertLessThan( 1.0, microtime( true ) - $started );
+	}
+
+	/**
+	 * Highlighting retrieves only the IDs; the cropped, highlighted content still comes back in _formatted.
+	 */
+	public function test_highlighted_search_returns_only_the_cropped_content(): void {
+		update_option(
+			Options::SEARCH,
+			array_merge(
+				Options::defaults()[ Options::SEARCH ],
+				array(
+					'replace'   => true,
+					'highlight' => true,
+				)
+			)
+		);
+
+		$this->go_to( home_url( '/?s=clouds' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		$ids = $this->result_ids();
+		self::assertNotEmpty( $ids );
+		$formatted = Plugin::instance()->get( 'result_mapper' )->formatted( $ids[0] );
+		self::assertIsArray( $formatted );
+		self::assertStringContainsString( '<mark>clouds</mark>', (string) $formatted['content'] );
+		self::assertArrayNotHasKey( 'title', $formatted );
+	}
+
+	/**
+	 * Mixed author inclusion and exclusion: like core, only the exclusion applies.
+	 */
+	public function test_author_exclusion_wins_over_inclusion_like_mysql(): void {
+		$a = self::factory()->user->create();
+		$b = self::factory()->user->create();
+		wp_update_post(
+			array(
+				'ID'          => $this->matching[0],
+				'post_author' => $a,
+			)
+		);
+		wp_update_post(
+			array(
+				'ID'          => $this->matching[1],
+				'post_author' => $b,
+			)
+		);
+		Plugin::instance()->get( 'reindexer' )->run_sync(
+			'content',
+			200,
+			static function (): void {}
+		);
+		$url = home_url( '/?s=nebula&author=' . $a . ',-' . $b );
+
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => false ) ) );
+		$this->go_to( $url );
+		self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		$mysql = $this->main_query()->found_posts;
+
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		$this->go_to( $url );
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 24, $mysql );
+		self::assertSame( $mysql, $this->main_query()->found_posts );
+	}
+
+	/**
+	 * A CHAR meta comparison against a non-canonical numeric string ("02134") matches the post like MySQL.
+	 */
+	public function test_meta_filter_matches_non_canonical_numeric_strings(): void {
+		update_option(
+			Options::CONTENT,
+			array(
+				'post_types' => array( 'post', 'page' ),
+				'taxonomies' => array( 'post' => array( 'category' ) ),
+				'meta_keys'  => array( 'post' => array( 'zip' ) ),
+			)
+		);
+		update_post_meta( $this->matching[0], 'zip', '02134' );
+		update_post_meta( $this->matching[1], 'zip', '+5' );
+		$plugin = Plugin::instance();
+		$plugin->get( 'index_manager' )->ensure_all();
+		$plugin->get( 'reindexer' )->run_sync(
+			'content',
+			200,
+			static function (): void {}
+		);
+
+		foreach ( array(
+			'02134' => $this->matching[0],
+			'+5'    => $this->matching[1],
+		) as $zip => $expected ) {
+			$args  = array(
+				's'                   => 'nebula',
+				'post_type'           => 'post',
+				'ignore_sticky_posts' => true,
+				'meta_query'          => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- Test query.
+					array(
+						'key'   => 'zip',
+						'value' => (string) $zip,
+					),
+				),
+			);
+			$mysql = new \WP_Query( $args );
+			$meili = new \WP_Query( array_merge( $args, array( 'meilisearch' => true ) ) );
+
+			self::assertNotTrue( $mysql->get( Interceptor::QUERY_FLAG ) );
+			self::assertTrue( $meili->get( Interceptor::QUERY_FLAG ), (string) $zip );
+			self::assertSame( array( $expected ), array_map( 'intval', wp_list_pluck( $mysql->posts, 'ID' ) ), (string) $zip );
+			self::assertSame( array( $expected ), array_map( 'intval', wp_list_pluck( $meili->posts, 'ID' ) ), (string) $zip );
+		}
 	}
 }

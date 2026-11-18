@@ -11,6 +11,7 @@ namespace Meilisearch\WordPress\Search;
 
 defined( 'ABSPATH' ) || exit;
 
+use Meilisearch\WordPress\Indexing\ContentDocumentBuilder;
 use Meilisearch\WordPress\Indexing\FieldName;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
@@ -68,6 +69,8 @@ final class QueryTranslator {
 		'sentence',
 		'exact',
 		'search_columns',
+		'comment_status',
+		'ping_status',
 	);
 
 	/**
@@ -463,7 +466,9 @@ final class QueryTranslator {
 	}
 
 	/**
-	 * Author filters from author, author__in and author__not_in (merged like WP_Query does).
+	 * Author filters from author, author__in and author__not_in, merged like WP_Query::get_posts():
+	 * the author var is split into inclusions and exclusions, and when any exclusion is requested
+	 * core applies only the NOT IN clause and ignores the inclusions (elseif), so this does too.
 	 *
 	 * @param \WP_Query $query Query.
 	 * @return string[]|null
@@ -484,12 +489,14 @@ final class QueryTranslator {
 				$id = (int) $part;
 				if ( $id > 0 ) {
 					$in[] = $id;
-				} elseif ( $id < 0 ) {
+				} else {
 					$not_in[] = -$id;
+					// Core files 0 under author__not_in too.
 				}
 			}
 		}
 
+		$excludes     = array() !== $not_in || ! empty( $query->get( 'author__not_in' ) );
 		$extra_in     = self::id_list( $query->get( 'author__in' ) );
 		$extra_not_in = self::id_list( $query->get( 'author__not_in' ) );
 		if ( null === $extra_in || null === $extra_not_in ) {
@@ -498,14 +505,10 @@ final class QueryTranslator {
 		$in     = array_values( array_unique( array_merge( $in, $extra_in ) ) );
 		$not_in = array_values( array_unique( array_merge( $not_in, $extra_not_in ) ) );
 
-		$filters = array();
-		if ( array() !== $in ) {
-			$filters[] = FilterBuilder::in( 'author_id', $in );
+		if ( $excludes ) {
+			return array() === $not_in ? array() : array( FilterBuilder::not_in( 'author_id', $not_in ) );
 		}
-		if ( array() !== $not_in ) {
-			$filters[] = FilterBuilder::not_in( 'author_id', $not_in );
-		}
-		return $filters;
+		return array() === $in ? array() : array( FilterBuilder::in( 'author_id', $in ) );
 	}
 
 	/**
@@ -1223,7 +1226,9 @@ final class QueryTranslator {
 	}
 
 	/**
-	 * Scalars; numeric strings become numbers because the index stores them as numbers (spec § 5.3).
+	 * Scalars for CHAR / untyped comparisons, normalised exactly as the indexer normalises meta values
+	 * (ContentDocumentBuilder::meta_value()): canonical integers and decimals become numbers, any other
+	 * string ("02134", "+5", "1e3", " 5", 20-digit integers…) stays the original string the index holds.
 	 *
 	 * @param array<int, mixed> $raw Values.
 	 * @return array<int, string|int|float>|null
@@ -1241,16 +1246,9 @@ final class QueryTranslator {
 			if ( ! is_string( $item ) ) {
 				return null;
 			}
-			$trimmed = trim( $item );
-			if ( is_numeric( $trimmed ) ) {
-				if ( ! is_finite( (float) $trimmed ) ) {
-					return null;
-				}
-				$out[] = $trimmed + 0;
-			} else {
-				$out[] = $item;
-			}
-		}//end foreach
+			$value = ContentDocumentBuilder::meta_value( $item );
+			$out[] = null === $value ? $item : $value;
+		}
 		return $out;
 	}
 }

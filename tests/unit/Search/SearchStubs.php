@@ -155,6 +155,15 @@ trait SearchStubs {
 				return rtrim( (string) $value, '/\\' ) . '/';
 			}
 		);
+		Functions\when( 'wp_check_invalid_utf8' )->alias(
+			static function ( $text, $strip = false ) {
+				$text = (string) $text;
+				if ( mb_check_encoding( $text, 'UTF-8' ) ) {
+					return $text;
+				}
+				return $strip ? mb_scrub( $text, 'UTF-8' ) : '';
+			}
+		);
 		Functions\when( 'sanitize_text_field' )->returnArg();
 		Functions\when( 'wp_unslash' )->returnArg();
 		Functions\when( 'get_bloginfo' )->justReturn( '7.1.2' );
