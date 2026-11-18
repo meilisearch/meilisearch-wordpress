@@ -589,6 +589,87 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
+	 * Vetoed rows count as scanned but not sent: the done run records them as excluded.
+	 */
+	public function test_vetoed_rows_are_counted_as_scanned_and_recorded_as_excluded_when_done(): void {
+		$this->seed_run();
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->add_post( array( 'ID' => 11 ) );
+		$this->add_post( array( 'ID' => 12 ) );
+		$this->install_wpdb( array( array( 10, 11, 12 ) ) );
+		Filters\expectApplied( 'meilisearch_should_index_post' )->andReturnUsing( static fn ( $index, $post ) => 11 === (int) $post->ID ? false : $index );
+		$this->transport->queue( self::task_response( 7 ) );
+		$this->expect_next_step( 0 );
+
+		$this->handle();
+
+		$state = $this->state();
+		$this->assertSame( 2, $state['sent'] );
+		$this->assertSame( 3, $state['scanned'] );
+		$this->assertSame( 0, $this->reindexer()->excluded_count( 'content' ), 'Nothing is recorded before the run completes.' );
+
+		$this->seed_run(
+			array(
+				'phase'     => 'finalizing',
+				'sent'      => 2,
+				'scanned'   => 3,
+				'task_uids' => array(),
+			)
+		);
+		$this->transport->queue( self::tasks_response( array() ) );
+		$this->handle();
+
+		$this->assertSame( 'done', $this->state()['status'] );
+		$this->assertSame( 1, $this->reindexer()->excluded_count( 'content' ) );
+	}
+
+	/**
+	 * A new run keeps the last completed run's exclusion count until it completes itself.
+	 */
+	public function test_start_carries_the_last_completed_exclusion_count(): void {
+		Functions\when( 'wp_generate_password' )->justReturn( 'abcd' );
+		$this->seed_run(
+			array(
+				'status'   => 'done',
+				'excluded' => 4,
+			)
+		);
+		$this->install_wpdb( array(), '10' );
+		$this->transport
+			->respond(
+				404,
+				array(
+					'code'    => 'index_not_found',
+					'message' => 'missing',
+				)
+			)
+			->queue( self::task_response( 1 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 1,
+					'status' => 'processing',
+				)
+			)
+			->queue( self::task_response( 2 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 2,
+					'status' => 'enqueued',
+				)
+			);
+		Functions\expect( 'as_schedule_single_action' )->once()->andReturn( 9 );
+
+		$state = $this->reindexer()->start( 'content' );
+
+		$this->assertSame( 4, $state['excluded'] );
+		$this->assertSame( 0, $state['scanned'] );
+		$this->assertSame( 4, $this->reindexer()->excluded_count( 'content' ) );
+		$this->assertSame( 6, $this->reindexer()->estimated_indexable( 'content' ) );
+	}
+
+	/**
 	 * A failed task fails the run with the Meilisearch error, logged.
 	 */
 	public function test_failed_task_fails_run(): void {

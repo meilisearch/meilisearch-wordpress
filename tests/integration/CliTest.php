@@ -291,6 +291,63 @@ final class CliTest extends TestCase {
 		self::assertStringContainsString( 'Reindexed', $this->messages( 'success' )[0] ?? '' );
 	}
 
+	public function test_reindex_with_vetoed_posts_completes_the_bar_and_status_shows_the_expected_count(): void {
+		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
+		$vetoed = self::factory()->post->create_many( 2, array( 'post_status' => 'publish' ) );
+		add_filter(
+			'meilisearch_should_index_post',
+			static fn ( $index, $post ) => in_array( (int) $post->ID, $vetoed, true ) ? false : $index,
+			10,
+			2
+		);
+		$candidates = $this->service( 'reindexer', Reindexer::class )->count_indexable( 'content' );
+
+		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+
+		$bar = WP_CLI::$bars[0] ?? null;
+		self::assertInstanceOf( ShimProgressBar::class, $bar );
+		self::assertSame( $candidates, $bar->ticks, 'Every candidate post was scanned, so the bar reaches its total.' );
+		self::assertStringContainsString( ( $candidates - 2 ) . ' document(s) sent', $this->messages( 'success' )[0] ?? '' );
+
+		WP_CLI::reset();
+		$this->cli()->status( array(), array( 'format' => 'json' ) );
+		$row = array_column( WP_CLI::$items[0]['items'], null, 'index' )['content'];
+		self::assertSame( (string) ( $candidates - 2 ), $row['indexable'] );
+		self::assertSame( (string) ( $candidates - 2 ), $row['documents'] );
+	}
+
+	/**
+	 * Runs `wp meilisearch reindex --index=content` with these extra arguments and counts the
+	 * add-documents requests sent to the content index.
+	 *
+	 * @param array<string, string> $assoc_args Extra arguments.
+	 */
+	private function reindex_requests( array $assoc_args ): int {
+		$uid      = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		$requests = 0;
+		$count    = static function ( $response, $context, $transport, $args, $url ) use ( $uid, &$requests ): void {
+			if ( 'POST' === ( $args['method'] ?? '' ) && str_contains( (string) $url, '/indexes/' . $uid . '/documents?' ) ) {
+				++$requests;
+			}
+		};
+		add_action( 'http_api_debug', $count, 10, 5 );
+		try {
+			$this->cli()->reindex( array(), array( 'index' => 'content' ) + $assoc_args );
+		} finally {
+			remove_action( 'http_api_debug', $count, 10 );
+		}
+		return $requests;
+	}
+
+	public function test_reindex_batch_size_defaults_to_the_filter_and_the_flag_overrides_it(): void {
+		$posts = $this->service( 'reindexer', Reindexer::class )->count_indexable( 'content' ) + 3;
+		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
+		add_filter( 'meilisearch_reindex_batch_size', static fn (): int => 1 );
+
+		self::assertSame( $posts, $this->reindex_requests( array() ), 'Without --batch-size, the filter sets the batch size.' );
+		self::assertSame( 1, $this->reindex_requests( array( 'batch-size' => (string) $posts ) ), '--batch-size overrides the filter.' );
+	}
+
 	public function test_reindex_rejects_an_unknown_index(): void {
 		$this->expect_exit( fn () => $this->cli()->reindex( array(), array( 'index' => 'orders' ) ), 1 );
 

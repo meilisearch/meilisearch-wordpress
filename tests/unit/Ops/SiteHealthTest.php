@@ -95,6 +95,52 @@ final class SiteHealthTest extends TestCase {
 		);
 	}
 
+	/**
+	 * Candidates the last completed reindex excluded (hidden products, vetoed posts) are not drift.
+	 *
+	 * @dataProvider excluded_provider
+	 */
+	public function test_excluded_candidates_are_not_drift( int $indexable, int $excluded, int $documents, string $expected ): void {
+		$counts = array(
+			'content' => array(
+				'uid'       => 'wp_abc123_content',
+				'documents' => $documents,
+				'indexable' => $indexable,
+				'excluded'  => $excluded,
+			),
+		);
+
+		self::assertSame( $expected, SiteHealth::evaluate_documents( $counts, self::URL )['status'] );
+	}
+
+	/**
+	 * @return array<string, array{int, int, int, string}>
+	 */
+	public static function excluded_provider(): array {
+		return array(
+			'all excluded accounted for' => array( 1000, 100, 900, 'good' ),
+			'some excluded back in'      => array( 1000, 100, 950, 'good' ),
+			'2 % below the expected'     => array( 1000, 100, 882, 'good' ),
+			'3 % below the expected'     => array( 1000, 100, 873, 'recommended' ),
+			'3 % above the upper bound'  => array( 1000, 100, 1030, 'recommended' ),
+			'everything excluded'        => array( 10, 10, 0, 'good' ),
+			'more excluded than exist'   => array( 5, 10, 0, 'good' ),
+		);
+	}
+
+	public function test_drift_below_the_expected_count_reports_the_expected_count(): void {
+		$counts = array(
+			'content' => array(
+				'uid'       => 'wp_abc123_content',
+				'documents' => 500,
+				'indexable' => 1000,
+				'excluded'  => 100,
+			),
+		);
+
+		self::assertStringContainsString( 'holds 500 documents but WordPress has 900 searchable items', SiteHealth::evaluate_documents( $counts, self::URL )['description'] );
+	}
+
 	public function test_missing_index_is_recommended(): void {
 		$counts = array(
 			'content' => array(

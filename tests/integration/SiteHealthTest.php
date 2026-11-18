@@ -18,8 +18,11 @@ use Meilisearch\WordPress\Plugin;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\Queue;
+use Meilisearch\WordPress\Tests\Integration\WooCommerce\CreatesProducts;
 
 final class SiteHealthTest extends TestCase {
+
+	use CreatesProducts;
 
 	/**
 	 * @template T of object
@@ -85,6 +88,44 @@ final class SiteHealthTest extends TestCase {
 		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
 
 		self::assertSame( 'recommended', $this->statuses()[ SiteHealth::TEST_DOCUMENTS ] );
+	}
+
+	public function test_posts_vetoed_by_the_filter_are_not_drift(): void {
+		$this->service( 'index_manager', IndexManager::class )->connect();
+		self::factory()->post->create_many( 8, array( 'post_status' => 'publish' ) );
+		$vetoed = self::factory()->post->create_many( 2, array( 'post_status' => 'publish' ) );
+		add_filter(
+			'meilisearch_should_index_post',
+			static fn ( $index, $post ) => in_array( (int) $post->ID, $vetoed, true ) ? false : $index,
+			10,
+			2
+		);
+		$this->reindex_content();
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_DOCUMENTS ];
+		self::assertSame( 'good', $result['status'], $result['description'] );
+
+		// Real drift is still reported: three new posts that never reached Meilisearch.
+		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
+		self::assertSame( 'recommended', $this->statuses()[ SiteHealth::TEST_DOCUMENTS ] );
+	}
+
+	public function test_hidden_and_out_of_stock_products_are_not_drift(): void {
+		$this->skip_without_woocommerce();
+		$this->enable_products();
+		update_option( 'woocommerce_hide_out_of_stock_items', 'yes' );
+		for ( $i = 0; $i < 6; $i++ ) {
+			$this->create_simple_product( 'Health product ' . $i, '10' );
+		}
+		$this->create_simple_product( 'Health hidden', '10', array( 'catalog_visibility' => 'hidden' ) );
+		$this->create_simple_product( 'Health catalog only', '10', array( 'catalog_visibility' => 'catalog' ) );
+		$this->create_simple_product( 'Health sold out', '10', array( 'stock_status' => 'outofstock' ) );
+		$this->reindex_content();
+		$this->service( 'reindexer', Reindexer::class )->run_sync( 'products', 50, static function (): void {} );
+		$this->wait_for_tasks();
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_DOCUMENTS ];
+		self::assertSame( 'good', $result['status'], $result['description'] );
 	}
 
 	public function test_unreachable_host_is_critical_and_remote_checks_are_skipped(): void {

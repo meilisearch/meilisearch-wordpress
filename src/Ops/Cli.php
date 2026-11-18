@@ -114,7 +114,7 @@ final class Cli {
 				'index'     => $logical,
 				'uid'       => $uid,
 				'documents' => $documents,
-				'indexable' => (string) $this->reindexer->count_indexable( $logical ),
+				'indexable' => (string) $this->reindexer->estimated_indexable( $logical ),
 			) + $this->reindex_columns( $state );
 			if ( ! $human ) {
 				// Queue counts are group-wide; machine-readable formats carry them in the data, not in extra output lines.
@@ -217,7 +217,7 @@ final class Cli {
 	 * ---
 	 *
 	 * [--batch-size=<n>]
-	 * : Posts sent per request. Default 200.
+	 * : Posts sent per request. Defaults to the meilisearch_reindex_batch_size filter (200 unless a site changes it).
 	 *
 	 * ## EXAMPLES
 	 *
@@ -230,7 +230,7 @@ final class Cli {
 	public function reindex( array $args, array $assoc_args ): void { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- WP-CLI always passes both arrays.
 		$this->require_configured();
 		$logicals   = $this->logicals_from( $assoc_args );
-		$batch_size = isset( $assoc_args['batch-size'] ) ? (int) $assoc_args['batch-size'] : Reindexer::DEFAULT_BATCH;
+		$batch_size = isset( $assoc_args['batch-size'] ) ? (int) $assoc_args['batch-size'] : $this->reindexer->batch_size();
 		if ( $batch_size < 1 ) {
 			$this->fail( '--batch-size must be a positive integer.' );
 		}
@@ -240,14 +240,19 @@ final class Cli {
 			$total  = $this->reindexer->count_indexable( $logical );
 			$bar    = \WP_CLI\Utils\make_progress_bar( sprintf( 'Reindexing %s', $uid ), max( 1, $total ) );
 			$ticked = 0;
+			$sent   = 0;
 			try {
 				$this->reindexer->run_sync(
 					$logical,
 					$batch_size,
-					static function ( int $sent ) use ( $bar, &$ticked ): void {
-						if ( $sent > $ticked ) {
-							$bar->tick( $sent - $ticked );
-							$ticked = $sent;
+					// The bar counts scanned candidates (not documents sent), so it reaches its total even when
+					// posts are excluded; posts published during the run do not push it past the total.
+					static function ( int $documents, int $candidates, int $scanned ) use ( $bar, &$ticked, &$sent ): void {
+						$sent = $documents;
+						$done = min( $scanned, $candidates );
+						if ( $done > $ticked ) {
+							$bar->tick( $done - $ticked );
+							$ticked = $done;
 						}
 					}
 				);
@@ -264,7 +269,7 @@ final class Cli {
 			if ( 'failed' === $status ) {
 				$this->fail( sprintf( 'Reindex of %1$s failed: %2$s', $uid, $this->message( (string) ( $state['error'] ?? '' ) ) ) );
 			}
-			WP_CLI::success( sprintf( 'Reindexed %1$s: %2$d document(s) sent, %3$d orphan(s) deleted, status %4$s.', $uid, $ticked, $deleted, $status ) );
+			WP_CLI::success( sprintf( 'Reindexed %1$s: %2$d document(s) sent, %3$d orphan(s) deleted, status %4$s.', $uid, $sent, $deleted, $status ) );
 		}//end foreach
 	}
 
