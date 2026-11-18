@@ -418,7 +418,7 @@ final class Reindexer implements Registrable {
 	 * @param string $logical Logical index.
 	 * @return array<string, mixed>
 	 * @throws \InvalidArgumentException For an inactive logical index.
-	 * @throws \RuntimeException 'already_running'.
+	 * @throws \RuntimeException 'already_running', or connection_changed_message() when the connection changed since connect().
 	 */
 	private function begin( string $logical ): array {
 		if ( ! isset( $this->builders[ $logical ] ) || ! in_array( $logical, $this->names->active_logicals(), true ) ) {
@@ -427,6 +427,10 @@ final class Reindexer implements Registrable {
 		$current = $this->status( $logical );
 		if ( null !== $current && self::is_active( $current ) && ! $this->is_abandoned( $logical, $current ) ) {
 			throw new \RuntimeException( 'already_running' );
+		}
+		if ( $this->options->connection_changed() ) {
+			// The run would fill the indexes of a connection whose key and state were never set up; connect() does that.
+			throw new \RuntimeException( self::connection_changed_message() );
 		}
 
 		// No wait: a settings task still being processed is recorded and awaited before the sweep.
@@ -452,6 +456,15 @@ final class Reindexer implements Registrable {
 		$this->options->flag_reindex( $logical, false );
 		$this->options->set_reindex_state( $logical, $state );
 		return $state;
+	}
+
+	/**
+	 * Why a reindex is refused after the host, admin key or index prefix changed outside the connection flow.
+	 *
+	 * @return string
+	 */
+	private static function connection_changed_message(): string {
+		return __( 'The Meilisearch host, admin key or index prefix changed since the last connection. Save the Connection tab (or run "wp meilisearch connect"), then reindex.', 'meilisearch' );
 	}
 
 	/**

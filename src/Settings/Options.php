@@ -225,6 +225,26 @@ final class Options {
 	}
 
 	/**
+	 * Whether the host, admin key or index prefix in use differ from those of the last connection flow
+	 * (the `fingerprint` state written by IndexManager::connect()).
+	 *
+	 * The constants, the site address (default prefix) and direct option writes change them without
+	 * running that flow, so the indexes and the browser search key the state describes may belong to
+	 * another instance or another prefix. A site that never connected has no fingerprint: no change.
+	 * Pure: reads options already loaded for the request, no HTTP call.
+	 *
+	 * @return bool
+	 */
+	public function connection_changed(): bool {
+		$stored = $this->state( 'fingerprint', '' );
+		if ( ! is_string( $stored ) || '' === $stored ) {
+			return false;
+		}
+
+		return ! hash_equals( $stored, $this->connection_fingerprint( ( new IndexNames( $this ) )->prefix() ) );
+	}
+
+	/**
 	 * Admin-entered index prefix, restricted to [a-z0-9_].
 	 *
 	 * @return string '' when unset.
@@ -325,13 +345,16 @@ final class Options {
 	}
 
 	/**
-	 * Whether the current search key is the one last recorded as servable.
+	 * Whether the current search key is the one last recorded as servable, for the connection it was
+	 * recorded with: after a host, admin key or prefix change the key may belong to another instance or
+	 * be scoped to other indexes, until the connection flow runs again.
 	 *
 	 * @return bool
 	 */
 	public function search_key_is_verified(): bool {
 		$verified = $this->state( 'search_key_verified' );
-		return is_string( $verified ) && '' !== $verified && hash_equals( $verified, self::key_fingerprint( $this->search_key() ) );
+		return is_string( $verified ) && '' !== $verified && hash_equals( $verified, self::key_fingerprint( $this->search_key() ) )
+			&& ! $this->connection_changed();
 	}
 
 	/**
@@ -501,11 +524,15 @@ final class Options {
 	 * Whether a logical index has been filled by a completed full reindex since the connection
 	 * (host, admin key or prefix) last changed. Search is not intercepted for an unpopulated index.
 	 *
+	 * Always false while the connection in use differs from the one last connected (connection_changed()):
+	 * the stored flag describes the indexes of that connection. connect() then clears it.
+	 *
 	 * @param string $logical 'content' | 'products'.
 	 * @return bool
 	 */
 	public function is_populated( string $logical ): bool {
-		return in_array( $logical, self::to_string_list( $this->state( 'populated', array() ) ), true );
+		return in_array( $logical, self::to_string_list( $this->state( 'populated', array() ) ), true )
+			&& ! $this->connection_changed();
 	}
 
 	/**

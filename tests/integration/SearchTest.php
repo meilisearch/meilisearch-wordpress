@@ -185,6 +185,42 @@ final class SearchTest extends TestCase {
 	}
 
 	/**
+	 * The host, admin key or prefix changed without the connection flow (here: the site was connected with
+	 * another host, as when MEILISEARCH_HOST is edited in wp-config.php): the populated flag describes the
+	 * previous connection's indexes, so MySQL answers and a reindex is refused until connect() runs again.
+	 */
+	public function test_connection_changed_outside_connect_falls_back_to_mysql_until_reconnected(): void {
+		$plugin  = Plugin::instance();
+		$options = $plugin->get( 'options' );
+		$options->set_state( 'fingerprint', md5( 'http://previous-host.test:7700|' . $options->admin_key() . '|' . $plugin->get( 'names' )->prefix() ) );
+		self::assertSame( array( 'content' ), array_values( array_intersect( array( 'content' ), (array) $options->state( 'populated' ) ) ) );
+
+		$this->go_to( home_url( '/?s=nebula' ) );
+
+		self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 0, $this->search_requests );
+		self::assertNotEmpty( $this->result_ids(), 'MySQL answers the search.' );
+
+		try {
+			$plugin->get( 'reindexer' )->start( 'content' );
+			self::fail( 'A reindex must be refused until the connection flow runs.' );
+		} catch ( \RuntimeException $error ) {
+			self::assertStringContainsString( 'wp meilisearch connect', $error->getMessage() );
+		}
+
+		$plugin->get( 'index_manager' )->connect();
+		self::assertFalse( $options->connection_changed() );
+		self::assertFalse( $options->is_populated( 'content' ), 'connect() clears the flag of the previous connection.' );
+		$plugin->get( 'reindexer' )->run_sync( 'content', 200, static function (): void {} );
+		if ( '1' === getenv( 'MEILISEARCH_TEST_WC' ) ) {
+			$plugin->get( 'reindexer' )->run_sync( 'products', 200, static function (): void {} );
+		}
+
+		$this->go_to( home_url( '/?s=nebula' ) );
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+	}
+
+	/**
 	 * Theme search results come from Meilisearch, in its ranking order.
 	 */
 	public function test_results_come_from_meilisearch_in_ranking_order(): void {

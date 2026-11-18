@@ -905,6 +905,27 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
+	 * After the host, admin key or prefix changed without the connection flow (here MEILISEARCH_HOST in
+	 * wp-config.php), a reindex would fill another instance's index while the plugin still serves the
+	 * previous connection's state: it is refused until the connection flow runs, without touching Meilisearch.
+	 */
+	public function test_start_refuses_when_the_connection_changed_since_connect(): void {
+		$this->options->set_state( 'fingerprint', md5( 'http://meili.test|test-admin-key|wp_test' ) );
+		$this->options = new Options(
+			static fn ( string $name ): ?string => 'MEILISEARCH_HOST' === $name ? 'http://other.test' : null
+		);
+
+		try {
+			$this->reindexer()->start( 'content' );
+			$this->fail( 'Expected the reindex to be refused.' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertStringContainsString( 'wp meilisearch connect', $e->getMessage() );
+		}
+		$this->assertSame( array(), $this->transport->requests() );
+		$this->assertNull( $this->options->reindex_state( 'content' ) );
+	}
+
+	/**
 	 * Inactive logical indexes cannot be reindexed.
 	 */
 	public function test_start_rejects_inactive_index(): void {
