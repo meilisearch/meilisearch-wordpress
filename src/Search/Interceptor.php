@@ -19,7 +19,8 @@ use Meilisearch\WordPress\Sync\ErrorLog;
  * Spec § 9.1 / § 9.7. pre_get_posts (priority 20, after WooCommerce's priority 10) decides and
  * flags the query; posts_pre_query translates again from the final query state (WordPress
  * rebuilds $query->tax_query after pre_get_posts), runs the search and returns the posts. Any
- * error falls back to MySQL for this request and opens the circuit breaker.
+ * search error falls back to MySQL for this request and opens the circuit breaker; an error
+ * while translating falls back for this request only.
  */
 final class Interceptor implements Registrable {
 
@@ -84,7 +85,7 @@ final class Interceptor implements Registrable {
 		if ( null !== $posts || ! $query instanceof \WP_Query || true !== $query->get( self::QUERY_FLAG ) || $this->breaker->is_open() ) {
 			return $posts;
 		}
-		$request = $this->translator->translate( $query );
+		$request = $this->translate( $query );
 		if ( null === $request ) {
 			// A later pre_get_posts callback made the query untranslatable.
 			return $posts;
@@ -119,7 +120,7 @@ final class Interceptor implements Registrable {
 		if ( ! $this->options->is_configured() || $this->breaker->is_open() ) {
 			return false;
 		}
-		if ( null === $this->translator->translate( $query ) ) {
+		if ( null === $this->translate( $query ) ) {
 			return false;
 		}
 		/**
@@ -129,5 +130,23 @@ final class Interceptor implements Registrable {
 		 * @param \WP_Query $query     Query.
 		 */
 		return (bool) apply_filters( 'meilisearch_should_intercept', true, $query );
+	}
+
+	/**
+	 * Translates the query; null = do not intercept. Translation reads request input inside
+	 * WordPress's own query hooks, so nothing it throws may reach the page: the error is logged
+	 * and the database answers. The breaker stays closed, otherwise one crafted URL would switch
+	 * Meilisearch off for every visitor.
+	 *
+	 * @param \WP_Query $query Query.
+	 * @return SearchRequest|null
+	 */
+	private function translate( \WP_Query $query ): ?SearchRequest {
+		try {
+			return $this->translator->translate( $query );
+		} catch ( \Throwable $e ) {
+			$this->log->add( 'search', $e->getMessage() );
+			return null;
+		}
 	}
 }

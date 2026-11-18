@@ -179,19 +179,22 @@ final class AttributeCollector {
 	}
 
 	/**
-	 * Published child variations, capped at MAX_VARIATIONS (children beyond the cap are ignored).
-	 * Reads children directly (not get_available_variations(), which is heavy and
-	 * drops hidden / out-of-stock variations).
+	 * The first MAX_VARIATIONS published child variations (published variations beyond the cap
+	 * are ignored; disabled ones never take a slot). Reads children directly (not
+	 * get_available_variations(), which is heavy and drops hidden / out-of-stock variations).
 	 *
 	 * @param \WC_Product_Variable $product Variable product.
 	 * @return list<\WC_Product_Variation>
 	 */
 	public function variations( \WC_Product_Variable $product ): array {
 		$variations = array();
-		foreach ( array_slice( (array) $product->get_children(), 0, self::MAX_VARIATIONS ) as $child_id ) {
+		foreach ( (array) $product->get_children() as $child_id ) {
 			$variation = wc_get_product( (int) $child_id );
 			if ( $variation instanceof \WC_Product_Variation && 'publish' === $variation->get_status() ) {
 				$variations[] = $variation;
+				if ( count( $variations ) >= self::MAX_VARIATIONS ) {
+					break;
+				}
 			}
 		}
 		return $variations;

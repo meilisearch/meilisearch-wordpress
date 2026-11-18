@@ -81,6 +81,7 @@ final class ProductSyncTest extends TestCase {
 		$expected = array(
 			'woocommerce_new_product'                     => 'on_product',
 			'woocommerce_update_product'                  => 'on_product',
+			'woocommerce_updated_product_sales'           => 'on_product',
 			'woocommerce_new_product_variation'           => 'on_variation',
 			'woocommerce_update_product_variation'        => 'on_variation',
 			'woocommerce_before_delete_product_variation' => 'on_variation',

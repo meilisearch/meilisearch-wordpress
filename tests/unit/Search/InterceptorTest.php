@@ -17,6 +17,7 @@ use Meilisearch\WordPress\Api\Response;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Search\CircuitBreaker;
 use Meilisearch\WordPress\Search\Interceptor;
+use Meilisearch\WordPress\Search\ProductTranslator;
 use Meilisearch\WordPress\Search\QueryTranslator;
 use Meilisearch\WordPress\Search\ResultMapper;
 use Meilisearch\WordPress\Search\Searcher;
@@ -334,5 +335,73 @@ final class InterceptorTest extends TestCase {
 		$this->interceptor()->on_pre_get_posts( $query );
 
 		self::assertNotTrue( $query->get( Interceptor::QUERY_FLAG ) );
+	}
+
+	/**
+	 * An interceptor whose product translator throws, as a translation bug would.
+	 *
+	 * @return Interceptor
+	 */
+	private function interceptor_with_throwing_translator(): Interceptor {
+		$options  = new Options();
+		$products = new class() implements ProductTranslator {
+			/**
+			 * Always fails.
+			 *
+			 * @param \WP_Query $query Query.
+			 * @throws \InvalidArgumentException Always.
+			 */
+			public function constraints( \WP_Query $query ): ?array {
+				throw new \InvalidArgumentException( 'Filter numbers must be finite.' );
+			}
+		};
+		return new Interceptor(
+			new QueryTranslator( $options, new Indexability( $options, '__return_true' ), $products ),
+			new Searcher( new ClientFactory( $options, $this->transport ), new IndexNames( $options ) ),
+			$this->mapper,
+			new CircuitBreaker(),
+			$options,
+			new ErrorLog()
+		);
+	}
+
+	/**
+	 * The main product search.
+	 *
+	 * @return \WP_Query
+	 */
+	private function product_search(): \WP_Query {
+		return $this->make_query(
+			array(
+				's'         => 'shirt',
+				'post_type' => 'product',
+			)
+		);
+	}
+
+	/**
+	 * A translation error in pre_get_posts leaves the query to MySQL: logged, breaker untouched.
+	 */
+	public function test_translation_error_is_not_intercepted_and_does_not_trip_the_breaker(): void {
+		$query = $this->product_search();
+
+		$this->interceptor_with_throwing_translator()->on_pre_get_posts( $query );
+
+		self::assertNotTrue( $query->get( Interceptor::QUERY_FLAG ) );
+		self::assertArrayNotHasKey( CircuitBreaker::TRANSIENT, $this->transients );
+		self::assertSame( 'search', $this->option_store[ Options::LOG ][0]['context'] );
+		self::assertSame( 'Filter numbers must be finite.', $this->option_store[ Options::LOG ][0]['message'] );
+	}
+
+	/**
+	 * A translation error on a flagged query (posts_pre_query) falls back without calling Meilisearch.
+	 */
+	public function test_translation_error_on_flagged_query_falls_back(): void {
+		$query = $this->product_search();
+		$query->set( Interceptor::QUERY_FLAG, true );
+
+		self::assertNull( $this->interceptor_with_throwing_translator()->on_posts_pre_query( null, $query ) );
+		self::assertArrayNotHasKey( CircuitBreaker::TRANSIENT, $this->transients );
+		self::assertSame( array(), $this->transport->requests() );
 	}
 }

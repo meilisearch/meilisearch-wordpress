@@ -55,6 +55,8 @@ final class ProductSync implements Registrable {
 		// Args: product ID, product.
 		add_action( 'woocommerce_new_product', array( $this, 'on_product' ), 10, 1 );
 		add_action( 'woocommerce_update_product', array( $this, 'on_product' ), 10, 1 );
+		// Args: product ID. Orders change total_sales with a direct SQL update: no save or meta hook fires.
+		add_action( 'woocommerce_updated_product_sales', array( $this, 'on_product' ), 10, 1 );
 		// Args: variation ID, variation.
 		add_action( 'woocommerce_new_product_variation', array( $this, 'on_variation' ), 10, 2 );
 		add_action( 'woocommerce_update_product_variation', array( $this, 'on_variation' ), 10, 2 );

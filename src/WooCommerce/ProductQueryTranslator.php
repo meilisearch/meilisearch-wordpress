@@ -28,11 +28,32 @@ use Meilisearch\WordPress\Settings\Options;
  * - query vars `orderby` / `order` (WooCommerce catalog ordering) and non-empty `post__in` (→ null);
  * - request parameters `filter_{attr}`, `query_type_{attr}`, `min_price`, `max_price`, read from
  *   `$_GET` only for WooCommerce's main product query (`wc_query` = `product_query`), exactly
- *   where WooCommerce itself applies them.
+ *   where WooCommerce itself applies them;
+ * - query vars of WooCommerce's product filter blocks, `filter_stock_status` and one per public
+ *   product taxonomy (`categories`, `tags`, `brands`, `filter_{taxonomy}`), which WooCommerce
+ *   applies to that same main query through `posts_clauses` and never turns into tax clauses.
  */
 final class ProductQueryTranslator implements ProductTranslator {
 
 	public const VISIBILITY_TAXONOMY = 'product_visibility';
+
+	/**
+	 * Query var WooCommerce's product filter blocks use for a taxonomy, when it is not `filter_{taxonomy}`.
+	 */
+	private const BLOCK_TAXONOMY_PARAMS = array(
+		'product_cat'   => 'categories',
+		'product_tag'   => 'tags',
+		'product_brand' => 'brands',
+	);
+
+	/**
+	 * Indexed term-ID field of the taxonomies a product filter block parameter can be translated for.
+	 * `tax_product_cat_ids` holds every ancestor, which is WooCommerce's "term or any descendant".
+	 */
+	private const BLOCK_TAXONOMY_FIELDS = array(
+		'product_cat' => 'tax_product_cat_ids',
+		'product_tag' => 'tax_product_tag_ids',
+	);
 
 	/**
 	 * Constructor.
@@ -79,8 +100,16 @@ final class ProductQueryTranslator implements ProductTranslator {
 			if ( null === $layered ) {
 				return null;
 			}
-			$filters   = array_merge( $filters, $layered );
-			$filters[] = $this->price_filter();
+			$price = $this->price_filter();
+			if ( null === $price ) {
+				return null;
+			}
+			$blocks = $query->is_main_query() ? $this->block_filters( $query, $filterable ) : array();
+			if ( null === $blocks ) {
+				return null;
+			}
+			$filters   = array_merge( $filters, $layered, $blocks );
+			$filters[] = $price;
 		}
 
 		return array(
@@ -296,7 +325,9 @@ final class ProductQueryTranslator implements ProductTranslator {
 			}
 			$slugs = array_values( array_unique( array_filter( array_map( 'sanitize_title', explode( ',', (string) wc_clean( wp_unslash( $value ) ) ) ) ) ) );
 			if ( array() === $slugs || ! taxonomy_exists( $taxonomy ) ) {
-				// WooCommerce ignores these filters too.
+				// Not an attribute filter, so WooCommerce's layered navigation ignores it too. A
+				// product filter block parameter of that shape (`filter_stock_status`,
+				// `filter_{taxonomy}`) is block_filters()'s.
 				continue;
 			}
 			$field = AttributeCollector::field_for_taxonomy( $taxonomy );
@@ -324,13 +355,143 @@ final class ProductQueryTranslator implements ProductTranslator {
 	}
 
 	/**
-	 * `min_price` / `max_price` → price range on the indexed display price ('' when absent).
+	 * Product filter block parameters → filters; null when one cannot be reproduced.
+	 *
+	 * Mirrors WooCommerce's QueryClauses::add_query_clauses_for_main_query(), which reads the query
+	 * vars (not `$_GET`) of the main product query: stock statuses are ORed, slugs of one taxonomy
+	 * are ORed, taxonomies are ANDed, and a taxonomy none of whose slugs exists is dropped. Where
+	 * WooCommerce matches nothing (no valid status, no existing term at all) or filters on a
+	 * taxonomy that is not indexed, the answer is null: the database handles that request.
+	 *
+	 * @param \WP_Query $query      Main product query.
+	 * @param string[]  $filterable Products filterable attributes.
+	 * @return list<string>|null
 	 */
-	private function price_filter(): string {
+	private function block_filters( \WP_Query $query, array $filterable ): ?array {
+		$filters = array();
+
+		$statuses = $this->block_values( $query, 'filter_stock_status' );
+		if ( null === $statuses ) {
+			return null;
+		}
+		if ( array() !== $statuses ) {
+			$known = array_map( 'strval', array_keys( wc_get_product_stock_status_options() ) );
+			$valid = array_values( array_unique( array_intersect( $statuses, $known ) ) );
+			if ( array() === $valid || ! in_array( 'stock_status', $filterable, true ) ) {
+				return null;
+			}
+			$filters[] = FilterBuilder::in( 'stock_status', $valid );
+		}
+
+		$chosen = array();
+		foreach ( $this->block_taxonomy_params() as $taxonomy => $param ) {
+			// WooCommerce chooses a taxonomy whenever its trimmed parameter is not empty, even when no
+			// slug survives (`,`): it then looks up an empty slug list, which get_terms() answers with
+			// every term of the taxonomy. Only an absent or blank parameter is skipped.
+			$value = $query->get( $param );
+			if ( ! is_string( $value ) ) {
+				if ( empty( $value ) ) {
+					continue;
+				}
+				return null;
+			}
+			$value = trim( $value );
+			if ( empty( $value ) ) {
+				continue;
+			}
+			$slugs = array_values( array_unique( array_filter( array_map( 'sanitize_title', explode( ',', $value ) ) ) ) );
+			$field = self::BLOCK_TAXONOMY_FIELDS[ $taxonomy ] ?? null;
+			if ( array() === $slugs || null === $field || ! in_array( $field, $filterable, true ) ) {
+				return null;
+			}
+			$chosen[ $taxonomy ] = $slugs;
+		}//end foreach
+		if ( array() === $chosen ) {
+			return $filters;
+		}
+
+		// One lookup for every taxonomy, as WooCommerce does: a slug counts in each chosen taxonomy that has it.
+		$terms = get_terms(
+			array(
+				'taxonomy'   => array_keys( $chosen ),
+				'slug'       => array_merge( ...array_values( $chosen ) ),
+				'hide_empty' => false,
+			)
+		);
+		if ( ! is_array( $terms ) ) {
+			return null;
+		}
+		$ids = array();
+		foreach ( $terms as $term ) {
+			if ( $term instanceof \WP_Term && isset( $chosen[ $term->taxonomy ] ) ) {
+				$ids[ $term->taxonomy ][] = (int) $term->term_id;
+			}
+		}
+		if ( array() === $ids ) {
+			return null;
+		}
+		foreach ( $ids as $taxonomy => $term_ids ) {
+			$filters[] = FilterBuilder::in( self::BLOCK_TAXONOMY_FIELDS[ $taxonomy ], array_values( array_unique( $term_ids ) ) );
+		}
+		return $filters;
+	}
+
+	/**
+	 * Comma-separated values of the stock status filter block query var: [] when the parameter is
+	 * absent or has no value (WooCommerce skips it), null when it is not a string.
+	 *
+	 * @param \WP_Query $query Query.
+	 * @param string    $param Query var.
+	 * @return list<string>|null
+	 */
+	private function block_values( \WP_Query $query, string $param ): ?array {
+		$value = $query->get( $param );
+		if ( empty( $value ) ) {
+			return array();
+		}
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+		return array_values( array_filter( explode( ',', trim( $value ) ) ) );
+	}
+
+	/**
+	 * Taxonomy → query var of WooCommerce's taxonomy filter block: every public product taxonomy
+	 * with an admin UI (WooCommerce's Params::get_taxonomy_params()).
+	 *
+	 * @return array<string, string>
+	 */
+	private function block_taxonomy_params(): array {
+		$taxonomies = get_taxonomies(
+			array(
+				'public'  => true,
+				'show_ui' => true,
+			),
+			'objects'
+		);
+		$params     = array();
+		foreach ( $taxonomies as $taxonomy ) {
+			if ( in_array( 'product', (array) $taxonomy->object_type, true ) ) {
+				$name            = (string) $taxonomy->name;
+				$params[ $name ] = self::BLOCK_TAXONOMY_PARAMS[ $name ] ?? 'filter_' . $name;
+			}
+		}
+		return $params;
+	}
+
+	/**
+	 * `min_price` / `max_price` → price range on the indexed display price ('' when absent).
+	 * A bound that overflows a float (`1e999`) cannot be written as a filter: null, so the
+	 * database answers that request as it would without the plugin.
+	 */
+	private function price_filter(): ?string {
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Cast to float, as in WC_Query.
 		$min = isset( $_GET['min_price'] ) ? (float) wc_clean( wp_unslash( $_GET['min_price'] ) ) : null;
 		$max = isset( $_GET['max_price'] ) ? (float) wc_clean( wp_unslash( $_GET['max_price'] ) ) : null;
 		// phpcs:enable WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( ( null !== $min && ! is_finite( $min ) ) || ( null !== $max && ! is_finite( $max ) ) ) {
+			return null;
+		}
 		if ( null !== $min && null !== $max ) {
 			return FilterBuilder::between( 'price', $min, $max );
 		}

@@ -242,4 +242,38 @@ final class AttributeCollectorTest extends TestCase {
 
 		self::assertCount( AttributeCollector::MAX_VARIATIONS, ( new AttributeCollector() )->variations( $product ) );
 	}
+
+	public function test_unpublished_variations_do_not_count_towards_the_cap(): void {
+		$children = array();
+		// 30 disabled (private) variations first, then MAX_VARIATIONS published ones.
+		for ( $id = 1000; $id < 1030 + AttributeCollector::MAX_VARIATIONS; $id++ ) {
+			$this->variation( $id, array(), $id < 1030 ? 'private' : 'publish' );
+			$children[] = $id;
+		}
+		$product = new \WC_Product_Variable( array( 'children' => $children ) );
+
+		$ids = array_map( static fn( \WC_Product_Variation $variation ): int => $variation->get_id(), ( new AttributeCollector() )->variations( $product ) );
+
+		self::assertSame( range( 1030, 1029 + AttributeCollector::MAX_VARIATIONS ), $ids );
+	}
+
+	public function test_children_past_the_cap_are_not_loaded(): void {
+		$children = array();
+		for ( $id = 1000; $id < 1000 + AttributeCollector::MAX_VARIATIONS + 5; $id++ ) {
+			$this->variation( $id, array() );
+			$children[] = $id;
+		}
+		$product = new \WC_Product_Variable( array( 'children' => $children ) );
+		$loaded  = array();
+		Functions\when( 'wc_get_product' )->alias(
+			function ( $id ) use ( &$loaded ) {
+				$loaded[] = (int) $id;
+				return $this->products[ (int) $id ] ?? false;
+			}
+		);
+
+		( new AttributeCollector() )->variations( $product );
+
+		self::assertCount( AttributeCollector::MAX_VARIATIONS, $loaded );
+	}
 }
