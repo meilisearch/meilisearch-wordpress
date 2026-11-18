@@ -214,12 +214,13 @@ final class ContentDocumentBuilder implements DocumentBuilder {
 	}
 
 	/**
-	 * Converts a stored meta value to an indexable scalar.
+	 * Converts a stored meta value to an indexable scalar. Public so that the search translator
+	 * normalises meta filter values with this same rule (QueryTranslator::scalars()).
 	 *
 	 * @param mixed $value Raw meta value.
 	 * @return string|int|float|bool|null Null when the value must be skipped.
 	 */
-	private static function meta_value( mixed $value ): string|int|float|bool|null {
+	public static function meta_value( mixed $value ): string|int|float|bool|null {
 		if ( is_bool( $value ) || is_int( $value ) ) {
 			return $value;
 		}

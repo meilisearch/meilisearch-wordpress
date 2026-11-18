@@ -11,6 +11,7 @@ namespace Meilisearch\WordPress\Search;
 
 defined( 'ABSPATH' ) || exit;
 
+use Meilisearch\WordPress\Indexing\ContentDocumentBuilder;
 use Meilisearch\WordPress\Indexing\FieldName;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
@@ -1225,7 +1226,9 @@ final class QueryTranslator {
 	}
 
 	/**
-	 * Scalars; numeric strings become numbers because the index stores them as numbers (spec § 5.3).
+	 * Scalars for CHAR / untyped comparisons, normalised exactly as the indexer normalises meta values
+	 * (ContentDocumentBuilder::meta_value()): canonical integers and decimals become numbers, any other
+	 * string ("02134", "+5", "1e3", " 5", 20-digit integers…) stays the original string the index holds.
 	 *
 	 * @param array<int, mixed> $raw Values.
 	 * @return array<int, string|int|float>|null
@@ -1243,16 +1246,9 @@ final class QueryTranslator {
 			if ( ! is_string( $item ) ) {
 				return null;
 			}
-			$trimmed = trim( $item );
-			if ( is_numeric( $trimmed ) ) {
-				if ( ! is_finite( (float) $trimmed ) ) {
-					return null;
-				}
-				$out[] = $trimmed + 0;
-			} else {
-				$out[] = $item;
-			}
-		}//end foreach
+			$value = ContentDocumentBuilder::meta_value( $item );
+			$out[] = null === $value ? $item : $value;
+		}
 		return $out;
 	}
 }

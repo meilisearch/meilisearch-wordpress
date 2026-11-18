@@ -435,4 +435,51 @@ final class SearchTest extends TestCase {
 		self::assertSame( 24, $mysql );
 		self::assertSame( $mysql, $this->main_query()->found_posts );
 	}
+
+	/**
+	 * A CHAR meta comparison against a non-canonical numeric string ("02134") matches the post like MySQL.
+	 */
+	public function test_meta_filter_matches_non_canonical_numeric_strings(): void {
+		update_option(
+			Options::CONTENT,
+			array(
+				'post_types' => array( 'post', 'page' ),
+				'taxonomies' => array( 'post' => array( 'category' ) ),
+				'meta_keys'  => array( 'post' => array( 'zip' ) ),
+			)
+		);
+		update_post_meta( $this->matching[0], 'zip', '02134' );
+		update_post_meta( $this->matching[1], 'zip', '+5' );
+		$plugin = Plugin::instance();
+		$plugin->get( 'index_manager' )->ensure_all();
+		$plugin->get( 'reindexer' )->run_sync(
+			'content',
+			200,
+			static function (): void {}
+		);
+
+		foreach ( array(
+			'02134' => $this->matching[0],
+			'+5'    => $this->matching[1],
+		) as $zip => $expected ) {
+			$args  = array(
+				's'                   => 'nebula',
+				'post_type'           => 'post',
+				'ignore_sticky_posts' => true,
+				'meta_query'          => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- Test query.
+					array(
+						'key'   => 'zip',
+						'value' => (string) $zip,
+					),
+				),
+			);
+			$mysql = new \WP_Query( $args );
+			$meili = new \WP_Query( array_merge( $args, array( 'meilisearch' => true ) ) );
+
+			self::assertNotTrue( $mysql->get( Interceptor::QUERY_FLAG ) );
+			self::assertTrue( $meili->get( Interceptor::QUERY_FLAG ), (string) $zip );
+			self::assertSame( array( $expected ), array_map( 'intval', wp_list_pluck( $mysql->posts, 'ID' ) ), (string) $zip );
+			self::assertSame( array( $expected ), array_map( 'intval', wp_list_pluck( $meili->posts, 'ID' ) ), (string) $zip );
+		}
+	}
 }

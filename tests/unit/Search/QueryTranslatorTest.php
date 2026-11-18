@@ -990,6 +990,83 @@ final class QueryTranslatorTest extends TestCase {
 				),
 				null,
 			),
+			'leading zero'      => array(
+				$meta(
+					array(
+						'key'   => 'my-key',
+						'value' => '02134',
+					)
+				),
+				'meta_my_key = "02134"',
+			),
+			'leading zero ne'   => array(
+				$meta(
+					array(
+						'key'     => 'my-key',
+						'value'   => '007',
+						'compare' => '!=',
+					)
+				),
+				'(meta_my_key EXISTS) AND (meta_my_key != "007")',
+			),
+			'mixed in'          => array(
+				$meta(
+					array(
+						'key'     => 'my-key',
+						'value'   => array( '02134', '7', '+5', '1e3', '.5', '2.50', '-3' ),
+						'compare' => 'IN',
+					)
+				),
+				'meta_my_key IN ["02134", 7, "+5", "1e3", ".5", 2.5, -3]',
+			),
+			'mixed not in'      => array(
+				$meta(
+					array(
+						'key'     => 'my-key',
+						'value'   => '007, 8',
+						'compare' => 'NOT IN',
+					)
+				),
+				'(meta_my_key EXISTS) AND (meta_my_key NOT IN ["007", 8])',
+			),
+			'padded value'      => array(
+				$meta(
+					array(
+						'key'   => 'my-key',
+						'value' => ' 5',
+					)
+				),
+				'meta_my_key = " 5"',
+			),
+			'beyond int range'  => array(
+				$meta(
+					array(
+						'key'   => 'my-key',
+						'value' => '99999999999999999999',
+					)
+				),
+				'meta_my_key = "99999999999999999999"',
+			),
+			'char overflow'     => array(
+				$meta(
+					array(
+						'key'   => 'my-key',
+						'value' => '1e999',
+						'type'  => 'CHAR',
+					)
+				),
+				'meta_my_key = "1e999"',
+			),
+			'numeric type zero' => array(
+				$meta(
+					array(
+						'key'   => 'my-key',
+						'value' => '007',
+						'type'  => 'NUMERIC',
+					)
+				),
+				'meta_my_key = 7',
+			),
 			'value only'        => array( $meta( array( 'value' => '1' ) ), null ),
 			'compare_key'       => array(
 				$meta(
@@ -1243,11 +1320,12 @@ final class QueryTranslatorTest extends TestCase {
 	}
 
 	/**
-	 * Numeric strings that overflow to INF cannot be expressed as filter values.
+	 * Numeric strings that overflow to INF cannot be expressed as numeric filter values. (Compared as
+	 * CHAR they stay strings, as the indexer stores them: see the "char overflow" meta case.)
 	 */
 	public function test_non_finite_meta_value_is_not_intercepted(): void {
 		foreach ( array( '1e999', '-1e999' ) as $value ) {
-			foreach ( array( 'my-key', 'price' ) as $key ) {
+			foreach ( array( '=', '>', 'IN' ) as $compare ) {
 				self::assertNull(
 					$this->translator()->translate(
 						$this->make_query(
@@ -1256,8 +1334,10 @@ final class QueryTranslatorTest extends TestCase {
 								'post_type'  => 'post',
 								'meta_query' => array(
 									array(
-										'key'   => $key,
-										'value' => $value,
+										'key'     => 'price',
+										'value'   => $value,
+										'compare' => $compare,
+										'type'    => 'NUMERIC',
 									),
 								),
 							)
