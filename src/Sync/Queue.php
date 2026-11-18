@@ -19,6 +19,7 @@ final class Queue {
 	public const GROUP         = 'meilisearch';
 	public const SYNC_POSTS    = 'meilisearch_sync_posts';
 	public const SYNC_TERM     = 'meilisearch_sync_term';
+	public const SYNC_AUTHOR   = 'meilisearch_sync_author';
 	public const REINDEX_BATCH = 'meilisearch_reindex_batch';
 	public const COUNT_CAP     = 1000;
 
