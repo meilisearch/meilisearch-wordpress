@@ -93,8 +93,13 @@ final class QueryTranslator {
 
 	/**
 	 * Supported meta_query compare operators.
+	 *
+	 * Documents hold the first value of each indexed meta key and leave the field out when that value
+	 * is empty or not scalar (ContentDocumentBuilder::meta_fields()). WP_Meta_Query matches any row of
+	 * the key, so the negative compares (!=, NOT IN, NOT EXISTS), whose answer depends on the rows the
+	 * index does not hold, are answered by MySQL.
 	 */
-	private const META_COMPARES = array( '=', '!=', '<', '<=', '>', '>=', 'IN', 'NOT IN', 'BETWEEN', 'EXISTS', 'NOT EXISTS' );
+	private const META_COMPARES = array( '=', '<', '<=', '>', '>=', 'IN', 'BETWEEN', 'EXISTS' );
 
 	/**
 	 * Date query columns => [field, interpreted in UTC].
@@ -859,10 +864,8 @@ final class QueryTranslator {
 			return null;
 		}
 		if ( 'EXISTS' === $compare ) {
+			// Posts whose value is empty or not scalar have no field, so they do not match (documented).
 			return FilterBuilder::exists( $field );
-		}
-		if ( 'NOT EXISTS' === $compare ) {
-			return FilterBuilder::not_exists( $field );
 		}
 		if ( ! $has_value ) {
 			return '=' === $compare ? FilterBuilder::exists( $field ) : null;
@@ -872,16 +875,11 @@ final class QueryTranslator {
 		$raw = $clause['value'];
 		switch ( $compare ) {
 			case 'IN':
-			case 'NOT IN':
 				$values = $numeric ? self::numbers( self::value_list( $raw ) ) : self::scalars( self::value_list( $raw ) );
 				if ( null === $values || array() === $values ) {
 					return null;
 				}
-				if ( 'IN' === $compare ) {
-					return FilterBuilder::in( $field, $values );
-				}
-				// WordPress requires the key to exist for NOT IN / !=.
-				return FilterBuilder::all( array( FilterBuilder::exists( $field ), FilterBuilder::not_in( $field, $values ) ) );
+				return FilterBuilder::in( $field, $values );
 			case 'BETWEEN':
 				$values = self::numbers( self::value_list( $raw ) );
 				if ( null === $values || count( $values ) < 2 ) {
@@ -889,13 +887,11 @@ final class QueryTranslator {
 				}
 				return FilterBuilder::between( $field, $values[0], $values[1] );
 			case '=':
-			case '!=':
 				$values = $numeric ? self::numbers( array( $raw ) ) : self::scalars( array( $raw ) );
 				if ( null === $values ) {
 					return null;
 				}
-				$expression = FilterBuilder::compare( $field, $compare, $values[0] );
-				return '!=' === $compare ? FilterBuilder::all( array( FilterBuilder::exists( $field ), $expression ) ) : $expression;
+				return FilterBuilder::compare( $field, '=', $values[0] );
 			default:
 				$values = self::numbers( array( $raw ) );
 				// Range comparisons need numbers.
@@ -1229,6 +1225,7 @@ final class QueryTranslator {
 	 * Scalars for CHAR / untyped comparisons, normalised exactly as the indexer normalises meta values
 	 * (ContentDocumentBuilder::meta_value()): canonical integers and decimals become numbers, any other
 	 * string ("02134", "+5", "1e3", " 5", 20-digit integers…) stays the original string the index holds.
+	 * Null for an empty string: the index leaves empty values out, so it cannot match them like MySQL.
 	 *
 	 * @param array<int, mixed> $raw Values.
 	 * @return array<int, string|int|float>|null
@@ -1243,7 +1240,7 @@ final class QueryTranslator {
 				$out[] = $item;
 				continue;
 			}
-			if ( ! is_string( $item ) ) {
+			if ( ! is_string( $item ) || '' === $item ) {
 				return null;
 			}
 			$value = ContentDocumentBuilder::meta_value( $item );

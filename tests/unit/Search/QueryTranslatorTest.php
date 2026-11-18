@@ -854,7 +854,7 @@ final class QueryTranslatorTest extends TestCase {
 						'compare' => '!=',
 					)
 				),
-				'(meta_my_key EXISTS) AND (meta_my_key != "x")',
+				null,
 			),
 			'in'                => array(
 				$meta(
@@ -894,7 +894,7 @@ final class QueryTranslatorTest extends TestCase {
 						'type'    => 'CHAR',
 					)
 				),
-				'(meta_my_key EXISTS) AND (meta_my_key NOT IN ["a"])',
+				null,
 			),
 			'between'           => array(
 				$meta(
@@ -923,7 +923,7 @@ final class QueryTranslatorTest extends TestCase {
 						'compare' => 'NOT EXISTS',
 					)
 				),
-				'meta_price NOT EXISTS',
+				null,
 			),
 			'key only'          => array( $meta( array( 'key' => 'price' ) ), 'meta_price EXISTS' ),
 			'or relation'       => array(
@@ -1007,7 +1007,7 @@ final class QueryTranslatorTest extends TestCase {
 						'compare' => '!=',
 					)
 				),
-				'(meta_my_key EXISTS) AND (meta_my_key != "007")',
+				null,
 			),
 			'mixed in'          => array(
 				$meta(
@@ -1027,7 +1027,7 @@ final class QueryTranslatorTest extends TestCase {
 						'compare' => 'NOT IN',
 					)
 				),
-				'(meta_my_key EXISTS) AND (meta_my_key NOT IN ["007", 8])',
+				null,
 			),
 			'padded value'      => array(
 				$meta(
@@ -1066,6 +1066,25 @@ final class QueryTranslatorTest extends TestCase {
 					)
 				),
 				'meta_my_key = 7',
+			),
+			'empty value eq'    => array(
+				$meta(
+					array(
+						'key'   => 'my-key',
+						'value' => '',
+					)
+				),
+				null,
+			),
+			'empty value in'    => array(
+				$meta(
+					array(
+						'key'     => 'my-key',
+						'value'   => array( 'a', '' ),
+						'compare' => 'IN',
+					)
+				),
+				null,
 			),
 			'value only'        => array( $meta( array( 'value' => '1' ) ), null ),
 			'compare_key'       => array(
