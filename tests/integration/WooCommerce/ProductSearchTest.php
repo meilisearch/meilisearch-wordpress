@@ -70,6 +70,114 @@ final class ProductSearchTest extends TestCase {
 		return array_map( 'intval', wp_list_pluck( $GLOBALS['wp_query']->posts, 'ID' ) );
 	}
 
+	/**
+	 * The same price-ordered product search answered by the database (interception vetoed).
+	 *
+	 * @return list<int>
+	 */
+	private function database_search( array $args ): array {
+		add_filter( 'meilisearch_should_intercept', '__return_false' );
+		try {
+			return $this->search( array_merge( array( 's' => 'Meili Shirt' ), $args ) );
+		} finally {
+			remove_filter( 'meilisearch_should_intercept', '__return_false' );
+		}
+	}
+
+	/**
+	 * Asserts a price-ordered search with the given product-filter block parameters returns
+	 * $expected from Meilisearch, and that the database returns the same.
+	 *
+	 * @param list<int> $expected Product IDs, cheapest first.
+	 */
+	private function assert_filtered_search( array $expected, array $args ): void {
+		$args = array_merge( array( 'orderby' => 'price' ), $args );
+
+		$this->assertSame( $expected, $this->database_search( $args ), 'Database result.' );
+		$this->assertSame( $expected, $this->search( $args ), 'Meilisearch result.' );
+		$this->assertTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ), 'Answered by Meilisearch.' );
+	}
+
+	public function test_product_filter_block_stock_status_is_applied(): void {
+		$sold = $this->create_simple_product( 'Meili Shirt Sold', '25', array( 'stock_status' => 'outofstock' ) )->get_id();
+		$this->sync_products();
+
+		$this->assert_filtered_search( array( $this->ids['bravo'], $this->ids['charlie'], $this->ids['alpha'] ), array( 'filter_stock_status' => 'instock' ) );
+		$this->assert_filtered_search( array( $sold ), array( 'filter_stock_status' => 'outofstock' ) );
+		$this->assert_filtered_search(
+			array( $this->ids['bravo'], $this->ids['charlie'], $sold, $this->ids['alpha'] ),
+			array( 'filter_stock_status' => 'instock,outofstock' )
+		);
+	}
+
+	public function test_product_filter_block_categories_include_child_categories(): void {
+		$tees  = get_term_by( 'slug', 'tees', 'product_cat' );
+		$child = wp_insert_term(
+			'Long Sleeve',
+			'product_cat',
+			array(
+				'slug'   => 'long-sleeve',
+				'parent' => (int) $tees->term_id,
+			)
+		);
+		$delta = $this->create_simple_product( 'Meili Shirt Delta', '15', array( 'category_ids' => array( (int) $child['term_id'] ) ) )->get_id();
+		$this->sync_products();
+
+		$this->assert_filtered_search( array( $delta, $this->ids['charlie'], $this->ids['alpha'] ), array( 'categories' => 'tees' ) );
+		$this->assert_filtered_search( array( $delta ), array( 'categories' => 'long-sleeve' ) );
+		// An unknown slug next to a known one is dropped, as WooCommerce does.
+		$this->assert_filtered_search( array( $delta ), array( 'categories' => 'long-sleeve,unknown' ) );
+	}
+
+	public function test_product_filter_block_tags_combine_with_categories(): void {
+		$summer = wp_insert_term( 'Summer', 'product_tag', array( 'slug' => 'summer' ) );
+		wp_set_object_terms( $this->ids['alpha'], array( (int) $summer['term_id'] ), 'product_tag' );
+		wp_set_object_terms( $this->ids['bravo'], array( (int) $summer['term_id'] ), 'product_tag' );
+		$this->sync_products();
+
+		$this->assert_filtered_search( array( $this->ids['bravo'], $this->ids['alpha'] ), array( 'tags' => 'summer' ) );
+		$this->assert_filtered_search(
+			array( $this->ids['alpha'] ),
+			array(
+				'tags'       => 'summer',
+				'categories' => 'tees',
+			)
+		);
+	}
+
+	/**
+	 * @dataProvider untranslated_block_filters
+	 */
+	public function test_product_filter_block_parameter_that_cannot_be_translated_falls_back_to_mysql( array $args ): void {
+		if ( isset( $args['brands'] ) && ! taxonomy_exists( 'product_brand' ) ) {
+			$this->markTestSkipped( 'This WooCommerce has no product_brand taxonomy.' );
+		}
+		$args = array_merge(
+			array(
+				's'       => 'Meili Shirt',
+				'orderby' => 'price',
+			),
+			$args
+		);
+
+		$expected = $this->database_search( $args );
+		$actual   = $this->search( $args );
+
+		$this->assertNotTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ) );
+		$this->assertSame( $expected, $actual );
+	}
+
+	/**
+	 * @return array<string, array{0: array<string, string>}>
+	 */
+	public static function untranslated_block_filters(): array {
+		return array(
+			'unknown stock status'  => array( array( 'filter_stock_status' => 'nonsense' ) ),
+			'unknown category slug' => array( array( 'categories' => 'unknown' ) ),
+			'brand (not indexed)'   => array( array( 'brands' => 'acme' ) ),
+		);
+	}
+
 	public function test_orderby_price_returns_products_in_price_order(): void {
 		$ids = $this->search( array( 'orderby' => 'price' ) );
 

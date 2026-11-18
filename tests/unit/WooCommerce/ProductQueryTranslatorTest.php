@@ -403,4 +403,206 @@ final class ProductQueryTranslatorTest extends TestCase {
 			),
 		);
 	}
+
+	/**
+	 * Terms the product filter block tests look up: taxonomy => slug => term ID.
+	 */
+	private const BLOCK_TERMS = array(
+		'product_cat'   => array(
+			'tees'  => 51,
+			'shoes' => 52,
+			'sale'  => 53,
+		),
+		'product_tag'   => array(
+			'summer' => 61,
+			'sale'   => 62,
+		),
+		'product_brand' => array(
+			'acme' => 71,
+		),
+	);
+
+	/**
+	 * WooCommerce's main product query with product filter block query vars, plus the WordPress
+	 * functions the translation reads.
+	 */
+	private function block_query( array $vars ): \WP_Query {
+		Functions\when( 'wc_get_product_stock_status_options' )->justReturn(
+			array(
+				'instock'     => 'In stock',
+				'outofstock'  => 'Out of stock',
+				'onbackorder' => 'On backorder',
+			)
+		);
+		Functions\when( 'get_taxonomies' )->justReturn(
+			array(
+				'category'      => (object) array(
+					'name'        => 'category',
+					'object_type' => array( 'post' ),
+				),
+				'product_cat'   => (object) array(
+					'name'        => 'product_cat',
+					'object_type' => array( 'product' ),
+				),
+				'product_tag'   => (object) array(
+					'name'        => 'product_tag',
+					'object_type' => array( 'product' ),
+				),
+				'product_brand' => (object) array(
+					'name'        => 'product_brand',
+					'object_type' => array( 'product' ),
+				),
+				'collection'    => (object) array(
+					'name'        => 'collection',
+					'object_type' => array( 'product', 'post' ),
+				),
+			)
+		);
+		Functions\when( 'get_terms' )->alias(
+			static function ( array $args ): array {
+				$terms = array();
+				foreach ( (array) $args['taxonomy'] as $taxonomy ) {
+					foreach ( self::BLOCK_TERMS[ $taxonomy ] ?? array() as $slug => $id ) {
+						if ( in_array( $slug, (array) $args['slug'], true ) ) {
+							$terms[] = new \WP_Term(
+								array(
+									'term_id'  => $id,
+									'slug'     => $slug,
+									'taxonomy' => $taxonomy,
+								)
+							);
+						}
+					}
+				}
+				return $terms;
+			}
+		);
+
+		$query             = $this->query( array_merge( array( 'wc_query' => 'product_query' ), $vars ) );
+		$query->main_query = true;
+		return $query;
+	}
+
+	public function test_block_stock_status_filter(): void {
+		$result = $this->translator()->constraints( $this->block_query( array( 'filter_stock_status' => 'instock,onbackorder' ) ) );
+		self::assertSame( array( FilterBuilder::in( 'stock_status', array( 'instock', 'onbackorder' ) ) ), $result['filters'] );
+
+		// Unknown statuses are dropped while a known one remains.
+		$result = $this->translator()->constraints( $this->block_query( array( 'filter_stock_status' => 'nonsense,outofstock,' ) ) );
+		self::assertSame( array( FilterBuilder::in( 'stock_status', array( 'outofstock' ) ) ), $result['filters'] );
+	}
+
+	public function test_block_stock_status_without_a_known_status_is_not_translated(): void {
+		// WooCommerce matches nothing (AND 1=0): the database answers.
+		self::assertNull( $this->translator()->constraints( $this->block_query( array( 'filter_stock_status' => 'nonsense' ) ) ) );
+	}
+
+	public function test_block_category_and_tag_filters_use_the_indexed_term_ids(): void {
+		$result = $this->translator()->constraints(
+			$this->block_query(
+				array(
+					'categories' => 'tees,shoes',
+					'tags'       => 'Summer',
+				)
+			)
+		);
+
+		self::assertSame(
+			array(
+				FilterBuilder::in( 'tax_product_cat_ids', array( 51, 52 ) ),
+				FilterBuilder::in( 'tax_product_tag_ids', array( 61 ) ),
+			),
+			$result['filters']
+		);
+	}
+
+	public function test_block_taxonomy_slugs_are_looked_up_in_every_chosen_taxonomy_like_woocommerce(): void {
+		$result = $this->translator()->constraints(
+			$this->block_query(
+				array(
+					'categories' => 'tees',
+					'tags'       => 'sale',
+				)
+			)
+		);
+
+		// "sale" is also a category slug, and WooCommerce resolves all slugs against all chosen taxonomies.
+		self::assertSame(
+			array(
+				FilterBuilder::in( 'tax_product_cat_ids', array( 51, 53 ) ),
+				FilterBuilder::in( 'tax_product_tag_ids', array( 62 ) ),
+			),
+			$result['filters']
+		);
+	}
+
+	public function test_block_taxonomy_without_an_existing_term_is_dropped_when_another_one_matches(): void {
+		$result = $this->translator()->constraints(
+			$this->block_query(
+				array(
+					'categories' => 'tees,unknown',
+					'tags'       => 'unknown',
+				)
+			)
+		);
+
+		self::assertSame( array( FilterBuilder::in( 'tax_product_cat_ids', array( 51 ) ) ), $result['filters'] );
+	}
+
+	/**
+	 * @dataProvider untranslated_block_vars
+	 */
+	public function test_block_filter_that_cannot_be_reproduced_is_not_translated( array $vars ): void {
+		self::assertNull( $this->translator()->constraints( $this->block_query( $vars ) ) );
+	}
+
+	/**
+	 * @return array<string, array{0: array<string, mixed>}>
+	 */
+	public static function untranslated_block_vars(): array {
+		return array(
+			'no existing term at all'   => array( array( 'categories' => 'unknown' ) ),
+			'brand (not indexed)'       => array( array( 'brands' => 'acme' ) ),
+			'custom taxonomy'           => array( array( 'filter_collection' => 'spring' ) ),
+			'brand next to a category'  => array(
+				array(
+					'categories' => 'tees',
+					'brands'     => 'acme',
+				),
+			),
+			'slugs that sanitize away'  => array( array( 'categories' => '!!!' ) ),
+			'array instead of a string' => array( array( 'categories' => array( 'tees' ) ) ),
+			'array of stock statuses'   => array( array( 'filter_stock_status' => array( 'instock' ) ) ),
+		);
+	}
+
+	public function test_empty_block_parameters_are_ignored(): void {
+		$result = $this->translator()->constraints(
+			$this->block_query(
+				array(
+					'filter_stock_status' => '',
+					'categories'          => '',
+					'brands'              => '',
+					'filter_collection'   => '0',
+					'filter_category'     => 'news',
+				)
+			)
+		);
+
+		self::assertSame( array(), $result['filters'] );
+	}
+
+	public function test_block_parameters_are_read_only_for_the_main_product_query(): void {
+		$vars = array(
+			'filter_stock_status' => 'instock',
+			'brands'              => 'acme',
+		);
+
+		$secondary             = $this->block_query( $vars );
+		$secondary->main_query = false;
+		self::assertSame( array(), $this->translator()->constraints( $secondary )['filters'] );
+
+		$not_woocommerce = $this->block_query( array_merge( $vars, array( 'wc_query' => '' ) ) );
+		self::assertSame( array(), $this->translator()->constraints( $not_woocommerce )['filters'] );
+	}
 }
