@@ -319,6 +319,92 @@ final class ConnectionTabTest extends TestCase {
 		$this->assertSame( 'new-key', $tab->sanitize_admin_key( $tab->sanitize_admin_key( '  new-key ' ) ) );
 	}
 
+	/**
+	 * A key is a secret, not text: sanitize_text_field() would delete %XX octets, strip tags and
+	 * collapse whitespace, and the plugin would then authenticate with another string.
+	 *
+	 * @dataProvider provide_verbatim_keys
+	 */
+	public function test_sanitize_admin_key_stores_the_key_verbatim( string $key ): void {
+		$tab = $this->tab();
+
+		$this->assertSame( $key, $tab->sanitize_admin_key( $key ) );
+		$this->assertSame( $key, $tab->sanitize_admin_key( $tab->sanitize_admin_key( "  $key\n" ) ), 'Only surrounding whitespace is removed, idempotently.' );
+		$this->assertSame( array(), $this->errors );
+	}
+
+	/**
+	 * @return array<string, array{string}>
+	 */
+	public static function provide_verbatim_keys(): array {
+		return array(
+			'percent and tag' => array( 'S3cret%2Fkey<prod>2026xx' ),
+			'percent only'    => array( 'my%20master%2Fkey%AB1234' ),
+			'lone less-than'  => array( 'abcdefgh<ijklmnopqrstu' ),
+			'inner spaces'    => array( 'correct  horse battery' ),
+			'non-ascii'       => array( 'clé-maîtresse-très-secrète' ),
+			'hex key'         => array( '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' ),
+		);
+	}
+
+	/**
+	 * @dataProvider provide_keys_with_control_characters
+	 */
+	public function test_sanitize_admin_key_rejects_control_characters_and_keeps_the_stored_key( string $key ): void {
+		$tab = $this->tab();
+
+		$this->assertSame( self::SECRET, $tab->sanitize_admin_key( $key ) );
+		$this->assertSame( self::SECRET, $tab->sanitize_admin_key( $key ), 'WordPress sanitizes twice when it adds the option.' );
+		$this->assertSame( array( 'meilisearch_invalid_admin_key' ), $this->errors, 'The error is reported once.' );
+	}
+
+	/**
+	 * @return array<string, array{string}>
+	 */
+	public static function provide_keys_with_control_characters(): array {
+		return array(
+			'line feed (header injection)' => array( "first-half\nX-Injected: 1" ),
+			'carriage return'              => array( "first-half\rsecond-half" ),
+			'tab'                          => array( "first-half\tsecond-half" ),
+			'nul'                          => array( "first-half\0second-half" ),
+			'delete'                       => array( "first-half\x7Fsecond-half" ),
+		);
+	}
+
+	public function test_sanitize_connection_stores_a_pasted_search_key_verbatim(): void {
+		$this->option_store[ Options::STATE ] = array( 'search_key_manual' => true );
+
+		$out = $this->tab()->sanitize_connection( array( 'search_key' => ' pasted%2Fkey<x>  y ' ) );
+
+		$this->assertSame( 'pasted%2Fkey<x>  y', $out['search_key'] );
+		$this->assertSame( array(), $this->errors );
+	}
+
+	public function test_sanitize_connection_rejects_a_pasted_search_key_with_control_characters(): void {
+		$this->option_store[ Options::STATE ] = array( 'search_key_manual' => true );
+
+		$out = $this->tab()->sanitize_connection( array( 'search_key' => "pasted\nkey" ) );
+
+		$this->assertSame( 'stored-search-key', $out['search_key'] );
+		$this->assertSame( 'stored-uid', $out['search_key_uid'] );
+		$this->assertSame( array( 'meilisearch_invalid_search_key' ), $this->errors );
+	}
+
+	public function test_save_search_key_stores_the_created_key_verbatim(): void {
+		$tab = $this->tab();
+		Functions\when( 'update_option' )->alias(
+			function ( string $name, $value ) use ( $tab ) {
+				$this->option_store[ $name ] = $tab->sanitize_connection( $value );
+				return true;
+			}
+		);
+
+		( new Options() )->save_search_key( 'created%2Fkey<x>', 'created-uid' );
+
+		$this->assertSame( 'created%2Fkey<x>', $this->option_store[ Options::CONNECTION ]['search_key'] );
+		$this->assertSame( 'created-uid', $this->option_store[ Options::CONNECTION ]['search_key_uid'] );
+	}
+
 	public function test_render_never_prints_the_admin_key(): void {
 		Functions\when( 'settings_fields' )->alias(
 			static function ( $group ) {

@@ -35,6 +35,14 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 	);
 
 	/**
+	 * Settings error codes already reported in this request (WordPress may run a
+	 * sanitize callback twice for one save).
+	 *
+	 * @var array<string, true>
+	 */
+	private array $reported = array();
+
+	/**
 	 * Constructor.
 	 *
 	 * @param Options      $options Plugin options.
@@ -127,7 +135,7 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 	 * delete_on_uninstall checkbox (missing = unchecked). `search_key` is taken
 	 * from the form only in manual mode (and then needs a successful verification
 	 * before it is served); both key fields are taken from the input only during
-	 * Options::save_search_key(). Idempotent.
+	 * Options::save_search_key(). Keys are stored as typed (see clean_key()). Idempotent.
 	 *
 	 * @param mixed $input Submitted value.
 	 * @return array{host: string, prefix: string, search_key: string, search_key_uid: string, delete_on_uninstall: bool}
@@ -163,11 +171,13 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 		$out['delete_on_uninstall'] = ! empty( $input['delete_on_uninstall'] );
 
 		if ( Options::is_internal_key_write() ) {
-			$out['search_key']     = is_scalar( $input['search_key'] ?? '' ) ? sanitize_text_field( (string) ( $input['search_key'] ?? '' ) ) : '';
+			$out['search_key']     = is_scalar( $input['search_key'] ?? '' ) ? (string) self::clean_key( (string) ( $input['search_key'] ?? '' ) ) : '';
 			$out['search_key_uid'] = is_scalar( $input['search_key_uid'] ?? '' ) ? sanitize_text_field( (string) ( $input['search_key_uid'] ?? '' ) ) : '';
 		} elseif ( array_key_exists( 'search_key', $input ) && is_scalar( $input['search_key'] ) && $this->options->state( 'search_key_manual', false ) ) {
-			$key = sanitize_text_field( (string) $input['search_key'] );
-			if ( $key !== $out['search_key'] ) {
+			$key = self::clean_key( (string) $input['search_key'] );
+			if ( null === $key ) {
+				$this->report_once( 'meilisearch_invalid_search_key', __( 'The search key contains a line break, a tab or another character that cannot be part of a key. The previous key was kept.', 'meilisearch' ) );
+			} elseif ( $key !== $out['search_key'] ) {
 				$out['search_key']     = $key;
 				$out['search_key_uid'] = '';
 			}
@@ -177,7 +187,8 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 	}
 
 	/**
-	 * Sanitizes Options::ADMIN_KEY: an empty submission keeps the stored key.
+	 * Sanitizes Options::ADMIN_KEY: an empty submission keeps the stored key, and so
+	 * does a value that cannot be a key (reported as a settings error).
 	 *
 	 * @param mixed $input Submitted value.
 	 * @return string
@@ -188,9 +199,51 @@ final class ConnectionTab implements Tab, Registrable, HandlesSave {
 		if ( $this->options->admin_key_is_constant() || ! is_scalar( $input ) ) {
 			return $stored;
 		}
-		$key = trim( sanitize_text_field( (string) $input ) );
+		$key = self::clean_key( (string) $input );
+		if ( null === $key ) {
+			$this->report_once( 'meilisearch_invalid_admin_key', __( 'The admin API key contains a line break, a tab or another character that cannot be part of a key. The previous key was kept.', 'meilisearch' ) );
+			return $stored;
+		}
 
 		return '' === $key || self::PLACEHOLDER === $key ? $stored : $key;
+	}
+
+	/**
+	 * An API key as typed, without the surrounding whitespace; null when it cannot be a key.
+	 *
+	 * A key is a secret, not text: sanitize_text_field() would delete %XX sequences, strip
+	 * what looks like a tag and collapse whitespace, and the plugin would then authenticate
+	 * with a different string than the one Meilisearch knows (and than the same key given
+	 * as a constant). Nothing is removed from inside the key. Control characters are refused
+	 * instead, which keeps line breaks out of the Authorization header, and so is invalid
+	 * UTF-8, which the options table cannot store. Escaping belongs to output: the admin
+	 * key is never printed, the search key only through esc_attr() and JSON.
+	 *
+	 * @param string $raw Unslashed value.
+	 * @return string|null
+	 */
+	private static function clean_key( string $raw ): ?string {
+		$key = trim( $raw );
+		if ( 1 !== preg_match( '//u', $key ) || 1 === preg_match( '/[\x00-\x1F\x7F]/', $key ) ) {
+			return null;
+		}
+
+		return $key;
+	}
+
+	/**
+	 * Adds a settings error once per request.
+	 *
+	 * @param string $code    Error code.
+	 * @param string $message Translated message.
+	 * @return void
+	 */
+	private function report_once( string $code, string $message ): void {
+		if ( isset( $this->reported[ $code ] ) ) {
+			return;
+		}
+		$this->reported[ $code ] = true;
+		add_settings_error( self::GROUP, $code, $message );
 	}
 
 	/**
