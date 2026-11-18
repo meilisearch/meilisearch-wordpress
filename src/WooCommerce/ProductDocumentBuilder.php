@@ -169,7 +169,8 @@ final class ProductDocumentBuilder implements DocumentBuilder {
 	}
 
 	/**
-	 * Variable products: price range, compact variations and optional variation SKUs.
+	 * Variable products: price range, compact variations (the first MAX_VARIATIONS published ones) and
+	 * optional variation SKUs (of every published variation).
 	 *
 	 * @param \WC_Product_Variable $product        Variable product.
 	 * @param bool                 $variation_skus Whether to index variation SKUs.
@@ -186,10 +187,7 @@ final class ProductDocumentBuilder implements DocumentBuilder {
 		);
 
 		$entries = array();
-		$skus    = array();
 		foreach ( $this->attributes->variations( $product ) as $variation ) {
-			// 'view' falls back to the parent SKU; 'edit' is the variation's own.
-			$own_sku   = (string) $variation->get_sku( 'edit' );
 			$entries[] = array(
 				'id'         => (int) $variation->get_id(),
 				'sku'        => (string) $variation->get_sku(),
@@ -197,13 +195,11 @@ final class ProductDocumentBuilder implements DocumentBuilder {
 				'attributes' => $this->attributes->variation_attributes( $variation ),
 				'in_stock'   => (bool) $variation->is_in_stock(),
 			);
-			if ( '' !== $own_sku ) {
-				$skus[] = $own_sku;
-			}
 		}
 		$fields['variations'] = $entries;
 		if ( $variation_skus ) {
-			$fields['variation_skus'] = array_values( array_unique( $skus ) );
+			// Every published variation's own SKU, not only those of the capped list above.
+			$fields['variation_skus'] = $this->attributes->variation_skus( $product );
 		}
 		return $fields;
 	}

@@ -317,12 +317,105 @@ final class ProductDocumentBuilderTest extends TestCase {
 		self::assertArrayNotHasKey( 'variation_skus', $fields );
 	}
 
-	public function test_variation_skus_are_own_skus_only_when_enabled(): void {
+	/**
+	 * Own SKUs only (a variation without one shows the parent's: no `_sku` value of its own), of published
+	 * variations only, read from the `_sku` post meta of the product's children.
+	 */
+	public function test_variation_skus_are_own_skus_of_published_variations_when_enabled(): void {
 		$this->stub_options( array( Options::WOOCOMMERCE => array( 'variation_skus' => true ) ) );
+		$wpdb = $this->install_wpdb( array( 'SHIRT-RED', ' SHIRT-RED ', '' ) );
 
-		$fields = $this->builder()->product_fields( $this->variable_product() );
+		try {
+			$fields = $this->builder()->product_fields( $this->variable_product() );
+		} finally {
+			unset( $GLOBALS['wpdb'] );
+		}
 
 		self::assertSame( array( 'SHIRT-RED' ), $fields['variation_skus'] );
+		list( $sql, $args ) = $wpdb->prepared[0];
+		self::assertStringContainsString( "meta.meta_key = '_sku'", $sql );
+		self::assertStringContainsString( "posts.post_parent = %d AND posts.post_type = 'product_variation' AND posts.post_status = 'publish'", $sql );
+		self::assertStringContainsString( "meta.meta_value <> ''", $sql );
+		self::assertSame( array( 7, AttributeCollector::MAX_VARIATION_SKUS ), $args );
+	}
+
+	public function test_variation_skus_are_not_read_when_disabled(): void {
+		$wpdb = $this->install_wpdb( array( 'SHIRT-RED' ) );
+
+		try {
+			$fields = $this->builder()->product_fields( $this->variable_product() );
+		} finally {
+			unset( $GLOBALS['wpdb'] );
+		}
+
+		self::assertArrayNotHasKey( 'variation_skus', $fields );
+		self::assertSame( 0, $wpdb->queries );
+	}
+
+	/**
+	 * Installs a $wpdb double whose get_col() returns $column and records the prepared queries.
+	 *
+	 * @param list<string> $column Result.
+	 */
+	private function install_wpdb( array $column ): object {
+		$wpdb            = new class( $column ) {
+			public string $posts    = 'wp_posts';
+			public string $postmeta = 'wp_postmeta';
+			public array $prepared  = array();
+			public int $queries     = 0;
+
+			public function __construct( private array $column ) {}
+
+			public function prepare( string $query, ...$args ): string {
+				$this->prepared[] = array( $query, $args );
+				return $query;
+			}
+
+			public function get_col( string $query ): array {
+				++$this->queries;
+				return $this->column;
+			}
+		};
+		$GLOBALS['wpdb'] = $wpdb; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Unit-test double.
+		return $wpdb;
+	}
+
+	/**
+	 * Variation SKUs are searchable for every published variation, not only the first MAX_VARIATIONS
+	 * read for the compact `variations` list and the attribute values.
+	 */
+	public function test_variation_skus_cover_every_published_variation_beyond_the_variation_cap(): void {
+		$this->stub_options( array( Options::WOOCOMMERCE => array( 'variation_skus' => true ) ) );
+		$children = array();
+		$skus     = array();
+		for ( $id = 1000; $id < 1120; $id++ ) {
+			$this->variation( $id, 'SKU-' . $id, '10', array( 'pa_color' => 'red' ) );
+			$children[] = $id;
+			$skus[]     = 'SKU-' . $id;
+		}
+		$wpdb    = $this->install_wpdb( $skus );
+		$product = new \WC_Product_Variable(
+			$this->simple_props(
+				array(
+					'children'         => $children,
+					'variation_prices' => array(
+						'min' => '10',
+						'max' => '10',
+					),
+				)
+			)
+		);
+
+		try {
+			$fields = $this->builder()->product_fields( $product );
+		} finally {
+			unset( $GLOBALS['wpdb'] );
+		}
+
+		self::assertCount( ProductDocumentBuilder::MAX_VARIATIONS, $fields['variations'] );
+		self::assertCount( 120, $fields['variation_skus'] );
+		self::assertContains( 'SKU-1119', $fields['variation_skus'] );
+		self::assertSame( 1, $wpdb->queries, 'One query for every SKU.' );
 	}
 
 	public function test_variable_product_without_variations_has_null_price(): void {
