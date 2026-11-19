@@ -25,16 +25,30 @@ final class AutocompleteTest extends TestCase {
 
 	private array $calls = array();
 
+	/**
+	 * Option names passed to each wp_prime_option_caches() call.
+	 *
+	 * @var list<list<string>>
+	 */
+	private array $primed = array();
+
 	protected function set_up(): void {
 		parent::set_up();
 		$this->calls = array();
 		$this->stub_options( self::options() );
 		Functions\when( 'is_admin' )->justReturn( false );
 		Functions\when( 'determine_locale' )->justReturn( 'fr_FR' );
+		$this->stub_searchable_types( array( 'post', 'page', 'attachment' ) );
 		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.test' . $path );
 		Functions\when( 'plugins_url' )->alias(
 			static function ( $path = '', $plugin = '' ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 				return 'https://shop.test/wp-content/plugins/meilisearch/' . $path;
+			}
+		);
+		$this->primed = array();
+		Functions\when( 'wp_prime_option_caches' )->alias(
+			function ( array $names ): void {
+				$this->primed[] = $names;
 			}
 		);
 		foreach ( array( 'wp_register_script', 'wp_localize_script', 'wp_enqueue_script', 'wp_enqueue_style' ) as $function ) {
@@ -58,6 +72,22 @@ final class AutocompleteTest extends TestCase {
 		return $options;
 	}
 
+	/**
+	 * Post types WordPress includes in a default site search (exclude_from_search = false).
+	 *
+	 * @param list<string> $types Post type names.
+	 */
+	private function stub_searchable_types( array $types ): void {
+		Functions\when( 'get_post_types' )->alias(
+			static function ( $args = array() ) use ( $types ) {
+				if ( array( 'exclude_from_search' => false ) !== $args ) {
+					return array();
+				}
+				return array_combine( $types, $types );
+			}
+		);
+	}
+
 	private function autocomplete(): Autocomplete {
 		$options = new Options();
 		return new Autocomplete( $options, new IndexNames( $options ) );
@@ -71,6 +101,45 @@ final class AutocompleteTest extends TestCase {
 	}
 
 	public function test_enqueued_when_enabled_configured_and_search_key_present(): void {
+		self::assertTrue( $this->autocomplete()->should_enqueue() );
+	}
+
+	/**
+	 * The check runs on every page view: the non-autoloaded options it reads are loaded in one query.
+	 */
+	public function test_readiness_check_loads_its_options_in_one_query(): void {
+		$this->autocomplete()->should_enqueue();
+
+		self::assertSame( array( array( Options::CONNECTION, Options::STATE, Options::ADMIN_KEY ) ), $this->primed );
+	}
+
+	public function test_admin_key_constant_is_not_loaded_from_the_database(): void {
+		$options = new Options( static fn ( string $name ): ?string => 'MEILISEARCH_ADMIN_KEY' === $name ? 'admin-key-value' : null );
+		( new Autocomplete( $options, new IndexNames( $options ) ) )->should_enqueue();
+
+		self::assertSame( array( array( Options::CONNECTION, Options::STATE ) ), $this->primed );
+	}
+
+	public function test_nothing_is_loaded_while_autocomplete_is_off(): void {
+		$this->stub_options( array_merge( self::options(), array( Options::SEARCH => array( 'autocomplete' => false ) ) ) );
+
+		$this->autocomplete()->should_enqueue();
+
+		self::assertSame( array(), $this->primed );
+	}
+
+	/**
+	 * The key was minted for the connection last set up; once the host (here), admin key or prefix
+	 * changed without the connection flow, it may belong to another instance.
+	 */
+	public function test_key_is_not_served_after_a_connection_change_outside_the_connection_flow(): void {
+		$options                                  = self::options();
+		$options[ Options::STATE ]['fingerprint'] = md5( 'http://previous.test:7700|admin-key-value|wp_test' );
+		$this->stub_options( $options );
+		self::assertFalse( $this->autocomplete()->should_enqueue() );
+
+		$options[ Options::STATE ]['fingerprint'] = md5( 'http://meili.test:7700|admin-key-value|wp_test' );
+		$this->stub_options( $options );
 		self::assertTrue( $this->autocomplete()->should_enqueue() );
 	}
 
@@ -215,6 +284,58 @@ final class AutocompleteTest extends TestCase {
 		self::assertStringContainsString( '%2$s', $config['i18n']['seeAllCount'] );
 	}
 
+	public function test_content_query_is_limited_to_the_indexed_types_of_the_site_search(): void {
+		$options                     = self::options();
+		$options[ Options::CONTENT ] = array( 'post_types' => array( 'post', 'page', 'secret_doc' ) );
+		$this->stub_options( $options );
+
+		$config = $this->autocomplete()->config();
+
+		// 'secret_doc' is indexed but registered with exclude_from_search: the results page never lists it.
+		self::assertSame( array( 'content' => 'post_type IN ["post", "page"]' ), $config['filters'] );
+		self::assertSame( 'wp_test_content', $config['indexes']['content'] );
+	}
+
+	public function test_content_index_is_not_queried_when_no_indexed_type_is_in_the_site_search(): void {
+		$options                     = self::options();
+		$options[ Options::CONTENT ] = array( 'post_types' => array( 'secret_doc' ) );
+		$this->stub_options( $options );
+
+		$config = $this->autocomplete()->config();
+
+		self::assertNull( $config['indexes']['content'] );
+		self::assertSame( array( 'content' => null ), $config['filters'] );
+	}
+
+	public function test_nothing_is_enqueued_when_no_index_holds_a_type_of_the_site_search(): void {
+		$options                     = self::options();
+		$options[ Options::CONTENT ] = array( 'post_types' => array( 'secret_doc' ) );
+		$this->stub_options( $options );
+
+		$this->autocomplete()->enqueue();
+
+		// The script would have nothing to query: no request for it or its stylesheet on every page.
+		self::assertSame( array(), $this->calls );
+	}
+
+	/**
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_products_index_follows_the_site_search_too(): void {
+		require_once dirname( __DIR__ ) . '/Support/woocommerce-active.php';
+		$options                         = self::options();
+		$options[ Options::WOOCOMMERCE ] = array( 'enabled' => true );
+		$this->stub_options( $options );
+
+		$this->stub_searchable_types( array( 'post', 'page', 'product' ) );
+		self::assertSame( 'wp_test_products', $this->autocomplete()->config()['indexes']['products'] );
+
+		// The store took products out of the site search: the results page would not list them.
+		$this->stub_searchable_types( array( 'post', 'page' ) );
+		self::assertNull( $this->autocomplete()->config()['indexes']['products'] );
+	}
+
 	public function test_config_never_contains_the_admin_key(): void {
 		self::assertStringNotContainsString( 'admin-key-value', (string) json_encode( $this->autocomplete()->config() ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode
 	}
@@ -280,5 +401,25 @@ final class AutocompleteTest extends TestCase {
 		Filters\expectApplied( 'meilisearch_autocomplete_host' )->once()->andReturn( 'ftp://nope' );
 
 		self::assertSame( $options->host(), $this->autocomplete()->config()['host'] );
+	}
+
+	public function test_host_warning_checks_the_filtered_browser_host_against_the_site(): void {
+		$this->stub_options( array_replace_recursive( self::options(), array( Options::CONNECTION => array( 'host' => 'http://127.0.0.1:7700' ) ) ) );
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.example.com' . $path );
+
+		self::assertStringContainsString( 'http://127.0.0.1:7700', (string) Autocomplete::host_warning( new Options() ) );
+
+		Filters\expectApplied( 'meilisearch_autocomplete_host' )->once()->andReturn( 'https://search.example.com' );
+		self::assertNull( Autocomplete::host_warning( new Options() ), 'A public URL from the filter is what browsers use.' );
+	}
+
+	public function test_no_host_warning_when_autocomplete_is_off_or_the_site_is_local(): void {
+		$this->stub_options( array_replace_recursive( self::options(), array( Options::CONNECTION => array( 'host' => 'http://127.0.0.1:7700' ) ) ) );
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'http://localhost:8080' . $path );
+		self::assertNull( Autocomplete::host_warning( new Options() ), 'Local development site.' );
+
+		$this->stub_options( array_replace_recursive( self::options(), array( Options::SEARCH => array( 'autocomplete' => false ) ) ) );
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.example.com' . $path );
+		self::assertNull( Autocomplete::host_warning( new Options() ) );
 	}
 }

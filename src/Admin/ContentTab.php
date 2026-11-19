@@ -116,13 +116,22 @@ final class ContentTab implements Tab, Registrable {
 	/**
 	 * Flags a reindex when the indexed field set changed (update_option_meilisearch_content).
 	 *
+	 * When a post type, a taxonomy or a meta key was added, the content index is also marked unpopulated:
+	 * search reads the settings live, and until a full reindex has sent the existing posts of the new type
+	 * (or the new field of every document), Meilisearch would answer without them. The database answers
+	 * until then. Removals keep the index populated: what remains is still indexed.
+	 *
 	 * @param mixed $old_value Previous value.
 	 * @param mixed $value     New value.
 	 * @return void
 	 */
 	public function on_update( mixed $old_value, mixed $value ): void {
-		if ( self::signature( $old_value ) !== self::signature( $value ) ) {
-			$this->options->flag_reindex( 'content', true );
+		if ( self::signature( $old_value ) === self::signature( $value ) ) {
+			return;
+		}
+		$this->options->flag_reindex( 'content', true );
+		if ( self::adds_fields( $old_value, $value ) ) {
+			$this->options->set_populated( 'content', false );
 		}
 	}
 
@@ -136,7 +145,32 @@ final class ContentTab implements Tab, Registrable {
 	public function on_add( string $option, mixed $value ): void {
 		if ( array() !== self::sanitize( $value )['post_types'] ) {
 			$this->options->flag_reindex( 'content', true );
+			$this->options->set_populated( 'content', false );
 		}
+	}
+
+	/**
+	 * Whether the new value indexes a post type, or a taxonomy or meta key of a post type, that the old one did not.
+	 *
+	 * @param mixed $old_value Previous value.
+	 * @param mixed $value     New value.
+	 * @return bool
+	 */
+	private static function adds_fields( mixed $old_value, mixed $value ): bool {
+		$old = self::sanitize( $old_value );
+		$new = self::sanitize( $value );
+		if ( array() !== array_diff( $new['post_types'], $old['post_types'] ) ) {
+			return true;
+		}
+		foreach ( $new['post_types'] as $post_type ) {
+			foreach ( array( 'taxonomies', 'meta_keys' ) as $group ) {
+				if ( array() !== array_diff( $new[ $group ][ $post_type ] ?? array(), $old[ $group ][ $post_type ] ?? array() ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 
 	/**

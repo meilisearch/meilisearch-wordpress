@@ -26,8 +26,18 @@ final class ProductSchemaTest extends TestCase {
 		$schema = $this->schema( array( 'pa_color', 'pa_couleur-é', 'pa_日本' ) );
 
 		self::assertSame(
-			array( 'id', 'tax_product_cat_ids', 'tax_product_tag_ids', 'attr_color', 'attr_couleur', 'price', 'in_stock', 'stock_status', 'on_sale', 'featured', 'product_type', 'rating_average' ),
+			array( 'id', 'tax_product_cat_ids', 'tax_product_tag_ids', 'attr_color', 'attr_couleur', 'price', 'price_max', 'in_stock', 'stock_status', 'on_sale', 'featured', 'product_type', 'rating_average' ),
 			$schema->filterable()
+		);
+	}
+
+	public function test_build_record_holds_the_document_version_and_the_attribute_fields(): void {
+		self::assertSame(
+			array(
+				'version'    => ProductSchema::DOCUMENT_VERSION,
+				'attributes' => array( 'attr_color' ),
+			),
+			$this->schema( array( 'pa_color' ) )->build_record()
 		);
 	}
 
@@ -53,10 +63,20 @@ final class ProductSchemaTest extends TestCase {
 	public function test_sortable_and_searchable_order(): void {
 		$schema = $this->schema( array( 'pa_color' ) );
 
-		self::assertSame( array( 'id', 'price', 'total_sales', 'rating_average', 'date', 'title' ), $schema->sortable() );
+		self::assertSame( array( 'id', 'price', 'price_max', 'total_sales', 'rating_average', 'date', 'title' ), $schema->sortable() );
 		self::assertSame(
 			array( 'title', 'sku', 'variation_skus', 'attr_color', 'tax_product_cat', 'tax_product_tag', 'excerpt', 'content' ),
 			$schema->searchable()
 		);
+	}
+
+	public function test_displayed_lists_public_and_plugin_used_fields_but_no_private_ones(): void {
+		$displayed = $this->schema( array( 'pa_color' ) )->displayed();
+
+		foreach ( array( 'id', 'title', 'permalink', 'post_type', 'thumbnail_url', 'price', 'price_min', 'price_max', 'regular_price', 'sale_price', 'sku', 'variations', 'attr_color', 'tax_product_cat', 'rating_average' ) as $field ) {
+			self::assertContains( $field, $displayed );
+		}
+		self::assertSame( array(), array_values( array_intersect( array( 'total_sales', 'stock_quantity', 'author_id' ), $displayed ) ) );
+		self::assertSame( array_values( array_unique( $displayed ) ), $displayed );
 	}
 }

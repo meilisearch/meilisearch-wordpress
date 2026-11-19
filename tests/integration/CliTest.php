@@ -10,6 +10,8 @@ use Meilisearch\WordPress\Indexing\Reindexer;
 use Meilisearch\WordPress\Ops\Cli;
 use Meilisearch\WordPress\Ops\SiteHealth;
 use Meilisearch\WordPress\Plugin;
+use Meilisearch\WordPress\Search\CircuitBreaker;
+use Meilisearch\WordPress\Search\Interceptor;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\Queue;
@@ -114,6 +116,31 @@ final class CliTest extends TestCase {
 		}
 	}
 
+	public function test_failed_connect_forgets_the_last_successful_connection(): void {
+		if ( defined( 'MEILISEARCH_ADMIN_KEY' ) ) {
+			self::markTestSkipped( 'The admin key is defined as a constant.' );
+		}
+		$options = $this->service( 'options', Options::class );
+		$options->set_state(
+			'last_connect',
+			array(
+				'version' => '1.0.0',
+				'time'    => 1,
+			)
+		);
+		$original = (string) get_option( Options::ADMIN_KEY, '' );
+		update_option( Options::ADMIN_KEY, 'not-a-valid-key' );
+
+		try {
+			$this->expect_exit( fn() => $this->cli()->connect( array(), array() ), 1 );
+		} finally {
+			update_option( Options::ADMIN_KEY, $original );
+		}
+
+		self::assertStringContainsString( 'Could not connect to Meilisearch', implode( "\n", $this->messages( 'error' ) ) );
+		self::assertNull( $options->state( 'last_connect' ), 'A rejected attempt must not leave "Connected" on the Connection screen.' );
+	}
+
 	public function test_connect_creates_indexes_and_the_search_key_and_records_last_connect(): void {
 		$options = $this->service( 'options', Options::class );
 		self::assertSame( '', $options->search_key() );
@@ -128,6 +155,7 @@ final class CliTest extends TestCase {
 		$last = $options->state( 'last_connect' );
 		self::assertIsArray( $last );
 		self::assertNotSame( '', (string) ( $last['version'] ?? '' ) );
+		self::assertSame( $options->connection_fingerprint( $this->service( 'names', IndexNames::class )->prefix() ), $last['fingerprint'] ?? null, 'The Connection screen shows "Connected" only for the credentials that were tested.' );
 		$uid = $this->service( 'names', IndexNames::class )->uid( 'content' );
 		self::assertSame( $uid, $this->meili( 'GET', '/indexes/' . $uid )['uid'] ?? null );
 
@@ -263,6 +291,63 @@ final class CliTest extends TestCase {
 		self::assertStringContainsString( 'Reindexed', $this->messages( 'success' )[0] ?? '' );
 	}
 
+	public function test_reindex_with_vetoed_posts_completes_the_bar_and_status_shows_the_expected_count(): void {
+		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
+		$vetoed = self::factory()->post->create_many( 2, array( 'post_status' => 'publish' ) );
+		add_filter(
+			'meilisearch_should_index_post',
+			static fn ( $index, $post ) => in_array( (int) $post->ID, $vetoed, true ) ? false : $index,
+			10,
+			2
+		);
+		$candidates = $this->service( 'reindexer', Reindexer::class )->count_indexable( 'content' );
+
+		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+
+		$bar = WP_CLI::$bars[0] ?? null;
+		self::assertInstanceOf( ShimProgressBar::class, $bar );
+		self::assertSame( $candidates, $bar->ticks, 'Every candidate post was scanned, so the bar reaches its total.' );
+		self::assertStringContainsString( ( $candidates - 2 ) . ' document(s) sent', $this->messages( 'success' )[0] ?? '' );
+
+		WP_CLI::reset();
+		$this->cli()->status( array(), array( 'format' => 'json' ) );
+		$row = array_column( WP_CLI::$items[0]['items'], null, 'index' )['content'];
+		self::assertSame( (string) ( $candidates - 2 ), $row['indexable'] );
+		self::assertSame( (string) ( $candidates - 2 ), $row['documents'] );
+	}
+
+	/**
+	 * Runs `wp meilisearch reindex --index=content` with these extra arguments and counts the
+	 * add-documents requests sent to the content index.
+	 *
+	 * @param array<string, string> $assoc_args Extra arguments.
+	 */
+	private function reindex_requests( array $assoc_args ): int {
+		$uid      = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		$requests = 0;
+		$count    = static function ( $response, $context, $transport, $args, $url ) use ( $uid, &$requests ): void {
+			if ( 'POST' === ( $args['method'] ?? '' ) && str_contains( (string) $url, '/indexes/' . $uid . '/documents?' ) ) {
+				++$requests;
+			}
+		};
+		add_action( 'http_api_debug', $count, 10, 5 );
+		try {
+			$this->cli()->reindex( array(), array( 'index' => 'content' ) + $assoc_args );
+		} finally {
+			remove_action( 'http_api_debug', $count, 10 );
+		}
+		return $requests;
+	}
+
+	public function test_reindex_batch_size_defaults_to_the_filter_and_the_flag_overrides_it(): void {
+		$posts = $this->service( 'reindexer', Reindexer::class )->count_indexable( 'content' ) + 3;
+		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
+		add_filter( 'meilisearch_reindex_batch_size', static fn (): int => 1 );
+
+		self::assertSame( $posts, $this->reindex_requests( array() ), 'Without --batch-size, the filter sets the batch size.' );
+		self::assertSame( 1, $this->reindex_requests( array( 'batch-size' => (string) $posts ) ), '--batch-size overrides the filter.' );
+	}
+
 	public function test_reindex_rejects_an_unknown_index(): void {
 		$this->expect_exit( fn () => $this->cli()->reindex( array(), array( 'index' => 'orders' ) ), 1 );
 
@@ -323,6 +408,72 @@ final class CliTest extends TestCase {
 			)
 		);
 		self::assertSame( 0, $this->documents() );
+	}
+
+	public function test_clear_hands_search_back_to_the_database_until_the_next_reindex(): void {
+		self::factory()->post->create(
+			array(
+				'post_status' => 'publish',
+				'post_title'  => 'Clitestfoxtrot',
+			)
+		);
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		delete_transient( CircuitBreaker::TRANSIENT );
+		$options = $this->service( 'options', Options::class );
+		// Fill every active index: with WooCommerce a plain ?s= search spans content and products, and is only intercepted once both are populated.
+		$this->cli()->reindex( array(), array() );
+
+		$this->go_to( home_url( '/?s=Clitestfoxtrot' ) );
+		self::assertTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ), 'Precondition: Meilisearch answers.' );
+		self::assertCount( 1, $GLOBALS['wp_query']->posts );
+
+		$this->cli()->clear(
+			array(),
+			array(
+				'index' => 'content',
+				'yes'   => true,
+			)
+		);
+		self::assertSame( 0, $this->documents() );
+		self::assertFalse( $options->is_populated( 'content' ) );
+		self::assertTrue( $options->needs_reindex( 'content' ), 'The admin is told the index needs a reindex.' );
+
+		$this->go_to( home_url( '/?s=Clitestfoxtrot' ) );
+		self::assertNotTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ), 'The emptied index does not answer.' );
+		self::assertCount( 1, $GLOBALS['wp_query']->posts, 'The database finds the post.' );
+
+		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+		$this->go_to( home_url( '/?s=Clitestfoxtrot' ) );
+		self::assertTrue( $GLOBALS['wp_query']->get( Interceptor::QUERY_FLAG ), 'A completed reindex hands search back to Meilisearch.' );
+		self::assertCount( 1, $GLOBALS['wp_query']->posts );
+		self::assertFalse( $options->needs_reindex( 'content' ) );
+	}
+
+	public function test_clear_is_refused_while_a_reindex_runs(): void {
+		self::factory()->post->create(
+			array(
+				'post_status' => 'publish',
+				'post_title'  => 'Clitestgolf',
+			)
+		);
+		$this->cli()->reindex( array(), array( 'index' => 'content' ) );
+		$this->service( 'reindexer', Reindexer::class )->start( 'content' );
+		WP_CLI::reset();
+
+		$this->expect_exit(
+			fn () => $this->cli()->clear(
+				array(),
+				array(
+					'index' => 'content',
+					'yes'   => true,
+				)
+			),
+			1
+		);
+
+		self::assertStringContainsString( 'is running', $this->messages( 'error' )[0] ?? '' );
+		self::assertSame( 1, $this->hits( 'Clitestgolf' ) );
+		self::assertTrue( $this->service( 'options', Options::class )->is_populated( 'content' ) );
 	}
 
 	public function test_status_lists_every_active_index(): void {

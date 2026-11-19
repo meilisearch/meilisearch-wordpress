@@ -122,7 +122,6 @@ final class SearcherTest extends TestCase {
 	public function test_single_index_with_highlight_and_hybrid(): void {
 		$formatted = array(
 			'id'      => '12',
-			'title'   => '<mark>Nebula</mark> report',
 			'content' => '…the <mark>nebula</mark> was…',
 		);
 		$this->transport->queue(
@@ -131,8 +130,6 @@ final class SearcherTest extends TestCase {
 					'hits'       => array(
 						array(
 							'id'         => 12,
-							'title'      => 'Nebula report',
-							'content'    => 'x',
 							'_formatted' => $formatted,
 						),
 					),
@@ -166,9 +163,9 @@ final class SearcherTest extends TestCase {
 					'embedder'      => 'default',
 					'semanticRatio' => 0.7,
 				),
-				'attributesToRetrieve'  => array( 'id', 'title', 'content' ),
+				'attributesToRetrieve'  => array( 'id' ),
 				'attributesToCrop'      => array( 'content:30' ),
-				'attributesToHighlight' => array( 'title', 'content' ),
+				'attributesToHighlight' => array( 'content' ),
 				'highlightPreTag'       => '<mark>',
 				'highlightPostTag'      => '</mark>',
 			),
@@ -336,6 +333,201 @@ final class SearcherTest extends TestCase {
 		self::assertSame( array( 5 ), $result->ids );
 		self::assertSame( 1, $result->total_hits );
 		self::assertSame( 1, $result->total_pages );
+	}
+
+	/**
+	 * Runs a one-page-of-ten search answered with the given totals.
+	 *
+	 * @param string[]             $logicals Logical indexes.
+	 * @param int                  $page     Requested page.
+	 * @param int                  $per_page Hits per page.
+	 * @param array<string, mixed> $body     Response body.
+	 * @return \Meilisearch\WordPress\Search\SearchResult
+	 */
+	private function totals( array $logicals, int $page, int $per_page, array $body ): \Meilisearch\WordPress\Search\SearchResult {
+		$this->transport->queue( self::ok( $body ) );
+		return $this->searcher()->execute( new SearchRequest( $logicals, 'x', $page, $per_page, array(), array(), null, false ) );
+	}
+
+	/**
+	 * The engine counts every match but only serves the first pagination.maxTotalHits (1000 by
+	 * default) of an index: the totals must not advertise pages that would come back empty.
+	 */
+	public function test_totals_are_clamped_to_max_total_hits(): void {
+		$result = $this->totals(
+			array( 'content' ),
+			1,
+			10,
+			array(
+				'hits'       => array( array( 'id' => 1 ) ),
+				'totalHits'  => 1500,
+				'totalPages' => 150,
+			)
+		);
+
+		self::assertSame( 1000, $result->total_hits );
+		self::assertSame( 100, $result->total_pages );
+	}
+
+	/**
+	 * A last page that is cut by the limit still counts as a page; posts_per_page = -1 (1000 per
+	 * page) reports what it returns.
+	 */
+	public function test_clamped_totals_round_pages_up(): void {
+		$result = $this->totals(
+			array( 'content' ),
+			1,
+			30,
+			array(
+				'hits'       => array( array( 'id' => 1 ) ),
+				'totalHits'  => 1020,
+				'totalPages' => 34,
+			)
+		);
+		self::assertSame( 1000, $result->total_hits );
+		self::assertSame( 34, $result->total_pages );
+
+		$result = $this->totals(
+			array( 'content' ),
+			1,
+			1000,
+			array(
+				'hits'       => array( array( 'id' => 1 ) ),
+				'totalHits'  => 1020,
+				'totalPages' => 2,
+			)
+		);
+		self::assertSame( 1000, $result->total_hits );
+		self::assertSame( 1, $result->total_pages );
+	}
+
+	/**
+	 * The meilisearch_max_total_hits filter states the limit of an index whose
+	 * pagination.maxTotalHits was changed in Meilisearch.
+	 */
+	public function test_max_total_hits_filter(): void {
+		Filters\expectApplied( 'meilisearch_max_total_hits' )
+			->once()
+			->with( 1000, 'content', \Mockery::type( SearchRequest::class ) )
+			->andReturn( 5000 );
+
+		$result = $this->totals(
+			array( 'content' ),
+			1,
+			10,
+			array(
+				'hits'       => array( array( 'id' => 1 ) ),
+				'totalHits'  => 1500,
+				'totalPages' => 150,
+			)
+		);
+
+		self::assertSame( 1500, $result->total_hits );
+		self::assertSame( 150, $result->total_pages );
+	}
+
+	/**
+	 * A filtered limit that is not a positive number is ignored.
+	 *
+	 * @dataProvider invalid_limits
+	 *
+	 * @param mixed $limit Filtered value.
+	 */
+	public function test_invalid_max_total_hits_is_ignored( mixed $limit ): void {
+		Filters\expectApplied( 'meilisearch_max_total_hits' )->once()->andReturn( $limit );
+
+		$result = $this->totals(
+			array( 'content' ),
+			1,
+			10,
+			array(
+				'hits'       => array( array( 'id' => 1 ) ),
+				'totalHits'  => 1500,
+				'totalPages' => 150,
+			)
+		);
+
+		self::assertSame( 1000, $result->total_hits );
+		self::assertSame( 100, $result->total_pages );
+	}
+
+	/**
+	 * @return array<string, array{0: mixed}>
+	 */
+	public static function invalid_limits(): array {
+		return array(
+			'zero'     => array( 0 ),
+			'negative' => array( -5 ),
+			'string'   => array( 'many' ),
+			'null'     => array( null ),
+			'infinite' => array( INF ),
+		);
+	}
+
+	/**
+	 * A federated search serves at most maxTotalHits hits of each index, and the response does not
+	 * say how many matches each index has: only the smallest limit is guaranteed to be servable.
+	 */
+	public function test_federated_totals_use_the_smallest_limit(): void {
+		Filters\expectApplied( 'meilisearch_max_total_hits' )
+			->twice()
+			->andReturnUsing( static fn ( int $limit, string $logical ): int => 'products' === $logical ? 200 : 3000 );
+
+		$result = $this->totals(
+			array( 'content', 'products' ),
+			1,
+			10,
+			array(
+				'hits'       => array( array( 'id' => 1 ) ),
+				'totalHits'  => 1800,
+				'totalPages' => 180,
+			)
+		);
+
+		self::assertSame( 200, $result->total_hits );
+		self::assertSame( 20, $result->total_pages );
+	}
+
+	/**
+	 * An empty page after the first proves that nothing from that offset on can be served,
+	 * whatever the limit is believed to be.
+	 */
+	public function test_empty_page_bounds_the_totals(): void {
+		Filters\expectApplied( 'meilisearch_max_total_hits' )->once()->andReturn( 5000 );
+
+		$result = $this->totals(
+			array( 'content' ),
+			101,
+			10,
+			array(
+				'hits'       => array(),
+				'totalHits'  => 1500,
+				'totalPages' => 150,
+			)
+		);
+
+		self::assertSame( array(), $result->ids );
+		self::assertSame( 1000, $result->total_hits );
+		self::assertSame( 100, $result->total_pages );
+	}
+
+	/**
+	 * A page that is simply past the end keeps the exact totals.
+	 */
+	public function test_page_past_the_end_keeps_exact_totals(): void {
+		$result = $this->totals(
+			array( 'content' ),
+			5,
+			10,
+			array(
+				'hits'       => array(),
+				'totalHits'  => 25,
+				'totalPages' => 3,
+			)
+		);
+
+		self::assertSame( 25, $result->total_hits );
+		self::assertSame( 3, $result->total_pages );
 	}
 
 	/**

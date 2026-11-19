@@ -20,7 +20,7 @@ defined( 'ABSPATH' ) || exit;
  * Option group `meilisearch_connection` holds exactly two options:
  * Options::CONNECTION and Options::ADMIN_KEY.
  */
-final class ConnectionTab implements Tab, Registrable {
+final class ConnectionTab implements Tab, Registrable, HandlesSave {
 
 	public const GROUP       = 'meilisearch_connection';
 	public const PLACEHOLDER = '•••••••• (saved)';
@@ -33,6 +33,14 @@ final class ConnectionTab implements Tab, Registrable {
 		'search_key_uid'      => '',
 		'delete_on_uninstall' => false,
 	);
+
+	/**
+	 * Settings error codes already reported in this request (WordPress may run a
+	 * sanitize callback twice for one save).
+	 *
+	 * @var array<string, true>
+	 */
+	private array $reported = array();
 
 	/**
 	 * Constructor.
@@ -50,7 +58,6 @@ final class ConnectionTab implements Tab, Registrable {
 	 */
 	public function register(): void {
 		add_filter( 'option_page_capability_' . self::GROUP, array( $this, 'capability' ) );
-		add_action( 'load-' . Menu::HOOK_SUFFIX, array( $this, 'after_save' ) );
 	}
 
 	/**
@@ -128,7 +135,7 @@ final class ConnectionTab implements Tab, Registrable {
 	 * delete_on_uninstall checkbox (missing = unchecked). `search_key` is taken
 	 * from the form only in manual mode (and then needs a successful verification
 	 * before it is served); both key fields are taken from the input only during
-	 * Options::save_search_key(). Idempotent.
+	 * Options::save_search_key(). Keys are stored as typed (see clean_key()). Idempotent.
 	 *
 	 * @param mixed $input Submitted value.
 	 * @return array{host: string, prefix: string, search_key: string, search_key_uid: string, delete_on_uninstall: bool}
@@ -164,11 +171,13 @@ final class ConnectionTab implements Tab, Registrable {
 		$out['delete_on_uninstall'] = ! empty( $input['delete_on_uninstall'] );
 
 		if ( Options::is_internal_key_write() ) {
-			$out['search_key']     = is_scalar( $input['search_key'] ?? '' ) ? sanitize_text_field( (string) ( $input['search_key'] ?? '' ) ) : '';
+			$out['search_key']     = is_scalar( $input['search_key'] ?? '' ) ? (string) self::clean_key( (string) ( $input['search_key'] ?? '' ) ) : '';
 			$out['search_key_uid'] = is_scalar( $input['search_key_uid'] ?? '' ) ? sanitize_text_field( (string) ( $input['search_key_uid'] ?? '' ) ) : '';
 		} elseif ( array_key_exists( 'search_key', $input ) && is_scalar( $input['search_key'] ) && $this->options->state( 'search_key_manual', false ) ) {
-			$key = sanitize_text_field( (string) $input['search_key'] );
-			if ( $key !== $out['search_key'] ) {
+			$key = self::clean_key( (string) $input['search_key'] );
+			if ( null === $key ) {
+				$this->report_once( 'meilisearch_invalid_search_key', __( 'The search key contains a line break, a tab or another character that cannot be part of a key. The previous key was kept.', 'meilisearch' ) );
+			} elseif ( $key !== $out['search_key'] ) {
 				$out['search_key']     = $key;
 				$out['search_key_uid'] = '';
 			}
@@ -178,7 +187,8 @@ final class ConnectionTab implements Tab, Registrable {
 	}
 
 	/**
-	 * Sanitizes Options::ADMIN_KEY: an empty submission keeps the stored key.
+	 * Sanitizes Options::ADMIN_KEY: an empty submission keeps the stored key, and so
+	 * does a value that cannot be a key (reported as a settings error).
 	 *
 	 * @param mixed $input Submitted value.
 	 * @return string
@@ -189,9 +199,51 @@ final class ConnectionTab implements Tab, Registrable {
 		if ( $this->options->admin_key_is_constant() || ! is_scalar( $input ) ) {
 			return $stored;
 		}
-		$key = trim( sanitize_text_field( (string) $input ) );
+		$key = self::clean_key( (string) $input );
+		if ( null === $key ) {
+			$this->report_once( 'meilisearch_invalid_admin_key', __( 'The admin API key contains a line break, a tab or another character that cannot be part of a key. The previous key was kept.', 'meilisearch' ) );
+			return $stored;
+		}
 
 		return '' === $key || self::PLACEHOLDER === $key ? $stored : $key;
+	}
+
+	/**
+	 * An API key as typed, without the surrounding whitespace; null when it cannot be a key.
+	 *
+	 * A key is a secret, not text: sanitize_text_field() would delete %XX sequences, strip
+	 * what looks like a tag and collapse whitespace, and the plugin would then authenticate
+	 * with a different string than the one Meilisearch knows (and than the same key given
+	 * as a constant). Nothing is removed from inside the key. Control characters are refused
+	 * instead, which keeps line breaks out of the Authorization header, and so is invalid
+	 * UTF-8, which the options table cannot store. Escaping belongs to output: the admin
+	 * key is never printed, the search key only through esc_attr() and JSON.
+	 *
+	 * @param string $raw Unslashed value.
+	 * @return string|null
+	 */
+	private static function clean_key( string $raw ): ?string {
+		$key = trim( $raw );
+		if ( 1 !== preg_match( '//u', $key ) || 1 === preg_match( '/[\x00-\x1F\x7F]/', $key ) ) {
+			return null;
+		}
+
+		return $key;
+	}
+
+	/**
+	 * Adds a settings error once per request.
+	 *
+	 * @param string $code    Error code.
+	 * @param string $message Translated message.
+	 * @return void
+	 */
+	private function report_once( string $code, string $message ): void {
+		if ( isset( $this->reported[ $code ] ) ) {
+			return;
+		}
+		$this->reported[ $code ] = true;
+		add_settings_error( self::GROUP, $code, $message );
 	}
 
 	/**
@@ -206,16 +258,17 @@ final class ConnectionTab implements Tab, Registrable {
 
 	/**
 	 * Runs the connection flow after the Settings API redirect back to this tab
-	 * (load-toplevel_page_meilisearch) and stores the result for Notices.
+	 * and stores the result for Notices.
+	 *
+	 * Menu::after_save() calls this when this tab is the one being shown, which
+	 * includes the menu link (no `?tab=` in the URL).
 	 *
 	 * @return void
 	 */
 	public function after_save(): void {
-		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- options.php verified the nonce before redirecting here; nothing is read from the request but these flags.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- options.php verified the nonce before redirecting here; nothing is read from the request but this flag.
 		$updated = isset( $_GET['settings-updated'] ) && 'true' === sanitize_key( wp_unslash( $_GET['settings-updated'] ) );
-		$tab     = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : '';
-		// phpcs:enable WordPress.Security.NonceVerification.Recommended
-		if ( ! $updated || $this->slug() !== $tab || ! $this->is_visible() ) {
+		if ( ! $updated || ! $this->is_visible() ) {
 			return;
 		}
 
@@ -227,6 +280,8 @@ final class ConnectionTab implements Tab, Registrable {
 		try {
 			$result = $this->indexes->connect();
 		} catch ( \Throwable $error ) {
+			// The Status row must not keep reporting an earlier success for credentials that were just rejected.
+			$this->options->set_state( 'last_connect', null );
 			$this->store_result(
 				'error',
 				sprintf(
@@ -241,8 +296,9 @@ final class ConnectionTab implements Tab, Registrable {
 		$this->options->set_state(
 			'last_connect',
 			array(
-				'version' => $result['version'],
-				'time'    => time(),
+				'version'     => $result['version'],
+				'time'        => time(),
+				'fingerprint' => $this->options->connection_fingerprint( $this->names->prefix() ),
 			)
 		);
 
@@ -349,12 +405,13 @@ final class ConnectionTab implements Tab, Registrable {
 			esc_attr( Options::CONNECTION ),
 			checked( (bool) $connection['delete_on_uninstall'], true, false )
 		);
-		echo esc_html__( 'Delete the indexes and the search key from Meilisearch when the plugin is uninstalled.', 'meilisearch' ) . '</label></td></tr>';
+		echo esc_html__( 'Delete the indexes and the search key from Meilisearch when the plugin is uninstalled or, on a multisite network, when this site is deleted.', 'meilisearch' ) . '</label></td></tr>';
 
 		echo '<tr><th scope="row">' . esc_html__( 'Status', 'meilisearch' ) . '</th><td><p class="meilisearch-status">';
 		if ( ! $this->options->is_configured() ) {
 			echo esc_html__( 'Not connected.', 'meilisearch' );
-		} elseif ( is_array( $last ) && isset( $last['version'] ) ) {
+		} elseif ( is_array( $last ) && isset( $last['version'] ) && $this->options->connection_fingerprint( $this->names->prefix() ) === ( $last['fingerprint'] ?? null ) ) {
+			// Only for the host, key and prefix that were tested: constants and direct option writes change them without a save here.
 			echo esc_html(
 				sprintf(
 					/* translators: %s: Meilisearch version. */

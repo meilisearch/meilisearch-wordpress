@@ -117,7 +117,7 @@ final class ConnectionTabTest extends TestCase {
 		$tab->register();
 
 		$this->assertNotFalse( has_filter( 'option_page_capability_meilisearch_connection', array( $tab, 'capability' ) ) );
-		$this->assertNotFalse( has_action( 'load-toplevel_page_meilisearch', array( $tab, 'after_save' ) ) );
+		$this->assertFalse( has_action( 'load-toplevel_page_meilisearch', array( $tab, 'after_save' ) ), 'Menu runs after_save() for the tab that is current.' );
 	}
 
 	public function test_multisite_requires_network_capability(): void {
@@ -319,6 +319,92 @@ final class ConnectionTabTest extends TestCase {
 		$this->assertSame( 'new-key', $tab->sanitize_admin_key( $tab->sanitize_admin_key( '  new-key ' ) ) );
 	}
 
+	/**
+	 * A key is a secret, not text: sanitize_text_field() would delete %XX octets, strip tags and
+	 * collapse whitespace, and the plugin would then authenticate with another string.
+	 *
+	 * @dataProvider provide_verbatim_keys
+	 */
+	public function test_sanitize_admin_key_stores_the_key_verbatim( string $key ): void {
+		$tab = $this->tab();
+
+		$this->assertSame( $key, $tab->sanitize_admin_key( $key ) );
+		$this->assertSame( $key, $tab->sanitize_admin_key( $tab->sanitize_admin_key( "  $key\n" ) ), 'Only surrounding whitespace is removed, idempotently.' );
+		$this->assertSame( array(), $this->errors );
+	}
+
+	/**
+	 * @return array<string, array{string}>
+	 */
+	public static function provide_verbatim_keys(): array {
+		return array(
+			'percent and tag' => array( 'S3cret%2Fkey<prod>2026xx' ),
+			'percent only'    => array( 'my%20master%2Fkey%AB1234' ),
+			'lone less-than'  => array( 'abcdefgh<ijklmnopqrstu' ),
+			'inner spaces'    => array( 'correct  horse battery' ),
+			'non-ascii'       => array( 'clé-maîtresse-très-secrète' ),
+			'hex key'         => array( '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' ),
+		);
+	}
+
+	/**
+	 * @dataProvider provide_keys_with_control_characters
+	 */
+	public function test_sanitize_admin_key_rejects_control_characters_and_keeps_the_stored_key( string $key ): void {
+		$tab = $this->tab();
+
+		$this->assertSame( self::SECRET, $tab->sanitize_admin_key( $key ) );
+		$this->assertSame( self::SECRET, $tab->sanitize_admin_key( $key ), 'WordPress sanitizes twice when it adds the option.' );
+		$this->assertSame( array( 'meilisearch_invalid_admin_key' ), $this->errors, 'The error is reported once.' );
+	}
+
+	/**
+	 * @return array<string, array{string}>
+	 */
+	public static function provide_keys_with_control_characters(): array {
+		return array(
+			'line feed (header injection)' => array( "first-half\nX-Injected: 1" ),
+			'carriage return'              => array( "first-half\rsecond-half" ),
+			'tab'                          => array( "first-half\tsecond-half" ),
+			'nul'                          => array( "first-half\0second-half" ),
+			'delete'                       => array( "first-half\x7Fsecond-half" ),
+		);
+	}
+
+	public function test_sanitize_connection_stores_a_pasted_search_key_verbatim(): void {
+		$this->option_store[ Options::STATE ] = array( 'search_key_manual' => true );
+
+		$out = $this->tab()->sanitize_connection( array( 'search_key' => ' pasted%2Fkey<x>  y ' ) );
+
+		$this->assertSame( 'pasted%2Fkey<x>  y', $out['search_key'] );
+		$this->assertSame( array(), $this->errors );
+	}
+
+	public function test_sanitize_connection_rejects_a_pasted_search_key_with_control_characters(): void {
+		$this->option_store[ Options::STATE ] = array( 'search_key_manual' => true );
+
+		$out = $this->tab()->sanitize_connection( array( 'search_key' => "pasted\nkey" ) );
+
+		$this->assertSame( 'stored-search-key', $out['search_key'] );
+		$this->assertSame( 'stored-uid', $out['search_key_uid'] );
+		$this->assertSame( array( 'meilisearch_invalid_search_key' ), $this->errors );
+	}
+
+	public function test_save_search_key_stores_the_created_key_verbatim(): void {
+		$tab = $this->tab();
+		Functions\when( 'update_option' )->alias(
+			function ( string $name, $value ) use ( $tab ) {
+				$this->option_store[ $name ] = $tab->sanitize_connection( $value );
+				return true;
+			}
+		);
+
+		( new Options() )->save_search_key( 'created%2Fkey<x>', 'created-uid' );
+
+		$this->assertSame( 'created%2Fkey<x>', $this->option_store[ Options::CONNECTION ]['search_key'] );
+		$this->assertSame( 'created-uid', $this->option_store[ Options::CONNECTION ]['search_key_uid'] );
+	}
+
 	public function test_render_never_prints_the_admin_key(): void {
 		Functions\when( 'settings_fields' )->alias(
 			static function ( $group ) {
@@ -362,7 +448,7 @@ final class ConnectionTabTest extends TestCase {
 	 * @dataProvider search_key_statuses
 	 */
 	public function test_status_reports_ok_only_for_a_verified_search_key( ?string $verified_for, string $expected, string $absent ): void {
-		$this->option_store[ Options::STATE ] = array( 'last_connect' => array( 'version' => '1.53.1' ) );
+		$this->option_store[ Options::STATE ] = array( 'last_connect' => $this->last_connect() );
 		if ( null !== $verified_for ) {
 			$this->option_store[ Options::STATE ]['search_key_verified'] = Options::key_fingerprint( $verified_for );
 		}
@@ -389,6 +475,106 @@ final class ConnectionTabTest extends TestCase {
 		);
 	}
 
+	/**
+	 * State written by a successful connection with the credentials stored in set_up().
+	 *
+	 * @return array{version: string, time: int, fingerprint: string}
+	 */
+	private function last_connect(): array {
+		$options = new Options();
+
+		return array(
+			'version'     => '1.53.1',
+			'time'        => 1,
+			'fingerprint' => $options->connection_fingerprint( ( new IndexNames( $options ) )->prefix() ),
+		);
+	}
+
+	private function render_status(): string {
+		Functions\when( 'settings_fields' )->justReturn( null );
+		Functions\when( 'submit_button' )->justReturn( null );
+		Functions\when( 'checked' )->justReturn( '' );
+		ob_start();
+		$this->tab()->render();
+		$html = (string) ob_get_clean();
+		$this->assertSame( 1, preg_match( '#<p class="meilisearch-status">(.*?)</p>#s', $html, $match ) );
+
+		return $match[1];
+	}
+
+	public function test_status_stops_saying_connected_after_a_failed_attempt(): void {
+		$this->option_store[ Options::STATE ] = array(
+			'last_connect'        => $this->last_connect(),
+			'search_key_verified' => Options::key_fingerprint( 'stored-search-key' ),
+		);
+		$this->assertStringContainsString( 'Connected to Meilisearch 1.53.1', $this->render_status(), 'precondition: connected' );
+
+		// The key was revoked in Meilisearch; the admin saves the same credentials again.
+		$_GET['settings-updated'] = 'true';
+		$invalid                  = new Response(
+			403,
+			array(
+				'code'    => 'invalid_api_key',
+				'message' => 'The provided API key is invalid.',
+			),
+			''
+		);
+		$this->transport->queue( $invalid )->queue( $invalid );
+
+		$this->tab()->after_save();
+
+		$this->assertSame( 'error', $this->transients[ Notices::connect_result_key( 3 ) ]['type'] );
+		$status = $this->render_status();
+		$this->assertStringNotContainsString( 'Connected to Meilisearch', $status );
+		$this->assertStringContainsString( 'not verified yet', $status );
+	}
+
+	/**
+	 * @dataProvider provide_changed_credentials
+	 *
+	 * @param string $option Option name.
+	 * @param mixed  $value  New value, written without running the connection flow.
+	 */
+	public function test_status_is_not_connected_for_credentials_that_were_never_tested( string $option, mixed $value ): void {
+		$this->option_store[ Options::STATE ] = array( 'last_connect' => $this->last_connect() );
+		$this->option_store[ $option ]        = $value;
+
+		$status = $this->render_status();
+
+		$this->assertStringNotContainsString( 'Connected to Meilisearch', $status );
+		$this->assertStringContainsString( 'not verified yet', $status );
+	}
+
+	/**
+	 * @return array<string, array{string, mixed}>
+	 */
+	public static function provide_changed_credentials(): array {
+		$connection = array(
+			'host'                => 'https://stored.example',
+			'prefix'              => '',
+			'search_key'          => 'stored-search-key',
+			'search_key_uid'      => 'stored-uid',
+			'delete_on_uninstall' => true,
+		);
+
+		return array(
+			'admin key' => array( Options::ADMIN_KEY, 'another-admin-key' ),
+			'host'      => array( Options::CONNECTION, array_merge( $connection, array( 'host' => 'https://other.example' ) ) ),
+			'prefix'    => array( Options::CONNECTION, array_merge( $connection, array( 'prefix' => 'other' ) ) ),
+		);
+	}
+
+	public function test_status_of_a_connection_recorded_without_fingerprint_is_not_verified(): void {
+		$this->option_store[ Options::STATE ] = array(
+			'last_connect' => array(
+				'version' => '1.53.1',
+				'time'    => 1,
+			),
+		);
+
+		$this->assertStringContainsString( 'not verified yet', $this->render_status() );
+	}
+
 	public function test_after_save_does_nothing_without_settings_updated(): void {
 		$_GET['tab'] = 'connection';
 
@@ -398,13 +584,26 @@ final class ConnectionTabTest extends TestCase {
 		$this->assertSame( array(), $this->transients );
 	}
 
-	public function test_after_save_does_nothing_on_other_tabs(): void {
+	public function test_after_save_connects_from_menu_url_without_tab(): void {
+		// The menu link is admin.php?page=meilisearch: the Connection tab renders without ?tab=, and
+		// options.php redirects back to that same URL. Menu decides which tab is current.
+		$_GET['settings-updated']                            = 'true';
+		$this->option_store[ Options::CONNECTION ]['prefix'] = 'wp_unit';
+		$this->transport->queue( new Response( 200, array( 'pkgVersion' => '1.53.1' ), '' ) );
+
+		$this->tab()->after_save();
+
+		$this->assertNotSame( array(), $this->transport->requests(), 'no connection attempt on the tab-less menu URL' );
+	}
+
+	public function test_after_save_does_nothing_when_the_tab_is_not_visible(): void {
 		$_GET['settings-updated'] = 'true';
-		$_GET['tab']              = 'content';
+		Functions\when( 'current_user_can' )->justReturn( false );
 
 		$this->tab()->after_save();
 
 		$this->assertSame( array(), $this->transport->requests() );
+		$this->assertSame( array(), $this->transients );
 	}
 
 	public function test_after_save_connects_and_stores_success(): void {
@@ -444,6 +643,7 @@ final class ConnectionTabTest extends TestCase {
 		$this->assertStringContainsString( '1.53.1', $result['message'] );
 		$this->assertStringContainsString( 'search-only key was created', $result['message'] );
 		$this->assertSame( '1.53.1', ( new Options() )->state( 'last_connect' )['version'] );
+		$this->assertStringContainsString( 'Connected to Meilisearch 1.53.1', $this->render_status(), 'The status row reports the connection that just succeeded.' );
 	}
 
 	public function test_after_save_stores_error_without_leaking_the_key(): void {

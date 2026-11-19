@@ -55,17 +55,28 @@ final class Uninstaller {
 		}
 		// Notice dismissals are per user, shared by every site.
 		delete_metadata( 'user', 0, Notices::DISMISSED_META, '', true );
-		self::delete_remote_data( $plans );
+		$unreachable = array();
+		self::delete_remote_data( $plans, Client::WRITE_TIMEOUT, $unreachable );
 	}
 
 	/**
 	 * Removes the queued actions, options and transients of the current site, then its remote data (opt-in).
+	 * Used when a site of a network is deleted (SiteCleaner), while its options still exist.
+	 *
+	 * @param float              $timeout     Maximum seconds per remote call.
+	 * @param array<string,true> $unreachable Hosts that already failed at the transport level, skipped; hosts
+	 *                                        failing now are added, so a caller cleaning several sites in one
+	 *                                        request waits for an unreachable host only once.
+	 * @return list<string> The remote objects that could not be deleted, each with the error code; empty when
+	 *                      everything was deleted or the site did not opt in.
 	 */
-	public static function clean_current_site(): void {
+	public static function clean_current_site( float $timeout = Client::WRITE_TIMEOUT, array &$unreachable = array() ): array {
 		$plan = self::clean_site();
-		if ( null !== $plan ) {
-			self::delete_remote_data( array( $plan ) );
+		if ( null === $plan ) {
+			return array();
 		}
+
+		return self::delete_remote_data( array( $plan ), $timeout, $unreachable );
 	}
 
 	/**
@@ -135,37 +146,47 @@ final class Uninstaller {
 	/**
 	 * Deletes the indexes and plugin-created search keys of the sites that opted in. Only this site's own index
 	 * uids and the stored key uid are used. After a transport failure (timeout, refused connection) every further
-	 * call to that host is skipped. Errors are never reported: they may echo a key, and the host may be gone.
+	 * call to that host is skipped. Error messages are never kept: they may echo a key, and the host may be gone.
 	 *
-	 * @param list<array{host: string, key: string, uids: list<string>, key_uid: string}> $plans Captured per site.
+	 * @param list<array{host: string, key: string, uids: list<string>, key_uid: string}> $plans       Captured per site.
+	 * @param float                                                                       $timeout     Maximum seconds per call.
+	 * @param array<string,true>                                                          $unreachable Hosts to skip; failing hosts are added.
+	 * @return list<string> What could not be deleted ("index <uid>" or "search key <uid>"), each with the error code.
 	 */
-	private static function delete_remote_data( array $plans ): void {
-		$unreachable = array();
-		$user_agent  = 'Meilisearch-WordPress/uninstall WordPress/' . get_bloginfo( 'version' );
+	private static function delete_remote_data( array $plans, float $timeout, array &$unreachable ): array {
+		$failures   = array();
+		$user_agent = 'Meilisearch-WordPress/uninstall WordPress/' . get_bloginfo( 'version' );
 
 		foreach ( $plans as $plan ) {
-			$client = new Client( new WpTransport(), $plan['host'], $plan['key'], $user_agent );
+			$client = new Client( new CappedTransport( new WpTransport(), $timeout ), $plan['host'], $plan['key'], $user_agent );
 			$calls  = array();
 			foreach ( $plan['uids'] as $uid ) {
-				$calls[] = static fn() => $client->delete_index( $uid );
+				$calls[ 'index ' . $uid ] = static fn() => $client->delete_index( $uid );
 			}
 			if ( '' !== $plan['key_uid'] ) {
-				$calls[] = static fn() => $client->delete_key( $plan['key_uid'] );
+				$calls[ 'search key ' . $plan['key_uid'] ] = static fn() => $client->delete_key( $plan['key_uid'] );
 			}
 
-			foreach ( $calls as $call ) {
+			foreach ( $calls as $target => $call ) {
 				if ( isset( $unreachable[ $plan['host'] ] ) ) {
-					break;
+					$failures[] = $target . ' (transport_error)';
+					continue;
 				}
 				try {
 					$call();
 				} catch ( ApiError $error ) {
-					// Best effort (spec § 11.5).
+					// Best effort (spec § 11.5). A key that is already gone is not a failure.
+					if ( 404 === $error->http_status ) {
+						continue;
+					}
+					$failures[] = $target . ' (' . $error->error_code . ')';
 					if ( 'transport_error' === $error->error_code ) {
 						$unreachable[ $plan['host'] ] = true;
 					}
 				}
 			}
 		}//end foreach
+
+		return $failures;
 	}
 }

@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Tests\Unit\Settings;
 
+use Brain\Monkey\Functions;
+use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Tests\Unit\TestCase;
 
@@ -57,6 +59,9 @@ final class OptionsTest extends TestCase {
 			'surrounding whitespace'    => [ "  https://ms-123.meilisearch.io \n", 'https://ms-123.meilisearch.io' ],
 			'query and fragment'        => [ 'https://example.com:8443/meili/?x=1#top', 'https://example.com:8443/meili' ],
 			'credentials are dropped'   => [ 'https://user:pass@example.com', 'https://example.com' ],
+			'underscore service name'   => [ 'http://meili_search:7700', 'http://meili_search:7700' ],
+			'compose v1 container name' => [ 'http://project_meilisearch_1:7700', 'http://project_meilisearch_1:7700' ],
+			'underscore in a subdomain' => [ 'https://search_eu.example.com', 'https://search_eu.example.com' ],
 			'empty'                     => [ '', '' ],
 			'whitespace only'           => [ '   ', '' ],
 			'scheme only'               => [ 'http://', '' ],
@@ -168,6 +173,18 @@ final class OptionsTest extends TestCase {
 		);
 		$this->assertFalse( $this->options()->is_configured() );
 		$this->assertSame( '', $this->options()->host() );
+	}
+
+	public function test_a_host_constant_with_an_underscore_is_configured(): void {
+		$options = $this->options(
+			[
+				'MEILISEARCH_HOST'      => 'http://meili_search:7700',
+				'MEILISEARCH_ADMIN_KEY' => 'key',
+			]
+		);
+
+		$this->assertSame( 'http://meili_search:7700', $options->host() );
+		$this->assertTrue( $options->is_configured() );
 	}
 
 	public function test_prefix_override_is_sanitized(): void {
@@ -390,5 +407,75 @@ final class OptionsTest extends TestCase {
 		$this->stub_options( [ Options::ADMIN_KEY => '' ] );
 
 		$this->assertSame( 'nothing to hide', $this->options()->redact( 'nothing to hide' ) );
+	}
+	/**
+	 * A site connected and fully indexed against https://old.example with admin key "old-key" and the default prefix.
+	 *
+	 * @param array<string, mixed> $constants Constant name => value of the Options under test.
+	 */
+	private function connected_site( array $constants = [] ): Options {
+		Functions\when( 'is_multisite' )->justReturn( false );
+		Functions\when( 'get_current_blog_id' )->justReturn( 1 );
+		$this->stub_options(
+			[
+				'home'              => 'https://site.example',
+				Options::ADMIN_KEY  => 'old-key',
+				Options::CONNECTION => [
+					'host'       => 'https://old.example',
+					'search_key' => 'browser-key',
+				],
+			]
+		);
+		$prefix  = IndexNames::default_prefix( 'https://site.example', 1, false );
+		$options = $this->options();
+		$options->set_state( 'fingerprint', md5( 'https://old.example|old-key|' . $prefix ) );
+		$options->set_populated( 'content', true );
+		$options->mark_search_key_verified();
+
+		return $this->options( $constants );
+	}
+
+	public function test_connection_unchanged_keeps_populated_and_verified_key(): void {
+		$options = $this->connected_site();
+
+		$this->assertFalse( $options->connection_changed() );
+		$this->assertTrue( $options->is_populated( 'content' ) );
+		$this->assertTrue( $options->search_key_is_verified() );
+	}
+
+	/**
+	 * @dataProvider provide_connection_changes
+	 *
+	 * @param array<string, mixed> $constants Constants defined after the connection.
+	 * @param array<string, mixed> $writes    Options written after the connection, outside connect().
+	 */
+	public function test_connection_changed_outside_connect_unpopulates_and_withholds_the_key( array $constants, array $writes ): void {
+		$options = $this->connected_site( $constants );
+		foreach ( $writes as $name => $value ) {
+			$this->option_store[ $name ] = is_array( $value ) ? array_merge( (array) ( $this->option_store[ $name ] ?? [] ), $value ) : $value;
+		}
+
+		$this->assertTrue( $options->connection_changed() );
+		$this->assertFalse( $options->is_populated( 'content' ), 'Searches must not be answered by indexes no reindex filled for this connection.' );
+		$this->assertFalse( $options->search_key_is_verified(), 'A key minted for the previous connection must not be served.' );
+		$this->assertSame( [ 'content' ], $options->state( 'populated' ), 'The stored flag is kept: connect() decides.' );
+	}
+
+	public static function provide_connection_changes(): array {
+		return [
+			'MEILISEARCH_HOST constant'      => [ [ 'MEILISEARCH_HOST' => 'https://new.example' ], [] ],
+			'MEILISEARCH_ADMIN_KEY constant' => [ [ 'MEILISEARCH_ADMIN_KEY' => 'new-key' ], [] ],
+			'site address (default prefix)'  => [ [], [ 'home' => 'https://www.site.example' ] ],
+			'prefix written directly'        => [ [], [ Options::CONNECTION => [ 'prefix' => 'other' ] ] ],
+		];
+	}
+
+	public function test_never_connected_site_is_not_a_connection_change(): void {
+		$this->stub_options( [ Options::CONNECTION => [ 'host' => 'https://old.example' ] ] );
+		$options = $this->options();
+		$options->set_populated( 'content', true );
+
+		$this->assertFalse( $options->connection_changed() );
+		$this->assertTrue( $options->is_populated( 'content' ) );
 	}
 }

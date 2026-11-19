@@ -9,14 +9,18 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Indexing;
 
+use Meilisearch\WordPress\Frontend\Autocomplete;
+
 defined( 'ABSPATH' ) || exit;
 
 /**
  * Initial settings, merge patches and drift for every logical index.
  *
- * Only `searchableAttributes`, `filterableAttributes` and `sortableAttributes`
- * are ever produced. Filterable and sortable are merged as a union with the
- * current values; searchable is append-only and left alone when it is ["*"].
+ * Produces `searchableAttributes`, `filterableAttributes`, `sortableAttributes`
+ * and `displayedAttributes`. Filterable and sortable are merged as a union with
+ * the current values; searchable and displayed are append-only and left alone
+ * when they are ["*"], so an existing index that displays every attribute is
+ * never changed (Site Health reports it instead).
  */
 final class SettingsBuilder {
 
@@ -55,10 +59,58 @@ final class SettingsBuilder {
 	 * Settings applied to a newly created index.
 	 *
 	 * @param string $logical Logical index.
-	 * @return array{searchableAttributes: list<string>, filterableAttributes: list<string>, sortableAttributes: list<string>}
+	 * @return array{searchableAttributes: list<string>, filterableAttributes: list<string>, sortableAttributes: list<string>, displayedAttributes: list<string>}
 	 */
 	public function initial( string $logical ): array {
-		return $this->required( $logical );
+		return $this->required( $logical ) + array( 'displayedAttributes' => $this->displayed( $logical ) );
+	}
+
+	/**
+	 * Attributes the browser search key may read: the schema's public fields, the autocomplete subtitle
+	 * field, then the `meilisearch_displayed_attributes` filter. `id` always comes first (the reindex
+	 * sweep and every search read it); ["*"] from the filter displays every attribute.
+	 *
+	 * @param string $logical Logical index.
+	 * @return list<string>
+	 *
+	 * @throws \InvalidArgumentException For an unknown logical index.
+	 */
+	public function displayed( string $logical ): array {
+		if ( ! $this->has( $logical ) ) {
+			throw new \InvalidArgumentException( sprintf( 'Unknown logical index "%s".', esc_html( $logical ) ) );
+		}
+		$fields   = $this->schemas[ $logical ]->displayed();
+		$subtitle = Autocomplete::subtitle_field( $logical );
+		if ( null !== $subtitle ) {
+			$fields[] = $subtitle;
+		}
+
+		/**
+		 * Filters the attributes visitors may read through the browser search key (autocomplete).
+		 *
+		 * Applied as displayedAttributes when the plugin creates an index, and appended to an existing
+		 * list (never to ["*"]). Fields left out stay searchable, filterable and sortable. Return ["*"]
+		 * to display every indexed field.
+		 *
+		 * @param list<string> $fields  Attribute names ([A-Za-z0-9_.]).
+		 * @param string       $logical Logical index.
+		 */
+		$filtered = apply_filters( 'meilisearch_displayed_attributes', array_values( array_unique( $fields ) ), $logical );
+		if ( is_array( $filtered ) && in_array( '*', $filtered, true ) ) {
+			return array( '*' );
+		}
+
+		return array_values( array_unique( array_merge( array( 'id' ), self::names( is_array( $filtered ) ? $filtered : $fields ) ) ) );
+	}
+
+	/**
+	 * Whether the settings display every attribute (the Meilisearch default).
+	 *
+	 * @param array<string, mixed> $current Result of GET /indexes/{uid}/settings.
+	 * @return bool
+	 */
+	public static function displays_everything( array $current ): bool {
+		return in_array( '*', self::strings( $current['displayedAttributes'] ?? array( '*' ) ), true );
 	}
 
 	/**
@@ -92,6 +144,16 @@ final class SettingsBuilder {
 			$missing = array_values( array_diff( $required['searchableAttributes'], $searchable ) );
 			if ( array() !== $missing ) {
 				$patch['searchableAttributes'] = array_merge( $searchable, $missing );
+			}
+		}
+
+		// A list (the plugin's or the admin's) gets the public fields added since; ["*"] is never narrowed,
+		// and a list is never widened to ["*"].
+		if ( ! self::displays_everything( $current ) ) {
+			$displayed = self::strings( $current['displayedAttributes'] ?? array() );
+			$missing   = array_values( array_diff( $this->displayed( $logical ), array( '*' ), $displayed ) );
+			if ( array() !== $missing ) {
+				$patch['displayedAttributes'] = array_merge( $displayed, $missing );
 			}
 		}
 

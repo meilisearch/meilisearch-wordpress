@@ -19,6 +19,12 @@ defined( 'ABSPATH' ) || exit;
 final class ContentSchema implements Schema {
 
 	/**
+	 * Core fields any visitor can already see on the post's page (ContentDocumentBuilder::core_fields()
+	 * minus author_id). Custom fields (meta_*) are left out: their values are not necessarily public.
+	 */
+	public const PUBLIC_FIELDS = array( 'id', 'post_type', 'title', 'content', 'excerpt', 'permalink', 'date', 'modified', 'author_name', 'thumbnail_url' );
+
+	/**
 	 * Constructor.
 	 *
 	 * @param Options $options Plugin options.
@@ -57,6 +63,21 @@ final class ContentSchema implements Schema {
 	 */
 	public function searchable(): array {
 		return self::unique( array_merge( array( 'title' ), $this->taxonomy_fields(), array( 'excerpt', 'content' ), $this->meta_fields() ) );
+	}
+
+	/**
+	 * Public attributes: the core public fields and the taxonomy terms (names and IDs).
+	 *
+	 * @return list<string>
+	 */
+	public function displayed(): array {
+		$fields = self::PUBLIC_FIELDS;
+		foreach ( $this->taxonomy_fields() as $field ) {
+			$fields[] = $field;
+			$fields[] = $field . '_ids';
+		}
+
+		return self::unique( $fields );
 	}
 
 	/**

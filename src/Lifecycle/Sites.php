@@ -23,8 +23,8 @@ final class Sites {
 	/**
 	 * Runs $callback once for every site (all networks), switched to that site. Single site: runs it once.
 	 *
-	 * The runtime object cache is flushed after every batch: each switch_to_blog() plus get_option() loads that
-	 * site's options into it, which would otherwise grow with the number of sites.
+	 * The runtime object cache is flushed after every batch when the cache supports it: each switch_to_blog()
+	 * plus get_option() loads that site's options into it, which would otherwise grow with the number of sites.
 	 *
 	 * @param callable $callback   Called with no argument while switched to each site.
 	 * @param int|null $network_id Only visit the sites of this network; null visits every network.
@@ -65,14 +65,16 @@ final class Sites {
 	}
 
 	/**
-	 * Frees the per-site data accumulated in the object cache.
+	 * Frees the per-site data accumulated in the object cache, when the cache can flush its runtime copy.
+	 *
+	 * Core defines wp_cache_flush_runtime() for every object cache and reports _doing_it_wrong when the
+	 * drop-in does not support it, so the capability is checked instead of the function. There is no
+	 * fallback: wp_cache_flush() would wipe a persistent cache shared by the whole network on every batch.
 	 */
 	private static function flush_runtime_cache(): void {
-		if ( function_exists( 'wp_cache_flush_runtime' ) ) {
+		if ( wp_cache_supports( 'flush_runtime' ) ) {
 			wp_cache_flush_runtime();
-			return;
 		}
-		wp_cache_flush();
 	}
 
 	/**

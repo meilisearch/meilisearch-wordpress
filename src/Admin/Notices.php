@@ -263,6 +263,7 @@ final class Notices implements Registrable {
 				array(
 					$this->connect_result_notice(),
 					$this->search_key_manual_notice(),
+					$this->connection_changed_notice(),
 					$this->needs_reindex_notice(),
 					$this->recent_errors_notice(),
 				)
@@ -320,12 +321,31 @@ final class Notices implements Registrable {
 	}
 
 	/**
-	 * A logical index needs a full reindex.
+	 * The host, admin key or index prefix changed without the connection flow (wp-config.php constants,
+	 * the site address, a direct option write): search uses the database and autocomplete is off until it runs.
+	 *
+	 * @return array{type: string, message: string, url: string, link: string}|null
+	 */
+	private function connection_changed_notice(): ?array {
+		if ( ! $this->options->is_configured() || ! $this->options->connection_changed() ) {
+			return null;
+		}
+
+		return array(
+			'type'    => 'warning',
+			'message' => __( 'Meilisearch: the host, admin key or index prefix changed since the last connection. Site search uses the database and autocomplete is off until you save the Connection tab (or run "wp meilisearch connect") and then reindex.', 'meilisearch' ),
+			'url'     => Menu::url( 'connection' ),
+			'link'    => __( 'Open the Connection tab', 'meilisearch' ),
+		);
+	}
+
+	/**
+	 * A logical index needs a full reindex. Not while the connection changed: the reindex is refused until it is set up again.
 	 *
 	 * @return array{type: string, message: string, url: string, link: string}|null
 	 */
 	private function needs_reindex_notice(): ?array {
-		if ( ! $this->options->is_configured() ) {
+		if ( ! $this->options->is_configured() || $this->options->connection_changed() ) {
 			return null;
 		}
 		$logicals = array( 'content' );

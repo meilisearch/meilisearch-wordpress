@@ -13,12 +13,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Tag, Version header, MEILISEARCH_VERSION and Stable tag must match
         run: bash bin/check-version.sh "$GITHUB_REF_NAME"
+
+      - name: Banner, icons and one screenshot per readme caption must be in .wordpress-org
+        run: bash bin/check-assets.sh
 
   tests:
     name: Tests
@@ -33,23 +36,27 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.1'
           coverage: none
-          tools: composer:v2, wp-cli
+          tools: composer:v2
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
 
       - name: Build the distributable
         run: bash bin/build-zip.sh
+
+      # Only the images: .wordpress-org/README.md must not be published to the plugin's SVN assets/.
+      - name: Collect the wordpress.org assets
+        run: bash bin/check-assets.sh --export build/wordpress-org-assets
 
       - name: Version
         id: version
@@ -63,7 +70,7 @@ jobs:
           SLUG: meilisearch
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_DIR: build/meilisearch
-          ASSETS_DIR: .wordpress-org
+          ASSETS_DIR: build/wordpress-org-assets
 
       - name: Name the release zip
         run: cp build/meilisearch.zip "build/meilisearch-${{ steps.version.outputs.version }}.zip"

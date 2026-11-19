@@ -133,7 +133,8 @@ final class Options {
 		if ( ! in_array( $scheme, array( 'http', 'https' ), true ) ) {
 			return '';
 		}
-		if ( 1 !== preg_match( '/^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/', $host ) ) {
+		// Underscores are not valid in DNS hostnames but are in Docker service and container names, which resolve.
+		if ( 1 !== preg_match( '/^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])$/', $host ) ) {
 			return '';
 		}
 
@@ -154,6 +155,18 @@ final class Options {
 		foreach ( self::defaults() as $name => $value ) {
 			add_option( $name, $value, '', self::AUTOLOAD[ $name ] );
 		}
+	}
+
+	/**
+	 * Loads the non-autoloaded options the connection checks read (connection, admin key unless it is a
+	 * constant, state) in one query, for code that runs on every page view. No-op for those already cached.
+	 */
+	public function prime_connection(): void {
+		$names = array( self::CONNECTION, self::STATE );
+		if ( null === $this->constant( 'MEILISEARCH_ADMIN_KEY' ) ) {
+			$names[] = self::ADMIN_KEY;
+		}
+		wp_prime_option_caches( $names );
 	}
 
 	/**
@@ -207,6 +220,40 @@ final class Options {
 	 */
 	public function is_configured(): bool {
 		return '' !== $this->host() && '' !== $this->admin_key();
+	}
+
+	/**
+	 * Identifies the connection a successful attempt was made with: host, admin key and index prefix.
+	 *
+	 * Stored in the `last_connect` state so the Connection screen says "Connected" only while
+	 * the configuration is still the one that was tested (constants and direct option writes
+	 * change it without running the connection flow).
+	 *
+	 * @param string $prefix Index prefix in use (IndexNames::prefix()).
+	 * @return string
+	 */
+	public function connection_fingerprint( string $prefix ): string {
+		return md5( $this->host() . '|' . $this->admin_key() . '|' . $prefix );
+	}
+
+	/**
+	 * Whether the host, admin key or index prefix in use differ from those of the last connection flow
+	 * (the `fingerprint` state written by IndexManager::connect()).
+	 *
+	 * The constants, the site address (default prefix) and direct option writes change them without
+	 * running that flow, so the indexes and the browser search key the state describes may belong to
+	 * another instance or another prefix. A site that never connected has no fingerprint: no change.
+	 * Pure: reads options already loaded for the request, no HTTP call.
+	 *
+	 * @return bool
+	 */
+	public function connection_changed(): bool {
+		$stored = $this->state( 'fingerprint', '' );
+		if ( ! is_string( $stored ) || '' === $stored ) {
+			return false;
+		}
+
+		return ! hash_equals( $stored, $this->connection_fingerprint( ( new IndexNames( $this ) )->prefix() ) );
 	}
 
 	/**
@@ -310,13 +357,16 @@ final class Options {
 	}
 
 	/**
-	 * Whether the current search key is the one last recorded as servable.
+	 * Whether the current search key is the one last recorded as servable, for the connection it was
+	 * recorded with: after a host, admin key or prefix change the key may belong to another instance or
+	 * be scoped to other indexes, until the connection flow runs again.
 	 *
 	 * @return bool
 	 */
 	public function search_key_is_verified(): bool {
 		$verified = $this->state( 'search_key_verified' );
-		return is_string( $verified ) && '' !== $verified && hash_equals( $verified, self::key_fingerprint( $this->search_key() ) );
+		return is_string( $verified ) && '' !== $verified && hash_equals( $verified, self::key_fingerprint( $this->search_key() ) )
+			&& ! $this->connection_changed();
 	}
 
 	/**
@@ -383,6 +433,28 @@ final class Options {
 			$all = array_merge( $all, $this->meta_keys_for( $post_type ) );
 		}
 		return array_values( array_unique( $all ) );
+	}
+
+	/**
+	 * Identifies what the content index is built with: the enabled post types and the taxonomies and meta
+	 * keys of each, in any order. A reindex records it when it starts so that a change made while it runs
+	 * is not reported as indexed.
+	 *
+	 * @return string
+	 */
+	public function content_signature(): string {
+		$types = $this->enabled_post_types();
+		sort( $types );
+		$fields = array();
+		foreach ( $types as $post_type ) {
+			$taxonomies = $this->taxonomies_for( $post_type );
+			$meta_keys  = $this->meta_keys_for( $post_type );
+			sort( $taxonomies );
+			sort( $meta_keys );
+			$fields[ $post_type ] = array( $taxonomies, $meta_keys );
+		}
+
+		return md5( (string) wp_json_encode( $fields ) );
 	}
 
 	/**
@@ -486,11 +558,15 @@ final class Options {
 	 * Whether a logical index has been filled by a completed full reindex since the connection
 	 * (host, admin key or prefix) last changed. Search is not intercepted for an unpopulated index.
 	 *
+	 * Always false while the connection in use differs from the one last connected (connection_changed()):
+	 * the stored flag describes the indexes of that connection. connect() then clears it.
+	 *
 	 * @param string $logical 'content' | 'products'.
 	 * @return bool
 	 */
 	public function is_populated( string $logical ): bool {
-		return in_array( $logical, self::to_string_list( $this->state( 'populated', array() ) ), true );
+		return in_array( $logical, self::to_string_list( $this->state( 'populated', array() ) ), true )
+			&& ! $this->connection_changed();
 	}
 
 	/**

@@ -37,6 +37,7 @@ final class BootTest extends TestCase {
 		'site_health',
 		'privacy',
 		'site_seeder',
+		'site_cleaner',
 	);
 
 	private const PRODUCT_HOOKS = array(
@@ -128,6 +129,10 @@ final class BootTest extends TestCase {
 			'edited_term'                          => array( 'edited_term', 'term_job' ),
 			'delete_term'                          => array( 'delete_term', 'term_job' ),
 			'meilisearch_sync_term'                => array( 'meilisearch_sync_term', 'term_job' ),
+			'delete_user'                          => array( 'delete_user', 'author_job' ),
+			'remove_user_from_blog'                => array( 'remove_user_from_blog', 'author_job' ),
+			'profile_update'                       => array( 'profile_update', 'author_job' ),
+			'meilisearch_sync_author'              => array( 'meilisearch_sync_author', 'author_job' ),
 			'meilisearch_sync_posts'               => array( 'meilisearch_sync_posts', 'sync_job' ),
 			'meilisearch_reindex_batch'            => array( 'meilisearch_reindex_batch', 'reindexer' ),
 			'admin_menu'                           => array( 'admin_menu', 'admin_menu' ),
@@ -141,6 +146,7 @@ final class BootTest extends TestCase {
 			'admin_init (privacy)'                 => array( 'admin_init', 'privacy' ),
 			'wp_initialize_site'                   => array( 'wp_initialize_site', 'site_seeder' ),
 			'admin_init (seeder)'                  => array( 'admin_init', 'site_seeder' ),
+			'wp_uninitialize_site'                 => array( 'wp_uninitialize_site', 'site_cleaner' ),
 		);
 	}
 
@@ -149,6 +155,13 @@ final class BootTest extends TestCase {
 		foreach ( self::ROUTES as $route ) {
 			self::assertArrayHasKey( $route, $routes, $route );
 		}
+	}
+
+	public function test_site_cleaner_runs_before_core_drops_the_site_tables(): void {
+		$priority = has_action( 'wp_uninitialize_site', array( $this->plugin()->get( 'site_cleaner' ), 'clean_deleted_site' ) );
+		self::assertIsInt( $priority );
+		// Core's wp_uninitialize_site() drops the tables at 10 (ms-default-filters.php, multisite only).
+		self::assertLessThan( 10, $priority );
 	}
 
 	public function test_excerpt_highlighting_is_hooked_only_when_enabled(): void {

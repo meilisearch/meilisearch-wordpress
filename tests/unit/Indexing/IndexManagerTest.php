@@ -63,6 +63,9 @@ final class IndexManagerTest extends TestCase {
 			public function searchable(): array {
 				return array( 'title', 'content' );
 			}
+			public function displayed(): array {
+				return array( 'id', 'title', 'content' );
+			}
 		};
 
 		return new IndexManager(
@@ -243,6 +246,7 @@ final class IndexManagerTest extends TestCase {
 				'searchableAttributes' => array( 'title', 'content' ),
 				'filterableAttributes' => array( 'post_type', 'date' ),
 				'sortableAttributes'   => array( 'date' ),
+				'displayedAttributes'  => array( 'id', 'title', 'content' ),
 			),
 			$requests[3]['body']
 		);
@@ -292,6 +296,157 @@ final class IndexManagerTest extends TestCase {
 		$this->manager()->ensure_index( 'content', 'wp_other_content' );
 
 		$this->assertSame( 'GET /indexes/wp_other_content', $this->calls()[0] );
+	}
+
+	/**
+	 * Queues: index exists, settings miss the required filterable attributes.
+	 */
+	private function queue_index_missing_filterable(): void {
+		$this->transport
+			->queue( self::json( array( 'uid' => 'wp_test_content' ) ) )
+			->queue(
+				self::json(
+					array(
+						'searchableAttributes' => array( '*' ),
+						'filterableAttributes' => array( 'cloud' ),
+						'sortableAttributes'   => array( 'date' ),
+					)
+				)
+			);
+	}
+
+	/**
+	 * @param array<string, mixed> $extra Extra task fields.
+	 */
+	private static function processing( int $uid, array $extra = array() ): Response {
+		return self::json(
+			array_merge(
+				array(
+					'uid'      => $uid,
+					'indexUid' => 'wp_test_content',
+					'status'   => 'processing',
+					'type'     => 'settingsUpdate',
+				),
+				$extra
+			)
+		);
+	}
+
+	public function test_ensure_index_reports_a_settings_task_still_processing_instead_of_failing(): void {
+		$this->queue_index_missing_filterable();
+		$this->transport->queue( self::task( 3 ) )->queue( self::processing( 3 ) );
+
+		$this->assertSame( 3, $this->manager()->ensure_index( 'content', null, 0.0 ) );
+	}
+
+	public function test_ensure_index_returns_null_once_the_settings_are_applied(): void {
+		$this->queue_index_missing_filterable();
+		$this->transport->queue( self::task( 3 ) )->queue( self::done( 3 ) );
+
+		$this->assertNull( $this->manager()->ensure_index( 'content' ) );
+	}
+
+	public function test_a_retry_reuses_the_settings_task_still_processing(): void {
+		$this->queue_index_missing_filterable();
+		$this->transport->queue( self::task( 3 ) )->queue( self::processing( 3 ) );
+		$this->assertSame( 3, $this->manager()->ensure_index( 'content', null, 0.0 ) );
+
+		// Meilisearch still reports the old settings; the same task is still running.
+		$this->queue_index_missing_filterable();
+		$this->transport->queue( self::processing( 3 ) )->queue( self::processing( 3 ) );
+
+		$this->assertSame( 3, $this->manager()->ensure_index( 'content', null, 0.0 ) );
+		$this->assertSame(
+			array(
+				'GET /indexes/wp_test_content',
+				'GET /indexes/wp_test_content/settings',
+				'PATCH /indexes/wp_test_content/settings',
+				'GET /tasks/3',
+				'GET /indexes/wp_test_content',
+				'GET /indexes/wp_test_content/settings',
+				'GET /tasks/3',
+				'GET /tasks/3',
+			),
+			$this->calls(),
+			'No duplicate settings task is enqueued.'
+		);
+	}
+
+	public function test_a_different_settings_change_is_sent_even_while_a_task_is_processing(): void {
+		$this->queue_index_missing_filterable();
+		$this->transport->queue( self::task( 3 ) )->queue( self::processing( 3 ) );
+		$this->manager()->ensure_index( 'content', null, 0.0 );
+
+		// The sortable attribute is now missing too: the remembered task does not cover it.
+		$this->transport
+			->queue( self::json( array( 'uid' => 'wp_test_content' ) ) )
+			->queue(
+				self::json(
+					array(
+						'searchableAttributes' => array( '*' ),
+						'filterableAttributes' => array( 'cloud' ),
+						'sortableAttributes'   => array(),
+					)
+				)
+			)
+			->queue( self::task( 4 ) )
+			->queue( self::done( 4 ) );
+
+		$this->assertNull( $this->manager()->ensure_index( 'content', null, 0.0 ) );
+		$this->assertSame( 'PATCH /indexes/wp_test_content/settings', $this->calls()[6] );
+	}
+
+	public function test_a_finished_or_foreign_remembered_task_is_not_reused(): void {
+		$this->queue_index_missing_filterable();
+		$this->transport->queue( self::task( 3 ) )->queue( self::processing( 3 ) );
+		$this->manager()->ensure_index( 'content', null, 0.0 );
+
+		// Task 3 now belongs to another index (e.g. another server): the settings are sent again.
+		$this->queue_index_missing_filterable();
+		$this->transport
+			->queue( self::processing( 3, array( 'indexUid' => 'other' ) ) )
+			->queue( self::task( 5 ) )
+			->queue( self::done( 5 ) );
+
+		$this->assertNull( $this->manager()->ensure_index( 'content', null, 0.0 ) );
+	}
+
+	public function test_ensure_index_still_fails_on_a_failed_settings_task(): void {
+		$this->queue_index_missing_filterable();
+		$this->transport->queue( self::task( 3 ) )->queue(
+			self::json(
+				array(
+					'uid'    => 3,
+					'status' => 'failed',
+					'error'  => array( 'message' => 'Invalid attribute.' ),
+				)
+			)
+		);
+
+		try {
+			$this->manager()->ensure_index( 'content', null, 0.0 );
+			$this->fail( 'Expected task_failed.' );
+		} catch ( ApiError $error ) {
+			$this->assertSame( 'task_failed', $error->error_code );
+		}
+	}
+
+	public function test_creating_an_index_on_a_busy_queue_reports_the_pending_settings_task(): void {
+		$this->transport
+			->queue( self::error( 404, 'index_not_found' ) )
+			->queue( self::task( 1 ) )
+			->queue( self::processing( 1, array( 'type' => 'indexCreation' ) ) )
+			->queue( self::task( 2 ) )
+			->queue( self::processing( 2 ) );
+
+		$this->assertSame( 2, $this->manager()->ensure_index( 'content', null, 0.0 ) );
+	}
+
+	public function test_ensure_all_lists_the_pending_settings_tasks(): void {
+		$this->queue_index_missing_filterable();
+		$this->transport->queue( self::task( 3 ) )->queue( self::processing( 3 ) );
+
+		$this->assertSame( array( 'content' => 3 ), $this->manager()->ensure_all( 0.0 ) );
 	}
 
 	public function test_sync_settings_returns_null_without_changes(): void {

@@ -19,9 +19,15 @@ use Meilisearch\WordPress\Settings\IndexNames;
 /**
  * One logical index → POST /indexes/{uid}/search; several → POST /multi-search, federated,
  * one query per index (spec § 9.4). Both use page/hitsPerPage (federation since Meilisearch
- * 1.34), so totalHits/totalPages are exact.
+ * 1.34), so totalHits/totalPages count every match. The engine only serves the first
+ * pagination.maxTotalHits of them, so the totals handed to WordPress are clamped to that limit.
  */
 final class Searcher {
+
+	/**
+	 * Default of the index setting pagination.maxTotalHits, which the plugin never writes.
+	 */
+	public const DEFAULT_MAX_TOTAL_HITS = 1000;
 
 	private const PRE_TAG  = '<mark>';
 	private const POST_TAG = '</mark>';
@@ -104,13 +110,14 @@ final class Searcher {
 		if ( null !== $request->hybrid ) {
 			$params['hybrid'] = $request->hybrid;
 		}
+		// Only the ID and the cropped _formatted.content are read; Meilisearch returns _formatted for
+		// cropped/highlighted attributes even when they are not retrieved.
+		$params['attributesToRetrieve'] = array( 'id' );
 		if ( ! $request->highlight ) {
-			$params['attributesToRetrieve'] = array( 'id' );
 			return $params;
 		}
-		$params['attributesToRetrieve']  = array( 'id', 'title', 'content' );
 		$params['attributesToCrop']      = array( 'content:30' );
-		$params['attributesToHighlight'] = array( 'title', 'content' );
+		$params['attributesToHighlight'] = array( 'content' );
 		$params['highlightPreTag']       = self::PRE_TAG;
 		$params['highlightPostTag']      = self::POST_TAG;
 		return $params;
@@ -144,6 +151,39 @@ final class Searcher {
 	 */
 	private static function array_or( mixed $value, array $fallback ): array {
 		return is_array( $value ) ? $value : $fallback;
+	}
+
+	/**
+	 * How many hits of this request the engine can serve across all its pages.
+	 *
+	 * An index never returns hits past its pagination.maxTotalHits. A federated search applies the
+	 * limit of each index to that index's own matches, and its response does not say how the
+	 * matches are split, so only the smallest limit is certain to be reachable.
+	 *
+	 * @param SearchRequest $request Request.
+	 * @return int At least 1.
+	 */
+	private function max_total_hits( SearchRequest $request ): int {
+		$smallest = PHP_INT_MAX;
+		foreach ( $request->logicals as $logical ) {
+			/**
+			 * Filters the number of hits Meilisearch serves for one index: its pagination.maxTotalHits
+			 * setting. Return the configured value when that setting was changed in Meilisearch.
+			 *
+			 * @param int           $limit   Meilisearch's default, 1000.
+			 * @param string        $logical 'content' | 'products'.
+			 * @param SearchRequest $request Translated request.
+			 */
+			$limit = apply_filters( 'meilisearch_max_total_hits', self::DEFAULT_MAX_TOTAL_HITS, $logical, $request );
+			$limit = is_numeric( $limit ) ? (float) $limit : 0.0;
+			if ( ! is_finite( $limit ) || $limit < 1 ) {
+				$limit = (float) self::DEFAULT_MAX_TOTAL_HITS;
+			}
+			if ( $limit < PHP_INT_MAX ) {
+				$smallest = min( $smallest, (int) $limit );
+			}
+		}
+		return $smallest;
 	}
 
 	/**
@@ -185,6 +225,16 @@ final class Searcher {
 		} else {
 			$total_pages = (int) ceil( $total_hits / max( 1, $request->hits_per_page ) );
 		}
+
+		// found_posts / max_num_pages must not advertise pages the engine answers with no hits.
+		$per_page = max( 1, $request->hits_per_page );
+		$servable = $this->max_total_hits( $request );
+		if ( array() === $hits && $request->page > 1 ) {
+			// Nothing at this offset: whatever the limit is, the hits end before this page.
+			$servable = min( $servable, ( $request->page - 1 ) * $per_page );
+		}
+		$total_hits  = min( $total_hits, $servable );
+		$total_pages = min( $total_pages, (int) ceil( $total_hits / $per_page ) );
 
 		return new SearchResult( $ids, $total_hits, $total_pages, $formatted );
 	}

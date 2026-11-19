@@ -11,6 +11,7 @@ namespace Meilisearch\WordPress\Search;
 
 defined( 'ABSPATH' ) || exit;
 
+use Meilisearch\WordPress\Indexing\ContentDocumentBuilder;
 use Meilisearch\WordPress\Indexing\FieldName;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
@@ -68,6 +69,8 @@ final class QueryTranslator {
 		'sentence',
 		'exact',
 		'search_columns',
+		'comment_status',
+		'ping_status',
 	);
 
 	/**
@@ -90,8 +93,13 @@ final class QueryTranslator {
 
 	/**
 	 * Supported meta_query compare operators.
+	 *
+	 * Documents hold the first value of each indexed meta key and leave the field out when that value
+	 * is empty or not scalar (ContentDocumentBuilder::meta_fields()). WP_Meta_Query matches any row of
+	 * the key, so the negative compares (!=, NOT IN, NOT EXISTS), whose answer depends on the rows the
+	 * index does not hold, are answered by MySQL.
 	 */
-	private const META_COMPARES = array( '=', '!=', '<', '<=', '>', '>=', 'IN', 'NOT IN', 'BETWEEN', 'EXISTS', 'NOT EXISTS' );
+	private const META_COMPARES = array( '=', '<', '<=', '>', '>=', 'IN', 'BETWEEN', 'EXISTS' );
 
 	/**
 	 * Date query columns => [field, interpreted in UTC].
@@ -463,7 +471,9 @@ final class QueryTranslator {
 	}
 
 	/**
-	 * Author filters from author, author__in and author__not_in (merged like WP_Query does).
+	 * Author filters from author, author__in and author__not_in, merged like WP_Query::get_posts():
+	 * the author var is split into inclusions and exclusions, and when any exclusion is requested
+	 * core applies only the NOT IN clause and ignores the inclusions (elseif), so this does too.
 	 *
 	 * @param \WP_Query $query Query.
 	 * @return string[]|null
@@ -484,12 +494,14 @@ final class QueryTranslator {
 				$id = (int) $part;
 				if ( $id > 0 ) {
 					$in[] = $id;
-				} elseif ( $id < 0 ) {
+				} else {
 					$not_in[] = -$id;
+					// Core files 0 under author__not_in too.
 				}
 			}
 		}
 
+		$excludes     = array() !== $not_in || ! empty( $query->get( 'author__not_in' ) );
 		$extra_in     = self::id_list( $query->get( 'author__in' ) );
 		$extra_not_in = self::id_list( $query->get( 'author__not_in' ) );
 		if ( null === $extra_in || null === $extra_not_in ) {
@@ -498,14 +510,10 @@ final class QueryTranslator {
 		$in     = array_values( array_unique( array_merge( $in, $extra_in ) ) );
 		$not_in = array_values( array_unique( array_merge( $not_in, $extra_not_in ) ) );
 
-		$filters = array();
-		if ( array() !== $in ) {
-			$filters[] = FilterBuilder::in( 'author_id', $in );
+		if ( $excludes ) {
+			return array() === $not_in ? array() : array( FilterBuilder::not_in( 'author_id', $not_in ) );
 		}
-		if ( array() !== $not_in ) {
-			$filters[] = FilterBuilder::not_in( 'author_id', $not_in );
-		}
-		return $filters;
+		return array() === $in ? array() : array( FilterBuilder::in( 'author_id', $in ) );
 	}
 
 	/**
@@ -808,7 +816,11 @@ final class QueryTranslator {
 	}
 
 	/**
-	 * One first-order meta clause, with WP_Meta_Query semantics.
+	 * One first-order meta clause, with WP_Meta_Query's clause structure but the index's value
+	 * semantics: numeric values are compared as numbers whatever the clause type, so range compares
+	 * (<, <=, >, >=, BETWEEN) are numeric even untyped or CHAR (where MySQL compares strings), and
+	 * NUMERIC is not truncated to an integer like MySQL's CAST AS SIGNED. Results can then differ
+	 * from the database fallback for non-numeric or untyped CHAR values.
 	 *
 	 * @param array<string, mixed> $clause        Clause.
 	 * @param string[]             $content_types Requested content post types.
@@ -856,10 +868,8 @@ final class QueryTranslator {
 			return null;
 		}
 		if ( 'EXISTS' === $compare ) {
+			// Posts whose value is empty or not scalar have no field, so they do not match (documented).
 			return FilterBuilder::exists( $field );
-		}
-		if ( 'NOT EXISTS' === $compare ) {
-			return FilterBuilder::not_exists( $field );
 		}
 		if ( ! $has_value ) {
 			return '=' === $compare ? FilterBuilder::exists( $field ) : null;
@@ -869,16 +879,11 @@ final class QueryTranslator {
 		$raw = $clause['value'];
 		switch ( $compare ) {
 			case 'IN':
-			case 'NOT IN':
 				$values = $numeric ? self::numbers( self::value_list( $raw ) ) : self::scalars( self::value_list( $raw ) );
 				if ( null === $values || array() === $values ) {
 					return null;
 				}
-				if ( 'IN' === $compare ) {
-					return FilterBuilder::in( $field, $values );
-				}
-				// WordPress requires the key to exist for NOT IN / !=.
-				return FilterBuilder::all( array( FilterBuilder::exists( $field ), FilterBuilder::not_in( $field, $values ) ) );
+				return FilterBuilder::in( $field, $values );
 			case 'BETWEEN':
 				$values = self::numbers( self::value_list( $raw ) );
 				if ( null === $values || count( $values ) < 2 ) {
@@ -886,13 +891,11 @@ final class QueryTranslator {
 				}
 				return FilterBuilder::between( $field, $values[0], $values[1] );
 			case '=':
-			case '!=':
 				$values = $numeric ? self::numbers( array( $raw ) ) : self::scalars( array( $raw ) );
 				if ( null === $values ) {
 					return null;
 				}
-				$expression = FilterBuilder::compare( $field, $compare, $values[0] );
-				return '!=' === $compare ? FilterBuilder::all( array( FilterBuilder::exists( $field ), $expression ) ) : $expression;
+				return FilterBuilder::compare( $field, '=', $values[0] );
 			default:
 				$values = self::numbers( array( $raw ) );
 				// Range comparisons need numbers.
@@ -1223,7 +1226,10 @@ final class QueryTranslator {
 	}
 
 	/**
-	 * Scalars; numeric strings become numbers because the index stores them as numbers (spec § 5.3).
+	 * Scalars for CHAR / untyped comparisons, normalised exactly as the indexer normalises meta values
+	 * (ContentDocumentBuilder::meta_value()): canonical integers and decimals become numbers, any other
+	 * string ("02134", "+5", "1e3", " 5", 20-digit integers…) stays the original string the index holds.
+	 * Null for an empty string: the index leaves empty values out, so it cannot match them like MySQL.
 	 *
 	 * @param array<int, mixed> $raw Values.
 	 * @return array<int, string|int|float>|null
@@ -1238,19 +1244,12 @@ final class QueryTranslator {
 				$out[] = $item;
 				continue;
 			}
-			if ( ! is_string( $item ) ) {
+			if ( ! is_string( $item ) || '' === $item ) {
 				return null;
 			}
-			$trimmed = trim( $item );
-			if ( is_numeric( $trimmed ) ) {
-				if ( ! is_finite( (float) $trimmed ) ) {
-					return null;
-				}
-				$out[] = $trimmed + 0;
-			} else {
-				$out[] = $item;
-			}
-		}//end foreach
+			$value = ContentDocumentBuilder::meta_value( $item );
+			$out[] = null === $value ? $item : $value;
+		}
 		return $out;
 	}
 }

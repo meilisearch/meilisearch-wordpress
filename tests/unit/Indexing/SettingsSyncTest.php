@@ -50,6 +50,9 @@ final class SettingsSyncTest extends TestCase {
 			public function searchable(): array {
 				return array( 'title' );
 			}
+			public function displayed(): array {
+				return array( 'id', 'title' );
+			}
 		};
 
 		return new SettingsSync( $clients, new IndexManager( $clients, $names, new SettingsBuilder( array( 'content' => $schema ) ), $options ), $names, $options, new ErrorLog() );
@@ -133,6 +136,62 @@ final class SettingsSyncTest extends TestCase {
 		$this->sync()->on_content_update( self::content( array( 'post' ) ), self::content( array( 'post', 'page' ) ) );
 
 		self::assertSame( array( 'GET /indexes/wp_test_content', 'GET /indexes/wp_test_content/settings' ), $this->calls() );
+	}
+
+	public function test_settings_still_being_applied_are_not_reported_as_a_failure(): void {
+		$this->transport
+			->respond( 200, array( 'uid' => 'wp_test_content' ) )
+			->respond(
+				200,
+				array(
+					'searchableAttributes' => array( '*' ),
+					'filterableAttributes' => array(),
+					'sortableAttributes'   => array(),
+				)
+			)
+			->respond( 202, array( 'taskUid' => 6 ) );
+		// Meilisearch is still re-processing the index for as long as the hook is willing to wait.
+		for ( $poll = 0; $poll < 200; $poll++ ) {
+			$this->transport->respond(
+				200,
+				array(
+					'uid'    => 6,
+					'status' => 'processing',
+				)
+			);
+		}
+
+		$started = microtime( true );
+		$this->sync()->on_content_update( self::content( array( 'post' ) ), self::content( array( 'post', 'page' ) ) );
+
+		self::assertSame( array(), ( new ErrorLog() )->all() );
+		self::assertLessThan( 10.0, microtime( true ) - $started, 'Saving the Content tab must not block for the full task timeout.' );
+	}
+
+	public function test_a_failed_settings_task_is_logged(): void {
+		$this->transport
+			->respond( 200, array( 'uid' => 'wp_test_content' ) )
+			->respond(
+				200,
+				array(
+					'searchableAttributes' => array( '*' ),
+					'filterableAttributes' => array(),
+					'sortableAttributes'   => array(),
+				)
+			)
+			->respond( 202, array( 'taskUid' => 6 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 6,
+					'status' => 'failed',
+					'error'  => array( 'message' => 'Invalid attribute.' ),
+				)
+			);
+
+		$this->sync()->on_content_update( self::content( array( 'post' ) ), self::content( array( 'post', 'page' ) ) );
+
+		self::assertStringContainsString( 'Invalid attribute.', ( new ErrorLog() )->all()[0]['message'] );
 	}
 
 	public function test_content_errors_are_logged_never_thrown(): void {

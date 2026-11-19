@@ -105,6 +105,35 @@ final class ConnectionTest extends TestCase {
 		$this->assertTrue( $this->options()->needs_reindex( 'content' ) );
 	}
 
+	/**
+	 * Signs in a user who may see and save the Connection tab.
+	 */
+	private function sign_in_connection_admin(): void {
+		$user = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		if ( is_multisite() ) {
+			grant_super_admin( $user );
+		}
+		wp_set_current_user( $user );
+	}
+
+	public function test_saving_from_the_menu_link_without_tab_connects(): void {
+		// The menu link is admin.php?page=meilisearch; options.php redirects back to it with settings-updated only.
+		$this->sign_in_connection_admin();
+		$this->options()->set_state( 'last_connect', null );
+		unset( $_GET['tab'] );
+		$_GET['settings-updated'] = 'true';
+
+		try {
+			Plugin::instance()->get( 'admin_menu' )->after_save();
+		} finally {
+			unset( $_GET['settings-updated'] );
+		}
+
+		$last = $this->options()->state( 'last_connect' );
+		$this->assertIsArray( $last, 'The connection flow must run for the tab that rendered.' );
+		$this->assertTrue( version_compare( (string) $last['version'], IndexManager::MIN_VERSION, '>=' ) );
+	}
+
 	public function test_reconnect_keeps_key_when_nothing_changed(): void {
 		$this->manager()->connect();
 		$key = $this->options()->search_key();

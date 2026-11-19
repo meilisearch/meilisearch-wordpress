@@ -14,9 +14,11 @@ defined( 'ABSPATH' ) || exit;
 use Meilisearch\WordPress\Admin\Menu;
 use Meilisearch\WordPress\Api\ApiError;
 use Meilisearch\WordPress\Api\ClientFactory;
+use Meilisearch\WordPress\Frontend\Autocomplete;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Indexing\IndexManager;
 use Meilisearch\WordPress\Indexing\Reindexer;
+use Meilisearch\WordPress\Indexing\SettingsBuilder;
 use Meilisearch\WordPress\Registrable;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
@@ -45,6 +47,9 @@ final class SiteHealth implements Registrable {
 	public const TEST_QUEUE      = 'meilisearch_queue';
 	public const TEST_REINDEX    = 'meilisearch_reindex';
 	public const TEST_COVERAGE   = 'meilisearch_search_coverage';
+	public const TEST_DISPLAYED  = 'meilisearch_displayed_attributes';
+	public const TEST_SQL        = 'meilisearch_sql_filters';
+	public const TEST_BROWSER    = 'meilisearch_autocomplete_host';
 
 	/**
 	 * Memoized results for this request.
@@ -54,15 +59,23 @@ final class SiteHealth implements Registrable {
 	private ?array $results = null;
 
 	/**
+	 * Live settings read during this request: logical index => GET /settings response.
+	 *
+	 * @var array<string, array<string, mixed>>
+	 */
+	private array $live_settings = array();
+
+	/**
 	 * Wires the services.
 	 *
-	 * @param ClientFactory $clients   Client factory.
-	 * @param IndexManager  $indexes   Index manager.
-	 * @param IndexNames    $names     Index names.
-	 * @param Reindexer     $reindexer Reindexer.
-	 * @param Queue         $queue     Sync queue.
-	 * @param Options       $options   Options.
-	 * @param Indexability  $indexability Indexability rule (which post types are indexed).
+	 * @param ClientFactory       $clients   Client factory.
+	 * @param IndexManager        $indexes   Index manager.
+	 * @param IndexNames          $names     Index names.
+	 * @param Reindexer           $reindexer Reindexer.
+	 * @param Queue               $queue     Sync queue.
+	 * @param Options             $options   Options.
+	 * @param Indexability        $indexability Indexability rule (which post types are indexed).
+	 * @param SqlFilterAudit|null $sql_filters Finds other code on WP_Query's SQL filters.
 	 */
 	public function __construct(
 		private readonly ClientFactory $clients,
@@ -71,7 +84,8 @@ final class SiteHealth implements Registrable {
 		private readonly Reindexer $reindexer,
 		private readonly Queue $queue,
 		private readonly Options $options,
-		private readonly Indexability $indexability
+		private readonly Indexability $indexability,
+		private readonly ?SqlFilterAudit $sql_filters = null
 	) {}
 
 	/**
@@ -131,7 +145,10 @@ final class SiteHealth implements Registrable {
 			$results[] = $this->checked( self::TEST_DOCUMENTS, $usable, fn (): array => self::evaluate_documents( $this->document_counts(), $status_url ) );
 			$results[] = $this->checked( self::TEST_SETTINGS, $usable, fn (): array => self::evaluate_settings( $this->missing_settings(), $connection_url ) );
 			$results[] = $this->checked( self::TEST_SEARCH_KEY, $usable, fn (): array => $this->search_key_result( $connection_url ) );
+			$results[] = $this->checked( self::TEST_DISPLAYED, $usable, fn (): array => $this->displayed_result() );
 			$results[] = self::evaluate_coverage( $this->options->search()['replace'], $this->indexability->unindexed_searchable_types(), Menu::url( 'content' ) );
+			$results[] = $this->sql_filters_result();
+			$results[] = self::evaluate_browser_host( Autocomplete::host_warning( $this->options ), Menu::url( 'search' ) );
 		}
 
 		$results[] = self::evaluate_queue( $this->queue->count( 'pending' ), $this->queue->count( 'failed' ), $status_url );
@@ -169,7 +186,7 @@ final class SiteHealth implements Registrable {
 				__( 'Meilisearch cannot be reached', 'meilisearch' ),
 				sprintf(
 					/* translators: %s: error message returned by Meilisearch or by the HTTP request. */
-					__( 'The last request to Meilisearch failed: %s. Search falls back to the WordPress database and content changes wait in the queue until the connection works again.', 'meilisearch' ),
+					__( 'The last request to Meilisearch failed: %s. Search falls back to the WordPress database. Content changes are retried for several hours; if the connection is not back by then, the plugin asks for a full reindex.', 'meilisearch' ),
 					$error
 				),
 				$settings_url
@@ -213,10 +230,13 @@ final class SiteHealth implements Registrable {
 	}
 
 	/**
-	 * Compares document counts with what WordPress expects.
+	 * Compares document counts with what WordPress expects. 'indexable' is the SQL candidate count, an
+	 * upper bound; 'excluded' is how many candidates the last completed reindex left out (hidden or
+	 * out-of-stock products, posts vetoed by meilisearch_should_index_post). The index is in sync when
+	 * it holds between indexable - excluded and indexable documents, within DRIFT_THRESHOLD.
 	 *
-	 * @param array<string, array{uid: string, documents: ?int, indexable: int}> $counts Logical index => counts.
-	 * @param string                                                             $status_url URL of the Status tab.
+	 * @param array<string, array{uid: string, documents: ?int, indexable: int, excluded?: int}> $counts Logical index => counts.
+	 * @param string                                                                             $status_url URL of the Status tab.
 	 * @return Result
 	 */
 	public static function evaluate_documents( array $counts, string $status_url ): array {
@@ -230,16 +250,19 @@ final class SiteHealth implements Registrable {
 				);
 				continue;
 			}
-			if ( self::drift_ratio( $count['documents'], $count['indexable'] ) > self::DRIFT_THRESHOLD ) {
+			// The nearest bound of [indexable - excluded, indexable]; the document count itself when inside.
+			$lower    = max( 0, $count['indexable'] - max( 0, $count['excluded'] ?? 0 ) );
+			$expected = max( $lower, min( $count['indexable'], $count['documents'] ) );
+			if ( self::drift_ratio( $count['documents'], $expected ) > self::DRIFT_THRESHOLD ) {
 				$problems[] = sprintf(
 					/* translators: 1: index UID, 2: number of documents in Meilisearch, 3: number of searchable items in WordPress. */
 					__( '%1$s holds %2$d documents but WordPress has %3$d searchable items.', 'meilisearch' ),
 					$count['uid'],
 					$count['documents'],
-					$count['indexable']
+					$expected
 				);
 			}
-		}
+		}//end foreach
 
 		if ( array() === $problems ) {
 			return self::make(
@@ -384,6 +407,43 @@ final class SiteHealth implements Registrable {
 	}
 
 	/**
+	 * Reports indexes that display every attribute while autocomplete hands visitors a key to search them.
+	 * Indexes the plugin creates display only public fields; existing indexes are never changed.
+	 *
+	 * @param bool                        $autocomplete Whether autocomplete is enabled.
+	 * @param array<string, list<string>> $exposed      Index UID => the attributes the plugin would display, for each index displaying ["*"].
+	 * @return Result
+	 */
+	public static function evaluate_displayed( bool $autocomplete, array $exposed ): array {
+		if ( ! $autocomplete || array() === $exposed ) {
+			return self::make(
+				self::TEST_DISPLAYED,
+				'good',
+				__( 'Visitors can only read public fields from Meilisearch', 'meilisearch' ),
+				$autocomplete
+					? __( 'The search key sent to visitors\' browsers only returns the public fields of your indexes.', 'meilisearch' )
+					: __( 'Autocomplete is disabled, so no Meilisearch key is sent to visitors\' browsers.', 'meilisearch' )
+			);
+		}
+
+		$lines = array();
+		foreach ( $exposed as $uid => $fields ) {
+			$lines[] = sprintf( '%1$s: %2$s.', $uid, implode( ', ', $fields ) );
+		}
+
+		return self::make(
+			self::TEST_DISPLAYED,
+			'recommended',
+			__( 'Visitors can read every indexed field', 'meilisearch' ),
+			sprintf(
+				/* translators: %s: comma-separated index UIDs. */
+				__( 'Autocomplete sends a search key to every visitor\'s browser, and %s still display every indexed field, so anyone can read data your site does not show, such as total sales, exact stock quantities, author IDs and custom field values. The plugin only lists public fields on the indexes it creates and never changes the settings of an existing index. Set the displayed attributes of each index in Meilisearch to the fields below, or delete the index and run a full reindex so that the plugin creates it again:', 'meilisearch' ),
+				implode( ', ', array_keys( $exposed ) )
+			) . ' ' . implode( ' ', $lines )
+		);
+	}
+
+	/**
 	 * Reports searchable post types that no index holds while "Replace site search" is on: searches
 	 * that include them (the default theme search does) are never answered by Meilisearch.
 	 *
@@ -412,6 +472,75 @@ final class SiteHealth implements Registrable {
 				implode( ', ', $unindexed )
 			),
 			$content_url
+		);
+	}
+
+	/**
+	 * Reports an autocomplete host that visitors' browsers cannot use (Autocomplete::host_warning()).
+	 *
+	 * @param string|null $warning    Why the host does not work for visitors; null when it does or autocomplete is off.
+	 * @param string      $search_url URL of the Search tab.
+	 * @return Result
+	 */
+	public static function evaluate_browser_host( ?string $warning, string $search_url ): array {
+		if ( null === $warning ) {
+			return self::make(
+				self::TEST_BROWSER,
+				'good',
+				__( 'Visitors\' browsers can reach Meilisearch for autocomplete', 'meilisearch' ),
+				__( 'Autocomplete is disabled, or its Meilisearch URL is one that visitors\' browsers can use.', 'meilisearch' )
+			);
+		}
+
+		return self::make(
+			self::TEST_BROWSER,
+			'recommended',
+			__( 'Autocomplete cannot reach Meilisearch from visitors\' browsers', 'meilisearch' ),
+			$warning,
+			$search_url
+		);
+	}
+
+	/**
+	 * Reports other code on WP_Query's SQL filters while "Replace site search" is on: searches answered by
+	 * Meilisearch skip the SQL those callbacks build, so the constraints they add do not apply.
+	 *
+	 * @param bool     $replace    Whether "Replace site search" is on.
+	 * @param string[] $callbacks  "hook: callback (owner)" for each foreign callback.
+	 * @param string   $search_url URL of the Search tab.
+	 * @return Result
+	 */
+	public static function evaluate_sql_filters( bool $replace, array $callbacks, string $search_url ): array {
+		if ( ! $replace || array() === $callbacks ) {
+			return self::make(
+				self::TEST_SQL,
+				'good',
+				__( 'No other code changes the search queries Meilisearch answers', 'meilisearch' ),
+				__( 'No plugin or theme adds SQL conditions to WordPress queries, or Meilisearch search is turned off.', 'meilisearch' )
+			);
+		}
+
+		$listed = array_slice( array_values( $callbacks ), 0, SqlFilterAudit::MAX_LISTED );
+		$more   = count( $callbacks ) - count( $listed );
+		$list   = implode( '; ', $listed );
+		if ( $more > 0 ) {
+			$list .= '; ' . sprintf(
+				/* translators: %d: number of other callbacks. */
+				_n( '%d more', '%d more', $more, 'meilisearch' ),
+				$more
+			);
+		}
+
+		return self::make(
+			self::TEST_SQL,
+			'recommended',
+			__( 'Other code adds SQL conditions that Meilisearch searches ignore', 'meilisearch' ),
+			sprintf(
+				/* translators: %s: semicolon-separated list of "filter: callback (plugin or theme)". */
+				__( 'These callbacks change the SQL of WordPress queries: %s. Searches answered by Meilisearch do not run that SQL, so whatever these callbacks restrict (a language, members-only content, hidden items) does not apply to their results. If one of them must restrict search results, return false from the meilisearch_should_intercept filter for those searches so that WordPress answers them, or keep the posts out of the index with the meilisearch_should_index_post filter.', 'meilisearch' ),
+				$list
+			),
+			$search_url
 		);
 	}
 
@@ -564,6 +693,9 @@ final class SiteHealth implements Registrable {
 			self::TEST_QUEUE      => __( 'Meilisearch sync queue', 'meilisearch' ),
 			self::TEST_REINDEX    => __( 'Meilisearch reindex status', 'meilisearch' ),
 			self::TEST_COVERAGE   => __( 'Meilisearch search coverage', 'meilisearch' ),
+			self::TEST_DISPLAYED  => __( 'Meilisearch fields visible to visitors', 'meilisearch' ),
+			self::TEST_SQL        => __( 'Meilisearch and SQL query filters', 'meilisearch' ),
+			self::TEST_BROWSER    => __( 'Meilisearch autocomplete URL', 'meilisearch' ),
 		);
 	}
 
@@ -620,7 +752,7 @@ final class SiteHealth implements Registrable {
 	/**
 	 * Counts documents in Meilisearch and indexable items in WordPress.
 	 *
-	 * @return array<string, array{uid: string, documents: ?int, indexable: int}>
+	 * @return array<string, array{uid: string, documents: ?int, indexable: int, excluded: int}>
 	 * @throws ApiError On errors other than a missing index.
 	 */
 	private function document_counts(): array {
@@ -641,6 +773,7 @@ final class SiteHealth implements Registrable {
 				'uid'       => $uid,
 				'documents' => $documents,
 				'indexable' => $this->reindexer->count_indexable( $logical ),
+				'excluded'  => $this->reindexer->excluded_count( $logical ),
 			);
 		}
 
@@ -657,7 +790,7 @@ final class SiteHealth implements Registrable {
 		$missing = array();
 		foreach ( $this->names->active_logicals() as $logical ) {
 			try {
-				$missing[ $this->names->uid( $logical ) ] = $this->indexes->drift( $logical );
+				$missing[ $this->names->uid( $logical ) ] = $this->indexes->drift( $logical, $this->settings_of( $logical ) );
 			} catch ( ApiError $e ) {
 				// A missing index is reported by the document-count test.
 				if ( 'index_not_found' !== $e->error_code ) {
@@ -667,6 +800,71 @@ final class SiteHealth implements Registrable {
 		}
 
 		return $missing;
+	}
+
+	/**
+	 * Evaluates the callbacks other code attaches to WP_Query's SQL filters (no remote call).
+	 *
+	 * @return Result
+	 */
+	private function sql_filters_result(): array {
+		$replace = $this->options->search()['replace'];
+		return self::evaluate_sql_filters(
+			$replace,
+			$replace ? ( $this->sql_filters ?? new SqlFilterAudit() )->foreign_callbacks() : array(),
+			Menu::url( 'search' )
+		);
+	}
+
+	/**
+	 * Evaluates what the browser search key can read; the indexes are only read when autocomplete is on.
+	 *
+	 * @return Result
+	 */
+	private function displayed_result(): array {
+		$autocomplete = $this->options->search()['autocomplete'];
+		return self::evaluate_displayed( $autocomplete, $autocomplete ? $this->fully_displayed() : array() );
+	}
+
+	/**
+	 * Index UID => attributes the plugin displays, for each live index that displays every attribute.
+	 *
+	 * @return array<string, list<string>>
+	 * @throws ApiError On errors other than a missing index.
+	 */
+	private function fully_displayed(): array {
+		$exposed = array();
+		foreach ( $this->names->active_logicals() as $logical ) {
+			try {
+				$settings = $this->settings_of( $logical );
+			} catch ( ApiError $e ) {
+				// A missing index is reported by the document-count test.
+				if ( 'index_not_found' !== $e->error_code ) {
+					throw $e;
+				}
+				continue;
+			}
+			if ( SettingsBuilder::displays_everything( $settings ) ) {
+				$exposed[ $this->names->uid( $logical ) ] = $this->indexes->displayed_attributes( $logical );
+			}
+		}
+
+		return $exposed;
+	}
+
+	/**
+	 * Live settings of an index, read once per request.
+	 *
+	 * @param string $logical Logical index.
+	 * @return array<string, mixed>
+	 * @throws ApiError On Meilisearch errors.
+	 */
+	private function settings_of( string $logical ): array {
+		if ( ! isset( $this->live_settings[ $logical ] ) ) {
+			$this->live_settings[ $logical ] = $this->indexes->live_settings( $logical );
+		}
+
+		return $this->live_settings[ $logical ];
 	}
 
 	/**

@@ -54,7 +54,27 @@ final class Indexability {
 			return null;
 		}
 
-		return in_array( $post_type, $this->options->enabled_post_types(), true ) ? 'content' : null;
+		return in_array( $post_type, $this->content_post_types(), true ) ? 'content' : null;
+	}
+
+	/**
+	 * Post types of the content index: those enabled on the Content tab that are registered as public.
+	 *
+	 * The Content tab only lists public types, but the stored option can name others (a type later
+	 * re-registered as non-public, an unregistered type, a value written by WP-CLI or a crafted form).
+	 * Everything in an index must be public, so this is checked here, whatever wrote the option. The
+	 * predicate is the Content tab's own: get_post_types( array( 'public' => true ) ).
+	 *
+	 * @return list<string>
+	 */
+	public function content_post_types(): array {
+		$public = get_post_types( array( 'public' => true ) );
+		return array_values(
+			array_filter(
+				$this->options->enabled_post_types(),
+				static fn( string $type ): bool => in_array( $type, $public, true )
+			)
+		);
 	}
 
 	/**

@@ -12,6 +12,7 @@ namespace Meilisearch\WordPress\Frontend;
 defined( 'ABSPATH' ) || exit;
 
 use Meilisearch\WordPress\Registrable;
+use Meilisearch\WordPress\Search\FilterBuilder;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 
@@ -48,10 +49,15 @@ final class Autocomplete implements Registrable {
 	}
 
 	/**
-	 * Registers, configures and enqueues the script and style when autocomplete is usable.
+	 * Registers, configures and enqueues the script and style when autocomplete is usable and at
+	 * least one index holds a post type of the site search (otherwise the script has nothing to query).
 	 */
 	public function enqueue(): void {
 		if ( ! $this->should_enqueue() ) {
+			return;
+		}
+		$config = $this->config();
+		if ( null === $config['indexes']['content'] && null === $config['indexes']['products'] ) {
 			return;
 		}
 		wp_register_script(
@@ -64,7 +70,7 @@ final class Autocomplete implements Registrable {
 				'strategy'  => 'defer',
 			)
 		);
-		wp_localize_script( self::HANDLE, self::OBJECT_NAME, $this->config() );
+		wp_localize_script( self::HANDLE, self::OBJECT_NAME, $config );
 		wp_enqueue_script( self::HANDLE );
 		wp_enqueue_style( self::HANDLE, plugins_url( 'assets/css/autocomplete.css', MEILISEARCH_FILE ), array(), MEILISEARCH_VERSION );
 	}
@@ -73,11 +79,17 @@ final class Autocomplete implements Registrable {
 	 * Front end only, enabled in the Search tab, connected, a browser search key exists, and its hash is
 	 * the one recorded as servable: by rotate_search_key() for a plugin-created key, or by the last
 	 * successful verification of a manually pasted key.
+	 *
+	 * Runs on every front-end page view: once autocomplete is known to be on (an autoloaded option), the
+	 * non-autoloaded options the other checks read are loaded in a single query.
 	 */
 	public function should_enqueue(): bool {
-		return ! is_admin()
-			&& $this->options->search()['autocomplete']
-			&& '' !== $this->options->search_key()
+		if ( is_admin() || ! $this->options->search()['autocomplete'] ) {
+			return false;
+		}
+		$this->options->prime_connection();
+
+		return '' !== $this->options->search_key()
 			&& $this->options->is_configured()
 			&& $this->options->search_key_is_verified();
 	}
@@ -96,33 +108,35 @@ final class Autocomplete implements Registrable {
 	 * Script configuration. Numbers live in nested arrays because wp_localize_script()
 	 * casts top-level scalars to strings.
 	 *
-	 * @return array{host: string, key: string, indexes: array{content: string, products: ?string}, limits: array{content: int, products: int, minChars: int, debounce: int}, subtitles: array{content: ?string, products: ?string}, selector: string, currency: ?string, locale: string, home: string, i18n: array<string, string>}
+	 * Suggestions follow the default site search (QueryTranslator): only post types registered with
+	 * exclude_from_search = false. A type can be indexed and still be left out of the search, and the
+	 * results page the "See all results" link opens would not list it.
+	 *
+	 * @return array{host: string, key: string, indexes: array{content: ?string, products: ?string}, filters: array{content: ?string}, limits: array{content: int, products: int, minChars: int, debounce: int}, subtitles: array{content: ?string, products: ?string}, selector: string, currency: ?string, locale: string, home: string, i18n: array<string, string>}
 	 */
 	public function config(): array {
 		$selector = apply_filters( 'meilisearch_autocomplete_selector', self::DEFAULT_SELECTOR );
 		if ( ! is_string( $selector ) || '' === trim( $selector ) ) {
 			$selector = self::DEFAULT_SELECTOR;
 		}
-		$products = $this->options->products_enabled();
+		$searchable    = array_map( 'strval', array_values( get_post_types( array( 'exclude_from_search' => false ) ) ) );
+		$content_types = array_values( array_intersect( $this->options->enabled_post_types(), $searchable ) );
+		$products      = $this->options->products_enabled() && in_array( 'product', $searchable, true );
 
 		$subtitles = array();
 		foreach ( array( 'content', 'products' ) as $logical ) {
-			/**
-			 * Filters the document field shown as a second line under each autocomplete suggestion.
-			 *
-			 * @param string|null $field   Field name (top-level, [A-Za-z0-9_.]), or null for none.
-			 * @param string      $logical 'content' | 'products'.
-			 */
-			$field                 = apply_filters( 'meilisearch_autocomplete_subtitle_field', null, $logical );
-			$subtitles[ $logical ] = is_string( $field ) && 1 === preg_match( '/^[A-Za-z0-9_.]+$/', $field ) ? $field : null;
+			$subtitles[ $logical ] = self::subtitle_field( $logical );
 		}
 
 		return array(
 			'host'      => $this->browser_host(),
 			'key'       => $this->options->search_key(),
 			'indexes'   => array(
-				'content'  => $this->names->uid( 'content' ),
+				'content'  => array() !== $content_types ? $this->names->uid( 'content' ) : null,
 				'products' => $products ? $this->names->uid( 'products' ) : null,
+			),
+			'filters'   => array(
+				'content' => array() !== $content_types ? FilterBuilder::in( 'post_type', $content_types ) : null,
 			),
 			'limits'    => array(
 				'content'  => self::LIMIT,
@@ -152,11 +166,54 @@ final class Autocomplete implements Registrable {
 	}
 
 	/**
+	 * Why visitors' browsers cannot use the browser host (BrowserHost::warning()), or null when they can or
+	 * autocomplete is off. The site's URL is home_url(), which visitors open.
+	 *
+	 * @param Options $options Plugin options.
+	 * @return string|null Plain text.
+	 */
+	public static function host_warning( Options $options ): ?string {
+		if ( ! $options->search()['autocomplete'] || ! $options->is_configured() ) {
+			return null;
+		}
+
+		return BrowserHost::warning( self::browser_host_for( $options ), home_url( '/' ) );
+	}
+
+	/**
+	 * The field shown under each suggestion of an index, or null for none. SettingsBuilder adds it to the
+	 * displayed attributes of the indexes the plugin creates, so the browser key can read it.
+	 *
+	 * @param string $logical 'content' | 'products'.
+	 * @return string|null
+	 */
+	public static function subtitle_field( string $logical ): ?string {
+		/**
+		 * Filters the document field shown as a second line under each autocomplete suggestion.
+		 *
+		 * @param string|null $field   Field name (top-level, [A-Za-z0-9_.]), or null for none.
+		 * @param string      $logical 'content' | 'products'.
+		 */
+		$field = apply_filters( 'meilisearch_autocomplete_subtitle_field', null, $logical );
+		return is_string( $field ) && 1 === preg_match( '/^[A-Za-z0-9_.]+$/', $field ) ? $field : null;
+	}
+
+	/**
 	 * The Meilisearch URL visitors' browsers use. Defaults to the configured host; a site whose PHP reaches
 	 * Meilisearch on a private address (loopback, internal network) returns the public URL here.
 	 */
 	public function browser_host(): string {
-		$host = $this->options->host();
+		return self::browser_host_for( $this->options );
+	}
+
+	/**
+	 * The Meilisearch URL visitors' browsers use, for the given options (see browser_host()).
+	 *
+	 * @param Options $options Plugin options.
+	 * @return string
+	 */
+	public static function browser_host_for( Options $options ): string {
+		$host = $options->host();
 		/**
 		 * Filters the Meilisearch URL the autocomplete script calls from the browser.
 		 *

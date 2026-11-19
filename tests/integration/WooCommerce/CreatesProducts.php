@@ -11,6 +11,7 @@ namespace Meilisearch\WordPress\Tests\Integration\WooCommerce;
 
 use Meilisearch\WordPress\Plugin;
 use Meilisearch\WordPress\Settings\Options;
+use Meilisearch\WordPress\WooCommerce\ProductSchema;
 
 trait CreatesProducts {
 
@@ -42,8 +43,13 @@ trait CreatesProducts {
 		);
 		$this->reboot_plugin();
 		Plugin::instance()->get( 'index_manager' )->ensure_index( 'products' );
-		// Tests fill the products index through sync instead of a full reindex (which populates it).
-		Plugin::instance()->get( 'options' )->set_populated( 'products', true );
+		// Tests fill the products index through sync instead of a full reindex (which populates it
+		// and clears the "needs reindex" flag raised by the attribute and WooCommerce option changes above,
+		// and records what its documents carry).
+		$options = Plugin::instance()->get( 'options' );
+		$options->set_populated( 'products', true );
+		$options->flag_reindex( 'products', false );
+		$options->set_state( 'products_build', ( new ProductSchema( $options ) )->build_record() );
 	}
 
 	/**

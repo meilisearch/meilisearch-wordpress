@@ -185,6 +185,94 @@ final class SearchTest extends TestCase {
 	}
 
 	/**
+	 * The host, admin key or prefix changed without the connection flow (here: the site was connected with
+	 * another host, as when MEILISEARCH_HOST is edited in wp-config.php): the populated flag describes the
+	 * previous connection's indexes, so MySQL answers and a reindex is refused until connect() runs again.
+	 */
+	public function test_connection_changed_outside_connect_falls_back_to_mysql_until_reconnected(): void {
+		$plugin  = Plugin::instance();
+		$options = $plugin->get( 'options' );
+		$options->set_state( 'fingerprint', md5( 'http://previous-host.test:7700|' . $options->admin_key() . '|' . $plugin->get( 'names' )->prefix() ) );
+		self::assertSame( array( 'content' ), array_values( array_intersect( array( 'content' ), (array) $options->state( 'populated' ) ) ) );
+
+		$this->go_to( home_url( '/?s=nebula' ) );
+
+		self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 0, $this->search_requests );
+		self::assertNotEmpty( $this->result_ids(), 'MySQL answers the search.' );
+
+		try {
+			$plugin->get( 'reindexer' )->start( 'content' );
+			self::fail( 'A reindex must be refused until the connection flow runs.' );
+		} catch ( \RuntimeException $error ) {
+			self::assertStringContainsString( 'wp meilisearch connect', $error->getMessage() );
+		}
+
+		$plugin->get( 'index_manager' )->connect();
+		self::assertFalse( $options->connection_changed() );
+		self::assertFalse( $options->is_populated( 'content' ), 'connect() clears the flag of the previous connection.' );
+		$plugin->get( 'reindexer' )->run_sync( 'content', 200, static function (): void {} );
+		if ( '1' === getenv( 'MEILISEARCH_TEST_WC' ) ) {
+			$plugin->get( 'reindexer' )->run_sync( 'products', 200, static function (): void {} );
+		}
+
+		$this->go_to( home_url( '/?s=nebula' ) );
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+	}
+
+	/**
+	 * Ticking a post type and a taxonomy in the Content tab: Meilisearch holds neither the existing posts
+	 * of the type nor the taxonomy field until a full reindex, so MySQL answers until one has completed.
+	 */
+	public function test_newly_indexed_type_and_taxonomy_are_answered_by_mysql_until_reindexed(): void {
+		register_post_type( 'meili_book', array( 'public' => true ) );
+		try {
+			$tagged = $this->matching[0];
+			wp_set_post_tags( $tagged, array( 'scifi' ) );
+			$book = self::factory()->post->create(
+				array(
+					'post_title' => 'Quasar atlas',
+					'post_type'  => 'meili_book',
+				)
+			);
+
+			update_option(
+				Options::CONTENT,
+				array(
+					'post_types' => array( 'post', 'page', 'meili_book' ),
+					'taxonomies' => array(
+						'post'       => array( 'category', 'post_tag' ),
+						'meili_book' => array(),
+					),
+					'meta_keys'  => array(),
+				)
+			);
+			$this->wait_for_tasks();
+			$this->search_requests = 0;
+
+			$this->go_to( home_url( '/?s=quasar' ) );
+			self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ), 'The index holds no book yet.' );
+			self::assertContains( $book, $this->result_ids() );
+
+			$this->go_to( home_url( '/?s=nebula&tag=scifi&post_type=post' ) );
+			self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ), 'No document has the tag field yet.' );
+			self::assertContains( $tagged, $this->result_ids() );
+			self::assertSame( 0, $this->search_requests );
+
+			Plugin::instance()->get( 'reindexer' )->run_sync( 'content', 200, static function (): void {} );
+
+			$this->go_to( home_url( '/?s=nebula&tag=scifi&post_type=post' ) );
+			self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+			self::assertSame( array( $tagged ), $this->result_ids() );
+			$this->go_to( home_url( '/?s=quasar' ) );
+			self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+			self::assertContains( $book, $this->result_ids() );
+		} finally {
+			unregister_post_type( 'meili_book' );
+		}
+	}
+
+	/**
 	 * Theme search results come from Meilisearch, in its ranking order.
 	 */
 	public function test_results_come_from_meilisearch_in_ranking_order(): void {
@@ -268,6 +356,57 @@ final class SearchTest extends TestCase {
 	}
 
 	/**
+	 * Meilisearch counts every match but serves only the first pagination.maxTotalHits (1000) of
+	 * an index. The totals stop there: every advertised page has posts, and a query for all posts
+	 * reports the number it returns.
+	 */
+	public function test_totals_stop_at_the_hits_the_engine_serves(): void {
+		for ( $i = 1; $i <= 1020; $i++ ) {
+			self::factory()->post->create(
+				array(
+					'post_title'   => 'Quasar note ' . $i,
+					'post_content' => 'x',
+				)
+			);
+		}
+		Plugin::instance()->get( 'reindexer' )->run_sync(
+			'content',
+			500,
+			static function (): void {}
+		);
+		$this->wait_for_tasks();
+
+		$this->go_to( home_url( '/?s=quasar' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 1000, $this->main_query()->found_posts );
+		self::assertSame( 100, $this->main_query()->max_num_pages );
+		self::assertCount( 10, $this->main_query()->posts );
+
+		$this->go_to( home_url( '/?s=quasar&paged=100' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 100, $this->main_query()->max_num_pages );
+		self::assertCount( 10, $this->main_query()->posts, 'The last advertised page has posts.' );
+		self::assertFalse( is_404() );
+
+		$all = new \WP_Query(
+			array(
+				's'                   => 'quasar',
+				'posts_per_page'      => -1,
+				'meilisearch'         => true,
+				'post_type'           => 'post',
+				'ignore_sticky_posts' => true,
+			)
+		);
+
+		self::assertTrue( $all->get( Interceptor::QUERY_FLAG ) );
+		self::assertCount( 1000, $all->posts );
+		self::assertSame( 1000, $all->found_posts );
+		self::assertSame( 1, $all->max_num_pages );
+	}
+
+	/**
 	 * URL taxonomy vars (cat) reach Meilisearch through $query->tax_query.
 	 */
 	public function test_category_query_var_filters_results(): void {
@@ -320,5 +459,203 @@ final class SearchTest extends TestCase {
 		self::assertSame( 1, $this->search_requests );
 		self::assertSame( 25, $this->main_query()->found_posts );
 		self::assertLessThan( 1.0, microtime( true ) - $started );
+	}
+
+	/**
+	 * Highlighting retrieves only the IDs; the cropped, highlighted content still comes back in _formatted.
+	 */
+	public function test_highlighted_search_returns_only_the_cropped_content(): void {
+		update_option(
+			Options::SEARCH,
+			array_merge(
+				Options::defaults()[ Options::SEARCH ],
+				array(
+					'replace'   => true,
+					'highlight' => true,
+				)
+			)
+		);
+
+		$this->go_to( home_url( '/?s=clouds' ) );
+
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		$ids = $this->result_ids();
+		self::assertNotEmpty( $ids );
+		$formatted = Plugin::instance()->get( 'result_mapper' )->formatted( $ids[0] );
+		self::assertIsArray( $formatted );
+		self::assertStringContainsString( '<mark>clouds</mark>', (string) $formatted['content'] );
+		self::assertArrayNotHasKey( 'title', $formatted );
+	}
+
+	/**
+	 * Mixed author inclusion and exclusion: like core, only the exclusion applies.
+	 */
+	public function test_author_exclusion_wins_over_inclusion_like_mysql(): void {
+		$a = self::factory()->user->create();
+		$b = self::factory()->user->create();
+		wp_update_post(
+			array(
+				'ID'          => $this->matching[0],
+				'post_author' => $a,
+			)
+		);
+		wp_update_post(
+			array(
+				'ID'          => $this->matching[1],
+				'post_author' => $b,
+			)
+		);
+		Plugin::instance()->get( 'reindexer' )->run_sync(
+			'content',
+			200,
+			static function (): void {}
+		);
+		// Restricted to posts: products have no author_id, so a default search with an author
+		// constraint is answered by MySQL whenever products are indexed (QueryTranslator).
+		$url = home_url( '/?s=nebula&post_type=post&author=' . $a . ',-' . $b );
+
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => false ) ) );
+		$this->go_to( $url );
+		self::assertNotTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		$mysql = $this->main_query()->found_posts;
+
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		$this->go_to( $url );
+		self::assertTrue( $this->main_query()->get( Interceptor::QUERY_FLAG ) );
+		self::assertSame( 24, $mysql );
+		self::assertSame( $mysql, $this->main_query()->found_posts );
+	}
+
+	/**
+	 * A CHAR meta comparison against a non-canonical numeric string ("02134") matches the post like MySQL.
+	 */
+	public function test_meta_filter_matches_non_canonical_numeric_strings(): void {
+		update_option(
+			Options::CONTENT,
+			array(
+				'post_types' => array( 'post', 'page' ),
+				'taxonomies' => array( 'post' => array( 'category' ) ),
+				'meta_keys'  => array( 'post' => array( 'zip' ) ),
+			)
+		);
+		update_post_meta( $this->matching[0], 'zip', '02134' );
+		update_post_meta( $this->matching[1], 'zip', '+5' );
+		$plugin = Plugin::instance();
+		$plugin->get( 'index_manager' )->ensure_all();
+		$plugin->get( 'reindexer' )->run_sync(
+			'content',
+			200,
+			static function (): void {}
+		);
+
+		foreach ( array(
+			'02134' => $this->matching[0],
+			'+5'    => $this->matching[1],
+		) as $zip => $expected ) {
+			$args  = array(
+				's'                   => 'nebula',
+				'post_type'           => 'post',
+				'ignore_sticky_posts' => true,
+				'meta_query'          => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- Test query.
+					array(
+						'key'   => 'zip',
+						'value' => (string) $zip,
+					),
+				),
+			);
+			$mysql = new \WP_Query( $args );
+			$meili = new \WP_Query( array_merge( $args, array( 'meilisearch' => true ) ) );
+
+			self::assertNotTrue( $mysql->get( Interceptor::QUERY_FLAG ) );
+			self::assertTrue( $meili->get( Interceptor::QUERY_FLAG ), (string) $zip );
+			self::assertSame( array( $expected ), array_map( 'intval', wp_list_pluck( $mysql->posts, 'ID' ) ), (string) $zip );
+			self::assertSame( array( $expected ), array_map( 'intval', wp_list_pluck( $meili->posts, 'ID' ) ), (string) $zip );
+		}
+	}
+
+	/**
+	 * Documents hold only the first value of a meta key and leave out empty values, so the comparisons
+	 * whose answer depends on the other rows or on empty values (!=, NOT IN, NOT EXISTS, = '') are
+	 * answered by MySQL, with the same results as without Meilisearch.
+	 */
+	public function test_meta_comparisons_affected_by_empty_or_multi_row_meta_match_mysql(): void {
+		update_option(
+			Options::CONTENT,
+			array(
+				'post_types' => array( 'post', 'page' ),
+				'taxonomies' => array( 'post' => array( 'category' ) ),
+				'meta_keys'  => array( 'post' => array( 'rating', 'color' ) ),
+			)
+		);
+		update_post_meta( $this->matching[0], 'rating', '' );
+		add_post_meta( $this->matching[1], 'color', 'red' );
+		add_post_meta( $this->matching[1], 'color', 'blue' );
+		update_post_meta( $this->matching[2], 'color', 'red' );
+		update_post_meta( $this->matching[3], 'rating', '5' );
+		$plugin = Plugin::instance();
+		$plugin->get( 'index_manager' )->ensure_all();
+		$plugin->get( 'reindexer' )->run_sync(
+			'content',
+			200,
+			static function (): void {}
+		);
+
+		$cases       = array(
+			'rating != 3'        => array(
+				'key'     => 'rating',
+				'value'   => '3',
+				'compare' => '!=',
+			),
+			'rating NOT IN 3, 4' => array(
+				'key'     => 'rating',
+				'value'   => array( '3', '4' ),
+				'compare' => 'NOT IN',
+			),
+			'rating NOT EXISTS'  => array(
+				'key'     => 'rating',
+				'compare' => 'NOT EXISTS',
+			),
+			'rating = empty'     => array(
+				'key'   => 'rating',
+				'value' => '',
+			),
+			'color != red'       => array(
+				'key'     => 'color',
+				'value'   => 'red',
+				'compare' => '!=',
+			),
+			'color NOT IN red'   => array(
+				'key'     => 'color',
+				'value'   => array( 'red' ),
+				'compare' => 'NOT IN',
+			),
+			'color NOT EXISTS'   => array(
+				'key'     => 'color',
+				'compare' => 'NOT EXISTS',
+			),
+		);
+		$differences = array();
+		foreach ( $cases as $name => $clause ) {
+			$args  = array(
+				's'                   => 'nebula',
+				'post_type'           => 'post',
+				'posts_per_page'      => 50,
+				'ignore_sticky_posts' => true,
+				'meta_query'          => array( $clause ), // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query -- Test query.
+			);
+			$mysql = new \WP_Query( $args );
+			$meili = new \WP_Query( array_merge( $args, array( 'meilisearch' => true ) ) );
+
+			$expected = array_map( 'intval', wp_list_pluck( $mysql->posts, 'ID' ) );
+			$actual   = array_map( 'intval', wp_list_pluck( $meili->posts, 'ID' ) );
+			sort( $expected );
+			sort( $actual );
+			self::assertNotTrue( $mysql->get( Interceptor::QUERY_FLAG ), $name );
+			self::assertNotEmpty( $expected, $name );
+			if ( $expected !== $actual || true === $meili->get( Interceptor::QUERY_FLAG ) ) {
+				$differences[ $name ] = sprintf( 'mysql=[%s] meilisearch=[%s]%s', implode( ',', $expected ), implode( ',', $actual ), true === $meili->get( Interceptor::QUERY_FLAG ) ? ' (intercepted)' : '' );
+			}
+		}
+		self::assertSame( array(), $differences );
 	}
 }

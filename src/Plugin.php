@@ -153,13 +153,14 @@ final class Plugin {
 		// Tasks 11-13 — sync and reindex.
 		$queue     = new Sync\Queue();
 		$collector = new Sync\ChangeCollector( $indexability, $queue, $options, $error_log );
-		$sync_job  = new Sync\SyncJob( $clients, $names, $indexability, $builders, $queue, $error_log );
+		$sync_job  = new Sync\SyncJob( $clients, $names, $indexability, $builders, $queue, $error_log, $indexes, $options );
 		$reindexer = new Indexing\Reindexer( $clients, $indexes, $names, $indexability, $builders, $queue, $options, $error_log );
 		$this->add( 'queue', $queue );
 		$this->add( 'collector', $collector );
 		$this->add( 'reindexer', $reindexer );
 		$this->add( 'sync_job', $sync_job );
 		$this->add( 'term_job', new Sync\TermJob( $collector, $queue, $options ) );
+		$this->add( 'author_job', new Sync\AuthorJob( $collector, $queue, $options ) );
 
 		// Tasks 15-18, Task 22 — search.
 		$product_translator = $options->products_enabled() ? new WooCommerce\ProductQueryTranslator( $options ) : null;
@@ -206,6 +207,7 @@ final class Plugin {
 
 		// Task 26 — lifecycle.
 		$this->add( 'site_seeder', new Lifecycle\SiteSeeder() );
+		$this->add( 'site_cleaner', new Lifecycle\SiteCleaner() );
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			\WP_CLI::add_command( 'meilisearch', new Ops\Cli( $reindexer, $sync_job, $clients, $names, $health, $indexability, $queue, $options, $indexes ) );

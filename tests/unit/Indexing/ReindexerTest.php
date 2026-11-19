@@ -13,6 +13,7 @@ use Brain\Monkey\Actions;
 use Brain\Monkey\Filters;
 use Brain\Monkey\Functions;
 use Meilisearch\WordPress\Api\ApiError;
+use Meilisearch\WordPress\Indexing\DatabaseReadError;
 use Meilisearch\WordPress\Indexing\Reindexer;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\ErrorLog;
@@ -356,6 +357,127 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
+	 * Starting a run does not wait for (or fail on) a settings task Meilisearch is still processing: the task is recorded.
+	 */
+	public function test_start_records_a_settings_task_still_processing(): void {
+		Functions\when( 'wp_generate_password' )->justReturn( 'abcd' );
+		$this->install_wpdb( array(), '2' );
+		$this->transport
+			->respond(
+				404,
+				array(
+					'code'    => 'index_not_found',
+					'message' => 'missing',
+				)
+			)
+			->queue( self::task_response( 1 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 1,
+					'status' => 'processing',
+				)
+			)
+			->queue( self::task_response( 2 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 2,
+					'status' => 'enqueued',
+				)
+			);
+		Functions\expect( 'as_schedule_single_action' )->once()->andReturn( 9 );
+
+		$state = $this->reindexer()->start( 'content' );
+
+		$this->assertSame( 'running', $state['status'] );
+		$this->assertSame( 'upsert', $state['phase'] );
+		$this->assertSame( 2, $state['settings_task'] );
+		$this->assertCount( 5, $this->transport->requests(), 'One poll per task, no waiting.' );
+		$this->assertSame( $this->options->content_signature(), $state['content_signature'], 'The content settings the run is built with.' );
+	}
+
+	/**
+	 * The sweep reads the index with a filter and a sort on id: it waits until the settings task has been applied.
+	 */
+	public function test_sweep_waits_for_the_settings_task(): void {
+		$this->seed_run(
+			array(
+				'phase'         => 'sweep',
+				'settings_task' => 2,
+			)
+		);
+		$this->transport->respond(
+			200,
+			array(
+				'uid'    => 2,
+				'status' => 'processing',
+			)
+		);
+		$this->expect_next_step( Reindexer::FINALIZE_POLL );
+
+		$this->handle();
+
+		$requests = $this->transport->requests();
+		$this->assertCount( 1, $requests );
+		$this->assertStringEndsWith( '/tasks/2', $requests[0]['url'] );
+		$state = $this->state();
+		$this->assertSame( 'sweep', $state['phase'] );
+		$this->assertSame( 2, $state['settings_task'] );
+		$this->assertSame( 'running', $state['status'] );
+	}
+
+	/**
+	 * Once the settings task has succeeded the sweep runs in the same step.
+	 */
+	public function test_sweep_runs_once_the_settings_task_succeeded(): void {
+		$this->seed_run(
+			array(
+				'phase'         => 'sweep',
+				'settings_task' => 2,
+			)
+		);
+		$this->transport
+			->queue( self::succeeded_task( 2 ) )
+			->queue( self::json_response( 200, array( 'results' => array() ) ) );
+		$this->expect_next_step( Reindexer::FINALIZE_POLL );
+
+		$this->handle();
+
+		$this->assertStringContainsString( '/documents/fetch', $this->transport->requests()[1]['url'] );
+		$state = $this->state();
+		$this->assertSame( 'finalizing', $state['phase'] );
+		$this->assertArrayNotHasKey( 'settings_task', $state );
+	}
+
+	/**
+	 * A settings task that failed fails the run with the engine's message before anything is swept.
+	 */
+	public function test_failed_settings_task_fails_the_run(): void {
+		$this->seed_run(
+			array(
+				'phase'         => 'sweep',
+				'settings_task' => 2,
+			)
+		);
+		$this->transport->respond(
+			200,
+			array(
+				'uid'    => 2,
+				'status' => 'failed',
+				'error'  => array( 'message' => 'Invalid filterable attribute.' ),
+			)
+		);
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		$this->handle();
+
+		$this->assertCount( 1, $this->transport->requests() );
+		$this->assertSame( 'failed', $this->state()['status'] );
+		$this->assertSame( 'Invalid filterable attribute.', $this->state()['error'] );
+	}
+
+	/**
 	 * Actions of a superseded or finished run are ignored.
 	 */
 	public function test_stale_run_is_ignored(): void {
@@ -425,6 +547,176 @@ final class ReindexerTest extends TestCase {
 		$this->assertTrue( $this->options->needs_reindex( 'content' ), 'A flag raised mid-run must survive finalization.' );
 		$this->assertTrue( (bool) $this->options->state( 'first_reindex_done' ) );
 		$this->assertTrue( $this->options->is_populated( 'content' ), 'A done run populates the index.' );
+	}
+
+	/**
+	 * The content settings changed while the run was sending documents (a post type, taxonomy or meta key
+	 * added mid-run): the posts sent before the change lack it, so the run does not mark the index populated.
+	 */
+	public function test_finalize_does_not_populate_when_the_content_settings_changed_mid_run(): void {
+		$this->seed_run(
+			array(
+				'phase'             => 'finalizing',
+				'task_uids'         => array( 7 ),
+				'content_signature' => $this->options->content_signature(),
+			)
+		);
+		$this->option_store[ Options::CONTENT ]['post_types'][] = 'book';
+		$this->transport->queue( self::tasks_response( array() ) )->queue( self::tasks_response( array() ) );
+
+		$this->handle();
+
+		$this->assertSame( 'done', $this->state()['status'] );
+		$this->assertFalse( $this->options->is_populated( 'content' ), 'Built with two configurations: not populated.' );
+	}
+
+	/**
+	 * Settings unchanged since the run started: the index is populated.
+	 */
+	public function test_finalize_populates_when_the_content_settings_are_those_of_the_run(): void {
+		$this->seed_run(
+			array(
+				'phase'             => 'finalizing',
+				'task_uids'         => array( 7 ),
+				'content_signature' => $this->options->content_signature(),
+			)
+		);
+		$this->transport->queue( self::tasks_response( array() ) )->queue( self::tasks_response( array() ) );
+
+		$this->handle();
+
+		$this->assertTrue( $this->options->is_populated( 'content' ) );
+	}
+
+	/**
+	 * A products run records what its documents carry once it is done (ProductQueryTranslator relies on it).
+	 */
+	public function test_finalize_records_the_product_build_of_the_run(): void {
+		$this->seed_run(
+			array(
+				'phase'          => 'finalizing',
+				'task_uids'      => array( 7 ),
+				'products_build' => array( 'version' => 2 ),
+			)
+		);
+		$this->transport->queue( self::tasks_response( array() ) )->queue( self::tasks_response( array() ) );
+
+		$this->handle();
+
+		$this->assertSame( array( 'version' => 2 ), $this->options->state( 'products_build' ) );
+	}
+
+	/**
+	 * A failed run did not rewrite every document: the previous build stays recorded.
+	 */
+	public function test_failed_run_does_not_record_its_product_build(): void {
+		$this->options->set_state( 'products_build', array( 'version' => 1 ) );
+		$this->seed_run(
+			array(
+				'phase'          => 'finalizing',
+				'task_uids'      => array( 7 ),
+				'products_build' => array( 'version' => 2 ),
+			)
+		);
+		$this->transport
+			->queue( self::tasks_response( array() ) )
+			->queue(
+				self::tasks_response(
+					array(
+						array(
+							'uid'    => 7,
+							'status' => 'failed',
+							'error'  => array( 'message' => 'Boom.' ),
+						),
+					)
+				)
+			);
+
+		$this->handle();
+
+		$this->assertSame( 'failed', $this->state()['status'] );
+		$this->assertSame( array( 'version' => 1 ), $this->options->state( 'products_build' ) );
+	}
+
+	/**
+	 * Vetoed rows count as scanned but not sent: the done run records them as excluded.
+	 */
+	public function test_vetoed_rows_are_counted_as_scanned_and_recorded_as_excluded_when_done(): void {
+		$this->seed_run();
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->add_post( array( 'ID' => 11 ) );
+		$this->add_post( array( 'ID' => 12 ) );
+		$this->install_wpdb( array( array( 10, 11, 12 ) ) );
+		Filters\expectApplied( 'meilisearch_should_index_post' )->andReturnUsing( static fn ( $index, $post ) => 11 === (int) $post->ID ? false : $index );
+		$this->transport->queue( self::task_response( 7 ) );
+		$this->expect_next_step( 0 );
+
+		$this->handle();
+
+		$state = $this->state();
+		$this->assertSame( 2, $state['sent'] );
+		$this->assertSame( 3, $state['scanned'] );
+		$this->assertSame( 0, $this->reindexer()->excluded_count( 'content' ), 'Nothing is recorded before the run completes.' );
+
+		$this->seed_run(
+			array(
+				'phase'     => 'finalizing',
+				'sent'      => 2,
+				'scanned'   => 3,
+				'task_uids' => array(),
+			)
+		);
+		$this->transport->queue( self::tasks_response( array() ) );
+		$this->handle();
+
+		$this->assertSame( 'done', $this->state()['status'] );
+		$this->assertSame( 1, $this->reindexer()->excluded_count( 'content' ) );
+	}
+
+	/**
+	 * A new run keeps the last completed run's exclusion count until it completes itself.
+	 */
+	public function test_start_carries_the_last_completed_exclusion_count(): void {
+		Functions\when( 'wp_generate_password' )->justReturn( 'abcd' );
+		$this->seed_run(
+			array(
+				'status'   => 'done',
+				'excluded' => 4,
+			)
+		);
+		$this->install_wpdb( array(), '10' );
+		$this->transport
+			->respond(
+				404,
+				array(
+					'code'    => 'index_not_found',
+					'message' => 'missing',
+				)
+			)
+			->queue( self::task_response( 1 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 1,
+					'status' => 'processing',
+				)
+			)
+			->queue( self::task_response( 2 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 2,
+					'status' => 'enqueued',
+				)
+			);
+		Functions\expect( 'as_schedule_single_action' )->once()->andReturn( 9 );
+
+		$state = $this->reindexer()->start( 'content' );
+
+		$this->assertSame( 4, $state['excluded'] );
+		$this->assertSame( 0, $state['scanned'] );
+		$this->assertSame( 4, $this->reindexer()->excluded_count( 'content' ) );
+		$this->assertSame( 6, $this->reindexer()->estimated_indexable( 'content' ) );
 	}
 
 	/**
@@ -525,13 +817,141 @@ final class ReindexerTest extends TestCase {
 	}
 
 	/**
-	 * An exception during a batch marks the run failed and is rethrown for Action Scheduler.
+	 * Errors worth retrying: no response, request timeout, rate limit, server or proxy errors.
+	 *
+	 * @return array<string, array{0: ApiError}>
 	 */
-	public function test_batch_error_fails_run_and_rethrows(): void {
+	public static function transient_errors(): array {
+		return array(
+			'transport' => array( ApiError::transport( 'cURL error 28' ) ),
+			'408'       => array( new ApiError( 'Request timeout.', 'http_408', 408 ) ),
+			'429'       => array( new ApiError( 'Too many requests.', 'too_many_requests', 429 ) ),
+			'502'       => array( new ApiError( 'Bad gateway.', 'http_502', 502 ) ),
+			'503'       => array( new ApiError( 'Service unavailable.', 'http_503', 503 ) ),
+		);
+	}
+
+	/**
+	 * A transient error keeps the run running and reschedules the same step with backoff; the counter lives in the state.
+	 *
+	 * @dataProvider transient_errors
+	 *
+	 * @param ApiError $error Error thrown by the upsert request.
+	 */
+	public function test_transient_batch_error_reschedules_the_step( ApiError $error ): void {
+		$this->seed_run( array( 'updated_at' => 1 ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( $error );
+		$this->expect_next_step( Reindexer::RETRY_BACKOFF[0] );
+
+		$this->handle();
+
+		$state = $this->state();
+		$this->assertSame( 'running', $state['status'] );
+		$this->assertSame( 'upsert', $state['phase'] );
+		$this->assertSame( 0, $state['last_id'], 'The failed batch is sent again.' );
+		$this->assertSame( 1, $state['retries'] );
+		$this->assertGreaterThan( time() - 5, $state['updated_at'] );
+	}
+
+	/**
+	 * Each further transient error waits longer.
+	 */
+	public function test_retries_back_off(): void {
+		$this->seed_run( array( 'retries' => 1 ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( new ApiError( 'Bad gateway.', 'http_502', 502 ) );
+		$this->expect_next_step( Reindexer::RETRY_BACKOFF[1] );
+
+		$this->handle();
+
+		$this->assertSame( 2, $this->state()['retries'] );
+	}
+
+	/**
+	 * A successful step resets the counter: the limit is per step, not per run.
+	 */
+	public function test_successful_step_resets_the_retry_counter(): void {
+		$this->seed_run( array( 'retries' => 2 ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( self::task_response( 7 ) );
+		$this->expect_next_step( 0 );
+
+		$this->handle();
+
+		$this->assertArrayNotHasKey( 'retries', $this->state() );
+	}
+
+	/**
+	 * Errors that a retry cannot fix fail the run at once.
+	 *
+	 * @return array<string, array{0: ApiError}>
+	 */
+	public static function permanent_errors(): array {
+		return array(
+			'invalid key'     => array( new ApiError( 'The provided API key is invalid.', 'invalid_api_key', 403 ) ),
+			'missing index'   => array( new ApiError( 'Index not found.', 'index_not_found', 404 ) ),
+			'payload too big' => array( new ApiError( 'Payload too large.', 'payload_too_large', 413 ) ),
+			'task timeout'    => array( new ApiError( 'Timed out.', 'task_timeout' ) ),
+		);
+	}
+
+	/**
+	 * A non-retryable error fails the run at once and is rethrown for Action Scheduler.
+	 *
+	 * @dataProvider permanent_errors
+	 *
+	 * @param ApiError $error Error thrown by the upsert request.
+	 */
+	public function test_permanent_batch_error_fails_at_once( ApiError $error ): void {
+		$this->seed_run();
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( $error );
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		try {
+			$this->handle();
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( $error->error_code, $e->error_code );
+		}
+
+		$this->assertSame( 'failed', $this->state()['status'] );
+	}
+
+	/**
+	 * When the retry cannot be scheduled the run fails instead of hanging.
+	 */
+	public function test_unschedulable_retry_fails_the_run(): void {
 		$this->seed_run();
 		$this->add_post( array( 'ID' => 10 ) );
 		$this->install_wpdb( array( array( 10 ) ) );
 		$this->transport->queue( ApiError::transport( 'cURL error 28' ) );
+		Functions\expect( 'as_schedule_single_action' )->once()->andReturn( 0 );
+
+		try {
+			$this->handle();
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( 'transport_error', $e->error_code );
+		}
+
+		$this->assertSame( 'failed', $this->state()['status'] );
+	}
+
+	/**
+	 * A transient error that outlasts every retry marks the run failed and is rethrown for Action Scheduler.
+	 */
+	public function test_batch_error_fails_run_and_rethrows(): void {
+		$this->seed_run( array( 'retries' => count( Reindexer::RETRY_BACKOFF ) ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( ApiError::transport( 'cURL error 28' ) );
+		Functions\expect( 'as_schedule_single_action' )->never();
 
 		try {
 			$this->handle();
@@ -543,6 +963,81 @@ final class ReindexerTest extends TestCase {
 		$state = $this->state();
 		$this->assertSame( 'failed', $state['status'] );
 		$this->assertSame( 'cURL error 28', $state['error'] );
+	}
+
+	/**
+	 * A failed candidate query during the sweep is not "no rows": nothing is deleted and the run fails.
+	 */
+	public function test_failed_sweep_query_deletes_nothing_and_fails_run(): void {
+		$this->seed_run( array( 'phase' => 'sweep' ) );
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->add_post( array( 'ID' => 11 ) );
+		$this->install_wpdb( array( false ) );
+		$this->transport->queue(
+			self::json_response(
+				200,
+				array(
+					'results' => array( array( 'id' => 10 ), array( 'id' => 11 ) ),
+					'offset'  => 0,
+					'limit'   => 1000,
+					'total'   => 2,
+				)
+			)
+		);
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		try {
+			$this->handle();
+			$this->fail( 'The database error must be rethrown.' );
+		} catch ( DatabaseReadError $e ) {
+			$this->assertStringNotContainsString( 'wp_posts', $e->getMessage(), 'The SQL error is not exposed.' );
+		}
+
+		$this->assertCount( 1, $this->transport->requests(), 'No delete request may be sent.' );
+		$state = $this->state();
+		$this->assertSame( 'failed', $state['status'] );
+		$this->assertSame( 'sweep', $state['phase'] );
+		$this->assertSame( 0, $state['deleted'] );
+		$this->assertTrue( $this->options->needs_reindex( 'content' ) );
+	}
+
+	/**
+	 * A failed scan query during the upsert phase is not "exhausted": the run fails instead of moving on to the sweep.
+	 */
+	public function test_failed_scan_query_fails_run_instead_of_ending_the_upsert_phase(): void {
+		$this->seed_run( array( 'last_id' => 5 ) );
+		$this->install_wpdb( array( false ) );
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		try {
+			$this->handle();
+			$this->fail( 'The database error must be rethrown.' );
+		} catch ( DatabaseReadError $e ) {
+			$this->addToAssertionCount( 1 );
+		}
+
+		$this->assertSame( array(), $this->transport->requests() );
+		$state = $this->state();
+		$this->assertSame( 'failed', $state['status'] );
+		$this->assertSame( 'upsert', $state['phase'] );
+		$this->assertSame( 5, $state['last_id'] );
+		$this->assertFalse( $this->options->is_populated( 'content' ) );
+	}
+
+	/**
+	 * The public helpers report a failed query instead of an empty answer.
+	 */
+	public function test_non_indexable_and_scan_throw_on_a_failed_query(): void {
+		$this->install_wpdb( array( false, false ) );
+
+		try {
+			$this->reindexer()->non_indexable( 'content', array( 10 ) );
+			$this->fail( 'Expected a database error.' );
+		} catch ( DatabaseReadError $e ) {
+			$this->addToAssertionCount( 1 );
+		}
+		$this->expectException( DatabaseReadError::class );
+		$this->reindexer()->indexable_ids_after( 'content', 0, 10 );
 	}
 
 	/**
@@ -578,6 +1073,27 @@ final class ReindexerTest extends TestCase {
 			$this->assertSame( 'already_running', $e->getMessage() );
 		}
 		$this->assertSame( array(), $this->transport->requests() );
+	}
+
+	/**
+	 * After the host, admin key or prefix changed without the connection flow (here MEILISEARCH_HOST in
+	 * wp-config.php), a reindex would fill another instance's index while the plugin still serves the
+	 * previous connection's state: it is refused until the connection flow runs, without touching Meilisearch.
+	 */
+	public function test_start_refuses_when_the_connection_changed_since_connect(): void {
+		$this->options->set_state( 'fingerprint', md5( 'http://meili.test|test-admin-key|wp_test' ) );
+		$this->options = new Options(
+			static fn ( string $name ): ?string => 'MEILISEARCH_HOST' === $name ? 'http://other.test' : null
+		);
+
+		try {
+			$this->reindexer()->start( 'content' );
+			$this->fail( 'Expected the reindex to be refused.' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertStringContainsString( 'wp meilisearch connect', $e->getMessage() );
+		}
+		$this->assertSame( array(), $this->transport->requests() );
+		$this->assertNull( $this->options->reindex_state( 'content' ) );
 	}
 
 	/**
@@ -638,6 +1154,30 @@ final class ReindexerTest extends TestCase {
 		$this->assertStringContainsString( 'SELECT COUNT(ID)', $wpdb->prepared[0][0] );
 		$this->assertSame( array( 'post', 'page' ), $wpdb->prepared[0][1] );
 		$this->assertSame( 0, $this->reindexer()->count_indexable( 'products' ) );
+	}
+
+	/**
+	 * A stored Content post type that is not registered as public is never selected: not counted, not
+	 * scanned, and its documents are stale for the sweep.
+	 */
+	public function test_non_public_stored_type_is_not_selected(): void {
+		$this->option_store[ Options::CONTENT ]['post_types'] = array( 'post', 'shop_coupon', 'page' );
+		$this->add_post(
+			array(
+				'ID'        => 10,
+				'post_type' => 'shop_coupon',
+			)
+		);
+		$wpdb = $this->install_wpdb( array( array(), array( 10 ) ), '3' );
+
+		$this->reindexer()->count_indexable( 'content' );
+		$this->reindexer()->indexable_ids_after( 'content', 0, 10 );
+		$stale = $this->reindexer()->non_indexable( 'content', array( 10 ) );
+
+		$this->assertSame( array( 'post', 'page' ), $wpdb->prepared[0][1] );
+		$this->assertSame( array( 'post', 'page', 0, 10 ), $wpdb->prepared[1][1] );
+		$this->assertSame( array( 10, 'post', 'page' ), $wpdb->prepared[2][1] );
+		$this->assertSame( array( 10 ), $stale );
 	}
 
 	/**
@@ -780,7 +1320,8 @@ final class ReindexerTest extends TestCase {
 		$this->seed_run();
 		$this->add_post( array( 'ID' => 10 ) );
 		$this->install_wpdb( array( array( 10 ) ) );
-		$this->transport->queue( ApiError::transport( 'cURL error 28' ) );
+		// Not retryable, so the failure path runs (a transient error would be retried instead).
+		$this->transport->queue( new ApiError( 'Payload too large.', 'payload_too_large', 413 ) );
 		$replace = function (): void {
 			$state                                = $this->option_store[ Options::STATE ];
 			$state['reindex']['content']['run']   = 'r2';
@@ -795,15 +1336,44 @@ final class ReindexerTest extends TestCase {
 
 		try {
 			$this->handle();
-			$this->fail( 'The transport error must be rethrown.' );
+			$this->fail( 'The error must be rethrown.' );
 		} catch ( ApiError $e ) {
-			$this->assertSame( 'transport_error', $e->error_code );
+			$this->assertSame( 'payload_too_large', $e->error_code );
 		}
 
 		$stored = $this->state();
 		$this->assertSame( 'r2', $stored['run'] );
 		$this->assertSame( 'running', $stored['status'] );
 		$this->assertFalse( $this->options->needs_reindex( 'content' ) );
+	}
+
+	/**
+	 * A transient error of a run replaced mid-step neither reschedules it nor touches the new run.
+	 */
+	public function test_transient_error_of_a_replaced_run_is_not_retried(): void {
+		$this->seed_run();
+		$this->add_post( array( 'ID' => 10 ) );
+		$this->install_wpdb( array( array( 10 ) ) );
+		$this->transport->queue( ApiError::transport( 'cURL error 28' ) );
+		$replace = function (): void {
+			$state                                = $this->option_store[ Options::STATE ];
+			$state['reindex']['content']['run']   = 'r2';
+			$this->option_store[ Options::STATE ] = $state;
+		};
+		Filters\expectApplied( 'meilisearch_reindex_batch_size' )->once()->andReturnUsing(
+			static function ( $size ) use ( $replace ) {
+				$replace();
+				return $size;
+			}
+		);
+		Functions\expect( 'as_schedule_single_action' )->never();
+
+		$this->handle();
+
+		$stored = $this->state();
+		$this->assertSame( 'r2', $stored['run'] );
+		$this->assertSame( 'running', $stored['status'] );
+		$this->assertArrayNotHasKey( 'retries', $stored );
 	}
 
 	/**
@@ -919,5 +1489,73 @@ final class ReindexerTest extends TestCase {
 		$this->assertSame( 'done', $this->state()['status'] );
 		// Upsert, sweep, finalize.
 		$this->assertSame( 3, $flushes );
+	}
+
+	/**
+	 * Queues the answers of begin() for a missing index whose tasks succeed at once, then an empty scan.
+	 */
+	private function queue_cli_begin(): void {
+		Functions\when( 'wp_cache_supports' )->justReturn( false );
+		Functions\when( 'wp_generate_password' )->justReturn( 'abcd' );
+		$this->install_wpdb( array( array() ), '0' );
+		$this->transport
+			->respond(
+				404,
+				array(
+					'code'    => 'index_not_found',
+					'message' => 'missing',
+				)
+			)
+			->queue( self::task_response( 1 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 1,
+					'status' => 'succeeded',
+				)
+			)
+			->queue( self::task_response( 2 ) )
+			->respond(
+				200,
+				array(
+					'uid'    => 2,
+					'status' => 'succeeded',
+				)
+			);
+	}
+
+	/**
+	 * WP-CLI runs retry a step that hit a transient error in place instead of failing the whole run.
+	 */
+	public function test_run_sync_retries_a_transient_error(): void {
+		$this->queue_cli_begin();
+		$this->transport
+			->fail( new ApiError( 'Service unavailable.', 'http_503', 503 ) )
+			->respond( 200, array( 'results' => array() ) );
+
+		$this->reindexer()->run_sync( 'content', 100, static function (): void {} );
+
+		$this->assertSame( 'done', $this->state()['status'] );
+		$this->assertSame( 0, $this->transport->pending() );
+	}
+
+	/**
+	 * WP-CLI runs still fail at once on an error a retry cannot fix.
+	 */
+	public function test_run_sync_fails_at_once_on_a_permanent_error(): void {
+		$this->queue_cli_begin();
+		$this->transport
+			->fail( new ApiError( 'The provided API key is invalid.', 'invalid_api_key', 403 ) )
+			->respond( 200, array( 'results' => array() ) );
+
+		try {
+			$this->reindexer()->run_sync( 'content', 100, static function (): void {} );
+			$this->fail( 'The error must be rethrown.' );
+		} catch ( ApiError $e ) {
+			$this->assertSame( 'invalid_api_key', $e->error_code );
+		}
+
+		$this->assertSame( 'failed', $this->state()['status'] );
+		$this->assertSame( 1, $this->transport->pending(), 'Not retried.' );
 	}
 }

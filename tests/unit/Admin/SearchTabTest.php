@@ -179,4 +179,27 @@ final class SearchTabTest extends TestCase {
 		$this->assertStringNotContainsString( 'notice-warning', $this->render_with( true, array( 'post', 'page', 'attachment' ) ) );
 		$this->assertStringNotContainsString( 'notice-warning', $this->render_with( false, array( 'post', 'event' ) ) );
 	}
+
+	public function test_autocomplete_row_warns_when_visitors_cannot_reach_the_host(): void {
+		$this->stub_options(
+			array(
+				Options::CONNECTION => array(
+					'host'   => 'http://127.0.0.1:7700',
+					'prefix' => 'wp_test',
+				),
+				Options::ADMIN_KEY  => 'admin-key',
+				Options::SEARCH     => array( 'autocomplete' => true ),
+			)
+		);
+		Functions\when( 'home_url' )->alias( static fn ( $path = '' ) => 'https://shop.example.com' . $path );
+		Functions\when( 'settings_fields' )->justReturn( null );
+		Functions\when( 'submit_button' )->justReturn( null );
+		Functions\when( 'checked' )->justReturn( '' );
+
+		ob_start();
+		self::tab()->render();
+		$html = (string) ob_get_clean();
+
+		$this->assertMatchesRegularExpression( '#name="meilisearch_search\[autocomplete\]".*?<div class="notice notice-warning inline"><p>[^<]*http://127\.0\.0\.1:7700[^<]*meilisearch_autocomplete_host#s', $html );
+	}
 }

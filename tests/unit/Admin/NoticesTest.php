@@ -109,6 +109,35 @@ final class NoticesTest extends TestCase {
 		$this->assertSame( '', $this->render() );
 	}
 
+	public function test_connection_changed_outside_the_connection_flow_asks_to_reconnect_instead_of_reindexing(): void {
+		// Connected with another admin key (e.g. MEILISEARCH_ADMIN_KEY since edited in wp-config.php).
+		$this->option_store[ Options::CONNECTION ] = array(
+			'host'   => 'https://meili.example',
+			'prefix' => 'site',
+		);
+		$this->option_store[ Options::STATE ]      = array(
+			'fingerprint'   => md5( 'https://meili.example|previous-key|site' ),
+			'needs_reindex' => array( 'content' ),
+		);
+
+		$html = $this->render();
+
+		$this->assertStringContainsString( 'notice notice-warning', $html );
+		$this->assertStringContainsString( 'changed since the last connection', $html );
+		$this->assertStringContainsString( 'tab=connection', $html );
+		$this->assertStringNotContainsString( 'run a full reindex', $html, 'A reindex is refused until the connection flow runs.' );
+	}
+
+	public function test_no_connection_notice_while_the_connection_is_the_connected_one(): void {
+		$this->option_store[ Options::CONNECTION ] = array(
+			'host'   => 'https://meili.example',
+			'prefix' => 'site',
+		);
+		$this->option_store[ Options::STATE ]      = array( 'fingerprint' => md5( 'https://meili.example|key|site' ) );
+
+		$this->assertSame( '', $this->render() );
+	}
+
 	public function test_manual_search_key_warning(): void {
 		$this->option_store[ Options::STATE ] = array( 'search_key_manual' => true );
 

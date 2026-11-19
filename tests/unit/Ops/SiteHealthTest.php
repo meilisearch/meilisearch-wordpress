@@ -95,6 +95,52 @@ final class SiteHealthTest extends TestCase {
 		);
 	}
 
+	/**
+	 * Candidates the last completed reindex excluded (hidden products, vetoed posts) are not drift.
+	 *
+	 * @dataProvider excluded_provider
+	 */
+	public function test_excluded_candidates_are_not_drift( int $indexable, int $excluded, int $documents, string $expected ): void {
+		$counts = array(
+			'content' => array(
+				'uid'       => 'wp_abc123_content',
+				'documents' => $documents,
+				'indexable' => $indexable,
+				'excluded'  => $excluded,
+			),
+		);
+
+		self::assertSame( $expected, SiteHealth::evaluate_documents( $counts, self::URL )['status'] );
+	}
+
+	/**
+	 * @return array<string, array{int, int, int, string}>
+	 */
+	public static function excluded_provider(): array {
+		return array(
+			'all excluded accounted for' => array( 1000, 100, 900, 'good' ),
+			'some excluded back in'      => array( 1000, 100, 950, 'good' ),
+			'2 % below the expected'     => array( 1000, 100, 882, 'good' ),
+			'3 % below the expected'     => array( 1000, 100, 873, 'recommended' ),
+			'3 % above the upper bound'  => array( 1000, 100, 1030, 'recommended' ),
+			'everything excluded'        => array( 10, 10, 0, 'good' ),
+			'more excluded than exist'   => array( 5, 10, 0, 'good' ),
+		);
+	}
+
+	public function test_drift_below_the_expected_count_reports_the_expected_count(): void {
+		$counts = array(
+			'content' => array(
+				'uid'       => 'wp_abc123_content',
+				'documents' => 500,
+				'indexable' => 1000,
+				'excluded'  => 100,
+			),
+		);
+
+		self::assertStringContainsString( 'holds 500 documents but WordPress has 900 searchable items', SiteHealth::evaluate_documents( $counts, self::URL )['description'] );
+	}
+
 	public function test_missing_index_is_recommended(): void {
 		$counts = array(
 			'content' => array(
@@ -265,5 +311,50 @@ final class SiteHealthTest extends TestCase {
 		self::assertSame( 'recommended', $result['status'] );
 		self::assertSame( SiteHealth::TEST_COVERAGE, $result['test'] );
 		self::assertStringContainsString( 'event, product', $result['description'] );
+	}
+
+	public function test_index_displaying_every_attribute_is_recommended_when_autocomplete_is_on(): void {
+		$exposed = array( 'wp_test_products' => array( 'id', 'title', 'price' ) );
+
+		self::assertSame( 'good', SiteHealth::evaluate_displayed( true, array() )['status'] );
+		self::assertSame( 'good', SiteHealth::evaluate_displayed( false, $exposed )['status'], 'No key reaches visitors without autocomplete.' );
+
+		$result = SiteHealth::evaluate_displayed( true, $exposed );
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertSame( SiteHealth::TEST_DISPLAYED, $result['test'] );
+		self::assertStringContainsString( 'wp_test_products: id, title, price.', $result['description'] );
+		self::assertStringContainsString( 'full reindex', $result['description'] );
+	}
+
+	public function test_sql_filter_callbacks_are_recommended_only_when_search_is_replaced(): void {
+		$callbacks = array( 'posts_where: Groups_Post_Access::posts_where (plugin groups)' );
+
+		self::assertSame( 'good', SiteHealth::evaluate_sql_filters( false, $callbacks, self::URL )['status'] );
+		self::assertSame( 'good', SiteHealth::evaluate_sql_filters( true, array(), self::URL )['status'] );
+
+		$result = SiteHealth::evaluate_sql_filters( true, $callbacks, self::URL );
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertSame( SiteHealth::TEST_SQL, $result['test'] );
+		self::assertStringContainsString( 'Groups_Post_Access::posts_where (plugin groups)', $result['description'] );
+		self::assertStringContainsString( 'meilisearch_should_intercept', $result['description'] );
+		self::assertStringContainsString( 'meilisearch_should_index_post', $result['description'] );
+	}
+
+	public function test_long_sql_filter_lists_are_truncated(): void {
+		$callbacks = array_map( static fn ( int $i ): string => 'posts_where: cb' . $i, range( 1, 13 ) );
+
+		$description = SiteHealth::evaluate_sql_filters( true, $callbacks, self::URL )['description'];
+
+		self::assertStringContainsString( 'cb10; 3 more', $description );
+		self::assertStringNotContainsString( 'cb11', $description );
+	}
+
+	public function test_browser_host_warning_is_recommended(): void {
+		self::assertSame( 'good', SiteHealth::evaluate_browser_host( null, self::URL )['status'] );
+
+		$result = SiteHealth::evaluate_browser_host( 'Browsers block http://x.', self::URL );
+		self::assertSame( 'recommended', $result['status'] );
+		self::assertSame( SiteHealth::TEST_BROWSER, $result['test'] );
+		self::assertSame( '<p>Browsers block http://x.</p>', $result['description'] );
 	}
 }

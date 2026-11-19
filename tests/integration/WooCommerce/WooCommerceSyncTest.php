@@ -124,6 +124,29 @@ final class WooCommerceSyncTest extends TestCase {
 		$this->assertSame( 3, $this->product_document( $product->get_id() )['stock_quantity'] );
 	}
 
+	public function test_order_updates_total_sales_of_a_product_without_managed_stock(): void {
+		$product = $this->create_simple_product( 'Meili Sales Ebook', '12' );
+		$this->assertFalse( $product->get_manage_stock() );
+		$this->sync_products();
+		$this->assertSame( 0, $this->product_document( $product->get_id() )['total_sales'] );
+
+		$order = wc_create_order();
+		$order->add_product( wc_get_product( $product->get_id() ), 7 );
+		$order->calculate_totals();
+		$order->save();
+		$order->update_status( 'processing' );
+		$this->assertSame( 7, (int) wc_get_product( $product->get_id() )->get_total_sales(), 'Database total_sales.' );
+		$this->sync_products();
+
+		$this->assertSame( 7, $this->product_document( $product->get_id() )['total_sales'], 'Indexed total_sales after the order.' );
+
+		$order->update_status( 'cancelled' );
+		$this->assertSame( 0, (int) wc_get_product( $product->get_id() )->get_total_sales(), 'Database total_sales after cancelling.' );
+		$this->sync_products();
+
+		$this->assertSame( 0, $this->product_document( $product->get_id() )['total_sales'], 'Indexed total_sales after cancelling.' );
+	}
+
 	public function test_trashed_product_is_removed(): void {
 		$product = $this->create_simple_product( 'Meili Trash Tee', '12' );
 		$this->sync_products();
@@ -144,6 +167,22 @@ final class WooCommerceSyncTest extends TestCase {
 		$this->sync_products();
 
 		$this->assertSame( array( 'T-shirts' ), $this->product_document( $product->get_id() )['tax_product_cat'] );
+	}
+
+	public function test_parent_category_delete_resyncs_the_products_of_its_child_categories(): void {
+		$parent  = wp_insert_term( 'Clothing', 'product_cat' );
+		$child   = wp_insert_term( 'Shirts', 'product_cat', array( 'parent' => (int) $parent['term_id'] ) );
+		$product = $this->create_simple_product( 'Meili Child Category Shirt', '12', array( 'category_ids' => array( (int) $child['term_id'] ) ) );
+		$this->sync_products();
+		$this->assertContains( 'Clothing', $this->product_document( $product->get_id() )['tax_product_cat'] );
+
+		wp_delete_term( (int) $parent['term_id'], 'product_cat' );
+		$this->sync_products();
+
+		$document = $this->product_document( $product->get_id() );
+		$this->assertSame( array( 'Shirts' ), $document['tax_product_cat'] );
+		$this->assertSame( array( (int) $child['term_id'] ), $document['tax_product_cat_ids'] );
+		$this->assertSame( array( 'lvl0' => array( 'Shirts' ) ), $document['categories'] );
 	}
 
 	public function test_scheduled_sale_start_resyncs_the_product(): void {

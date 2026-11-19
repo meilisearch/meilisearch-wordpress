@@ -18,8 +18,11 @@ use Meilisearch\WordPress\Plugin;
 use Meilisearch\WordPress\Settings\IndexNames;
 use Meilisearch\WordPress\Settings\Options;
 use Meilisearch\WordPress\Sync\Queue;
+use Meilisearch\WordPress\Tests\Integration\WooCommerce\CreatesProducts;
 
 final class SiteHealthTest extends TestCase {
+
+	use CreatesProducts;
 
 	/**
 	 * @template T of object
@@ -85,6 +88,44 @@ final class SiteHealthTest extends TestCase {
 		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
 
 		self::assertSame( 'recommended', $this->statuses()[ SiteHealth::TEST_DOCUMENTS ] );
+	}
+
+	public function test_posts_vetoed_by_the_filter_are_not_drift(): void {
+		$this->service( 'index_manager', IndexManager::class )->connect();
+		self::factory()->post->create_many( 8, array( 'post_status' => 'publish' ) );
+		$vetoed = self::factory()->post->create_many( 2, array( 'post_status' => 'publish' ) );
+		add_filter(
+			'meilisearch_should_index_post',
+			static fn ( $index, $post ) => in_array( (int) $post->ID, $vetoed, true ) ? false : $index,
+			10,
+			2
+		);
+		$this->reindex_content();
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_DOCUMENTS ];
+		self::assertSame( 'good', $result['status'], $result['description'] );
+
+		// Real drift is still reported: three new posts that never reached Meilisearch.
+		self::factory()->post->create_many( 3, array( 'post_status' => 'publish' ) );
+		self::assertSame( 'recommended', $this->statuses()[ SiteHealth::TEST_DOCUMENTS ] );
+	}
+
+	public function test_hidden_and_out_of_stock_products_are_not_drift(): void {
+		$this->skip_without_woocommerce();
+		$this->enable_products();
+		update_option( 'woocommerce_hide_out_of_stock_items', 'yes' );
+		for ( $i = 0; $i < 6; $i++ ) {
+			$this->create_simple_product( 'Health product ' . $i, '10' );
+		}
+		$this->create_simple_product( 'Health hidden', '10', array( 'catalog_visibility' => 'hidden' ) );
+		$this->create_simple_product( 'Health catalog only', '10', array( 'catalog_visibility' => 'catalog' ) );
+		$this->create_simple_product( 'Health sold out', '10', array( 'stock_status' => 'outofstock' ) );
+		$this->reindex_content();
+		$this->service( 'reindexer', Reindexer::class )->run_sync( 'products', 50, static function (): void {} );
+		$this->wait_for_tasks();
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_DOCUMENTS ];
+		self::assertSame( 'good', $result['status'], $result['description'] );
 	}
 
 	public function test_unreachable_host_is_critical_and_remote_checks_are_skipped(): void {
@@ -179,5 +220,70 @@ final class SiteHealthTest extends TestCase {
 
 		self::assertSame( 'recommended', $result['status'] );
 		self::assertStringContainsString( 'meili_event', $result['description'] );
+	}
+
+	public function test_index_displaying_every_attribute_is_reported_when_autocomplete_is_on(): void {
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'autocomplete' => true ) ) );
+		$uid = $this->service( 'names', IndexNames::class )->uid( 'content' );
+		// An index created before the plugin listed public fields: Meilisearch displays everything.
+		$this->meili(
+			'POST',
+			'/indexes',
+			array(
+				'uid'        => $uid,
+				'primaryKey' => 'id',
+			)
+		);
+		$this->wait_for_tasks();
+		$this->service( 'index_manager', IndexManager::class )->connect();
+		$this->wait_for_tasks();
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_DISPLAYED ];
+		self::assertSame( 'recommended', $result['status'], $result['description'] );
+		self::assertStringContainsString( $uid . ': id, post_type, title', $result['description'] );
+		self::assertSame( array( '*' ), $this->meili( 'GET', '/indexes/' . $uid . '/settings' )['displayedAttributes'], 'The existing index is not changed.' );
+
+		// Recreated by the plugin (delete + reindex), it only displays public fields.
+		$this->meili( 'DELETE', '/indexes/' . $uid );
+		$this->wait_for_tasks();
+		$this->reindex_content();
+		self::assertSame( 'good', array_column( $this->fresh_health()->run_all(), 'status', 'test' )[ SiteHealth::TEST_DISPLAYED ] );
+	}
+
+	/**
+	 * Stock WordPress and WooCommerce attach nothing the check reports (both test variants run this).
+	 */
+	public function test_stock_sql_filter_callbacks_are_not_reported(): void {
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		// The front end attaches WooCommerce's product query and filter callbacks.
+		$this->go_to( home_url( '/?s=anything' ) );
+
+		$result = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_SQL ];
+
+		self::assertSame( 'good', $result['status'], $result['description'] );
+	}
+
+	public function test_other_code_on_the_sql_filters_is_reported_when_search_is_replaced(): void {
+		$restrict = static fn ( $where ) => $where . ' AND 1 = 1';
+		add_filter( 'posts_where', $restrict );
+		add_filter( 'posts_clauses_request', array( $this, 'keep_clauses' ) );
+
+		$off = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_SQL ];
+		update_option( Options::SEARCH, array_merge( Options::defaults()[ Options::SEARCH ], array( 'replace' => true ) ) );
+		$on = array_column( $this->fresh_health()->run_all(), null, 'test' )[ SiteHealth::TEST_SQL ];
+
+		self::assertSame( 'good', $off['status'], 'Nothing to report while WordPress answers every search.' );
+		self::assertSame( 'recommended', $on['status'] );
+		self::assertStringContainsString( 'posts_where: closure', $on['description'] );
+		self::assertStringContainsString( 'posts_clauses_request: ' . self::class . '::keep_clauses', $on['description'] );
+		self::assertStringContainsString( 'meilisearch_should_intercept', $on['description'] );
+	}
+
+	/**
+	 * @param array<string, string> $clauses
+	 * @return array<string, string>
+	 */
+	public function keep_clauses( array $clauses ): array {
+		return $clauses;
 	}
 }

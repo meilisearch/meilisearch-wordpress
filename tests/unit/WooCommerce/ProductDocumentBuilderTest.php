@@ -130,6 +130,7 @@ final class ProductDocumentBuilderTest extends TestCase {
 				'product_type'        => 'simple',
 				'featured'            => true,
 				'price'               => 9.6,
+				'price_max'           => 9.6,
 				'regular_price'       => 12.0,
 				'sale_price'          => 9.6,
 				'on_sale'             => true,
@@ -173,12 +174,47 @@ final class ProductDocumentBuilderTest extends TestCase {
 
 		self::assertSame( 'external', $fields['product_type'] );
 		self::assertNull( $fields['price'] );
+		self::assertNull( $fields['price_max'] );
 		self::assertNull( $fields['regular_price'] );
 		self::assertNull( $fields['sale_price'] );
 		self::assertNull( $fields['stock_quantity'] );
 		self::assertSame( array(), $fields['tax_product_cat'] );
 		self::assertArrayNotHasKey( 'categories', $fields );
 		self::assertArrayNotHasKey( 'variations', $fields );
+	}
+
+	public function test_external_and_extension_products_have_price_max_equal_to_price(): void {
+		$external  = $this->builder()->product_fields( new \WC_Product_External( $this->simple_props() ) );
+		$extension = $this->builder()->product_fields( new \WC_Product_Simple( $this->simple_props( array( 'type' => 'subscription' ) ) ) );
+
+		self::assertSame( 9.6, $external['price_max'] );
+		self::assertSame( 9.6, $extension['price_max'] );
+	}
+
+	public function test_grouped_product_price_max_is_its_dearest_child_price(): void {
+		// WooCommerce stores the cheapest and dearest child prices as two `_price` rows (the lookup table's min/max).
+		Functions\when( 'get_post_meta' )->alias(
+			static function ( $id, $key = '', $single = false ) {
+				if ( 7 === (int) $id && '_price' === $key && ! $single ) {
+					return array( '8', '25' );
+				}
+				return array();
+			}
+		);
+
+		$fields = $this->builder()->product_fields( new \WC_Product_Grouped( $this->simple_props() ) );
+
+		self::assertSame( 9.6, $fields['price'] );
+		self::assertSame( 30.0, $fields['price_max'] );
+	}
+
+	public function test_grouped_product_without_priced_children_has_null_prices(): void {
+		Functions\when( 'get_post_meta' )->justReturn( array() );
+
+		$fields = $this->builder()->product_fields( new \WC_Product_Grouped( $this->simple_props( array( 'price' => '' ) ) ) );
+
+		self::assertNull( $fields['price'] );
+		self::assertNull( $fields['price_max'] );
 	}
 
 	public function test_prices_are_computed_with_the_base_location_filter_which_is_removed_afterwards(): void {
@@ -281,12 +317,105 @@ final class ProductDocumentBuilderTest extends TestCase {
 		self::assertArrayNotHasKey( 'variation_skus', $fields );
 	}
 
-	public function test_variation_skus_are_own_skus_only_when_enabled(): void {
+	/**
+	 * Own SKUs only (a variation without one shows the parent's: no `_sku` value of its own), of published
+	 * variations only, read from the `_sku` post meta of the product's children.
+	 */
+	public function test_variation_skus_are_own_skus_of_published_variations_when_enabled(): void {
 		$this->stub_options( array( Options::WOOCOMMERCE => array( 'variation_skus' => true ) ) );
+		$wpdb = $this->install_wpdb( array( 'SHIRT-RED', ' SHIRT-RED ', '' ) );
 
-		$fields = $this->builder()->product_fields( $this->variable_product() );
+		try {
+			$fields = $this->builder()->product_fields( $this->variable_product() );
+		} finally {
+			unset( $GLOBALS['wpdb'] );
+		}
 
 		self::assertSame( array( 'SHIRT-RED' ), $fields['variation_skus'] );
+		list( $sql, $args ) = $wpdb->prepared[0];
+		self::assertStringContainsString( "meta.meta_key = '_sku'", $sql );
+		self::assertStringContainsString( "posts.post_parent = %d AND posts.post_type = 'product_variation' AND posts.post_status = 'publish'", $sql );
+		self::assertStringContainsString( "meta.meta_value <> ''", $sql );
+		self::assertSame( array( 7, AttributeCollector::MAX_VARIATION_SKUS ), $args );
+	}
+
+	public function test_variation_skus_are_not_read_when_disabled(): void {
+		$wpdb = $this->install_wpdb( array( 'SHIRT-RED' ) );
+
+		try {
+			$fields = $this->builder()->product_fields( $this->variable_product() );
+		} finally {
+			unset( $GLOBALS['wpdb'] );
+		}
+
+		self::assertArrayNotHasKey( 'variation_skus', $fields );
+		self::assertSame( 0, $wpdb->queries );
+	}
+
+	/**
+	 * Installs a $wpdb double whose get_col() returns $column and records the prepared queries.
+	 *
+	 * @param list<string> $column Result.
+	 */
+	private function install_wpdb( array $column ): object {
+		$wpdb            = new class( $column ) {
+			public string $posts    = 'wp_posts';
+			public string $postmeta = 'wp_postmeta';
+			public array $prepared  = array();
+			public int $queries     = 0;
+
+			public function __construct( private array $column ) {}
+
+			public function prepare( string $query, ...$args ): string {
+				$this->prepared[] = array( $query, $args );
+				return $query;
+			}
+
+			public function get_col( string $query ): array {
+				++$this->queries;
+				return $this->column;
+			}
+		};
+		$GLOBALS['wpdb'] = $wpdb; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Unit-test double.
+		return $wpdb;
+	}
+
+	/**
+	 * Variation SKUs are searchable for every published variation, not only the first MAX_VARIATIONS
+	 * read for the compact `variations` list and the attribute values.
+	 */
+	public function test_variation_skus_cover_every_published_variation_beyond_the_variation_cap(): void {
+		$this->stub_options( array( Options::WOOCOMMERCE => array( 'variation_skus' => true ) ) );
+		$children = array();
+		$skus     = array();
+		for ( $id = 1000; $id < 1120; $id++ ) {
+			$this->variation( $id, 'SKU-' . $id, '10', array( 'pa_color' => 'red' ) );
+			$children[] = $id;
+			$skus[]     = 'SKU-' . $id;
+		}
+		$wpdb    = $this->install_wpdb( $skus );
+		$product = new \WC_Product_Variable(
+			$this->simple_props(
+				array(
+					'children'         => $children,
+					'variation_prices' => array(
+						'min' => '10',
+						'max' => '10',
+					),
+				)
+			)
+		);
+
+		try {
+			$fields = $this->builder()->product_fields( $product );
+		} finally {
+			unset( $GLOBALS['wpdb'] );
+		}
+
+		self::assertCount( ProductDocumentBuilder::MAX_VARIATIONS, $fields['variations'] );
+		self::assertCount( 120, $fields['variation_skus'] );
+		self::assertContains( 'SKU-1119', $fields['variation_skus'] );
+		self::assertSame( 1, $wpdb->queries, 'One query for every SKU.' );
 	}
 
 	public function test_variable_product_without_variations_has_null_price(): void {

@@ -42,6 +42,14 @@ final class ProductQueryTranslatorTest extends TestCase {
 		$this->saved_get = $_GET; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$_GET            = array();
 		$this->stub_options( array( Options::WOOCOMMERCE => array( 'attributes' => array( 'pa_color' ) ) ) );
+		// A completed products reindex wrote the current fields into every document.
+		( new Options() )->set_state(
+			'products_build',
+			array(
+				'version'    => 2,
+				'attributes' => array( 'attr_color' ),
+			)
+		);
 
 		$find = static function ( string $taxonomy, int $column, $value ): ?\WP_Term {
 			foreach ( self::TERMS[ $taxonomy ] ?? array() as $row ) {
@@ -157,7 +165,7 @@ final class ProductQueryTranslatorTest extends TestCase {
 			'menu order'       => array( 'menu_order title', 'ASC', array(), $wc ),
 			'empty array'      => array( array(), '', array() ),
 			'price asc'        => array( 'price', 'ASC', array( 'price:asc' ), $wc ),
-			'price desc'       => array( 'price', 'DESC', array( 'price:desc' ), $wc ),
+			'price desc'       => array( 'price', 'DESC', array( 'price_max:desc' ), $wc ),
 			'popularity'       => array( 'popularity', 'DESC', array( 'total_sales:desc' ), $wc ),
 			'rating'           => array( 'rating', 'ASC', array( 'rating_average:desc' ), $wc ),
 			'date (WC)'        => array( 'date ID', 'DESC', array( 'date:desc' ), $wc ),
@@ -355,7 +363,122 @@ final class ProductQueryTranslatorTest extends TestCase {
 		self::assertSame( array(), $result['filters'] );
 	}
 
-	public function test_price_range(): void {
+	public function test_attribute_filters_are_not_translated_while_a_products_reindex_is_pending(): void {
+		// A newly selected or newly created attribute is in the schema but neither in the index's
+		// filterableAttributes nor in the existing documents until the reindex the flag asks for.
+		( new Options() )->flag_reindex( 'products', true );
+
+		self::assertNull( $this->translator()->constraints( $this->query( array(), array( $this->clause( 'pa_color', array( 'red' ), 'IN', 'slug' ) ) ) ) );
+		self::assertNull( $this->translator()->constraints( $this->query( array(), array( $this->clause( 'pa_color', array(), 'EXISTS' ) ) ) ) );
+
+		$_GET = array( 'filter_color' => 'red' );
+		self::assertNull( $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) ) );
+	}
+
+	/**
+	 * pa_size was selected and the products reindex has started (which clears the flag), but the last
+	 * completed run did not write attr_size: until the running one completes, only some documents have it.
+	 */
+	public function test_attribute_the_last_completed_reindex_did_not_write_is_not_translated(): void {
+		$this->option_store[ Options::WOOCOMMERCE ]['attributes'] = array( 'pa_color', 'pa_size' );
+		( new Options() )->set_reindex_state( 'products', array( 'status' => 'running' ) );
+
+		self::assertNull( $this->translator()->constraints( $this->query( array(), array( $this->clause( 'pa_size', array( 'xl' ), 'IN', 'slug' ) ) ) ) );
+		$_GET = array( 'filter_size' => 'xl' );
+		self::assertNull( $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) ) );
+
+		$_GET   = array( 'filter_color' => 'red' );
+		$result = $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) );
+		self::assertSame( array( FilterBuilder::compare( 'attr_color', '=', 'Red' ) ), $result['filters'] ?? null, 'attr_color was written.' );
+	}
+
+	/**
+	 * An index filled before completed runs recorded what they wrote: which attributes its documents have is
+	 * unknown (and it is flagged for a reindex), so attribute filters are answered by the database.
+	 */
+	public function test_attributes_are_not_translated_without_a_recorded_build(): void {
+		( new Options() )->set_state( 'products_build', null );
+
+		self::assertNull( $this->translator()->constraints( $this->query( array(), array( $this->clause( 'pa_color', array( 'red' ), 'IN', 'slug' ) ) ) ) );
+	}
+
+	public function test_non_attribute_filters_are_still_translated_while_a_products_reindex_is_pending(): void {
+		( new Options() )->flag_reindex( 'products', true );
+		$_GET = array( 'min_price' => '10' );
+
+		$result = $this->translator()->constraints(
+			$this->query( array( 'wc_query' => 'product_query' ), array( $this->clause( 'product_visibility', array( 3 ), 'IN' ) ) )
+		);
+
+		self::assertSame(
+			array(
+				FilterBuilder::compare( 'featured', '=', true ),
+				FilterBuilder::compare( 'price_max', '>=', 10.0 ),
+			),
+			$result['filters'] ?? null
+		);
+	}
+
+	public function test_price_range_overlaps_the_product_price_range(): void {
+		$_GET   = array(
+			'min_price' => '10',
+			'max_price' => '50.5',
+		);
+		$result = $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) );
+		self::assertSame( array( '(price <= 50.5) AND (price_max >= 10.0)' ), $result['filters'] );
+
+		$_GET   = array( 'min_price' => '10' );
+		$result = $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) );
+		self::assertSame( array( FilterBuilder::compare( 'price_max', '>=', 10.0 ) ), $result['filters'] );
+
+		$_GET   = array( 'max_price' => '20' );
+		$result = $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) );
+		self::assertSame( array( FilterBuilder::compare( 'price', '<=', 20.0 ) ), $result['filters'] );
+	}
+
+	public function test_price_descending_sorts_by_the_highest_price(): void {
+		$query = $this->query(
+			array(
+				'orderby'  => 'price',
+				'order'    => 'DESC',
+				'wc_query' => 'product_query',
+			)
+		);
+
+		self::assertSame( array( 'price_max:desc' ), $this->translator()->constraints( $query )['sort'] );
+		$ascending = $this->query(
+			array(
+				'orderby'  => 'price',
+				'order'    => 'ASC',
+				'wc_query' => 'product_query',
+			)
+		);
+		self::assertSame( array( 'price:asc' ), $this->translator()->sort( $ascending ) );
+	}
+
+	/**
+	 * Documents written before price_max existed (no completed products reindex since, or one that is
+	 * still running) would be dropped by a price_max filter and sunk by a price_max sort.
+	 */
+	public function test_minimum_price_translation_is_kept_until_a_reindex_wrote_price_max(): void {
+		( new Options() )->set_state( 'products_build', array( 'version' => 1 ) );
+		$_GET  = array( 'min_price' => '10' );
+		$query = $this->query(
+			array(
+				'orderby'  => 'price',
+				'order'    => 'DESC',
+				'wc_query' => 'product_query',
+			)
+		);
+
+		$result = $this->translator()->constraints( $query );
+
+		self::assertSame( array( FilterBuilder::compare( 'price', '>=', 10.0 ) ), $result['filters'] );
+		self::assertSame( array( 'price:desc' ), $result['sort'] );
+	}
+
+	public function test_price_range_on_an_index_without_price_max(): void {
+		( new Options() )->set_state( 'products_build', null );
 		$_GET   = array(
 			'min_price' => '10',
 			'max_price' => '50.5',
@@ -376,5 +499,237 @@ final class ProductQueryTranslatorTest extends TestCase {
 		$_GET = array( 'min_price' => '10' );
 
 		self::assertSame( array(), $this->translator()->constraints( $this->query() )['filters'] );
+	}
+
+	/**
+	 * @dataProvider non_finite_prices
+	 */
+	public function test_non_finite_price_bound_is_not_translated( array $get ): void {
+		$_GET = $get;
+
+		self::assertNull( $this->translator()->constraints( $this->query( array( 'wc_query' => 'product_query' ) ) ) );
+	}
+
+	/**
+	 * @return array<string, array{0: array<string, string>}>
+	 */
+	public static function non_finite_prices(): array {
+		return array(
+			'min overflow'             => array( array( 'min_price' => '1e999' ) ),
+			'max overflow'             => array( array( 'max_price' => '1e999' ) ),
+			'negative overflow'        => array( array( 'min_price' => '-1e999' ) ),
+			'finite min, overflow max' => array(
+				array(
+					'min_price' => '10',
+					'max_price' => '1e999',
+				),
+			),
+		);
+	}
+
+	/**
+	 * Terms the product filter block tests look up: taxonomy => slug => term ID.
+	 */
+	private const BLOCK_TERMS = array(
+		'product_cat'   => array(
+			'tees'  => 51,
+			'shoes' => 52,
+			'sale'  => 53,
+		),
+		'product_tag'   => array(
+			'summer' => 61,
+			'sale'   => 62,
+		),
+		'product_brand' => array(
+			'acme' => 71,
+		),
+	);
+
+	/**
+	 * WooCommerce's main product query with product filter block query vars, plus the WordPress
+	 * functions the translation reads.
+	 */
+	private function block_query( array $vars ): \WP_Query {
+		Functions\when( 'wc_get_product_stock_status_options' )->justReturn(
+			array(
+				'instock'     => 'In stock',
+				'outofstock'  => 'Out of stock',
+				'onbackorder' => 'On backorder',
+			)
+		);
+		Functions\when( 'get_taxonomies' )->justReturn(
+			array(
+				'category'      => (object) array(
+					'name'        => 'category',
+					'object_type' => array( 'post' ),
+				),
+				'product_cat'   => (object) array(
+					'name'        => 'product_cat',
+					'object_type' => array( 'product' ),
+				),
+				'product_tag'   => (object) array(
+					'name'        => 'product_tag',
+					'object_type' => array( 'product' ),
+				),
+				'product_brand' => (object) array(
+					'name'        => 'product_brand',
+					'object_type' => array( 'product' ),
+				),
+				'collection'    => (object) array(
+					'name'        => 'collection',
+					'object_type' => array( 'product', 'post' ),
+				),
+			)
+		);
+		Functions\when( 'get_terms' )->alias(
+			static function ( array $args ): array {
+				$terms = array();
+				foreach ( (array) $args['taxonomy'] as $taxonomy ) {
+					foreach ( self::BLOCK_TERMS[ $taxonomy ] ?? array() as $slug => $id ) {
+						if ( in_array( $slug, (array) $args['slug'], true ) ) {
+							$terms[] = new \WP_Term(
+								array(
+									'term_id'  => $id,
+									'slug'     => $slug,
+									'taxonomy' => $taxonomy,
+								)
+							);
+						}
+					}
+				}
+				return $terms;
+			}
+		);
+
+		$query             = $this->query( array_merge( array( 'wc_query' => 'product_query' ), $vars ) );
+		$query->main_query = true;
+		return $query;
+	}
+
+	public function test_block_stock_status_filter(): void {
+		$result = $this->translator()->constraints( $this->block_query( array( 'filter_stock_status' => 'instock,onbackorder' ) ) );
+		self::assertSame( array( FilterBuilder::in( 'stock_status', array( 'instock', 'onbackorder' ) ) ), $result['filters'] );
+
+		// Unknown statuses are dropped while a known one remains.
+		$result = $this->translator()->constraints( $this->block_query( array( 'filter_stock_status' => 'nonsense,outofstock,' ) ) );
+		self::assertSame( array( FilterBuilder::in( 'stock_status', array( 'outofstock' ) ) ), $result['filters'] );
+	}
+
+	public function test_block_stock_status_without_a_known_status_is_not_translated(): void {
+		// WooCommerce matches nothing (AND 1=0): the database answers.
+		self::assertNull( $this->translator()->constraints( $this->block_query( array( 'filter_stock_status' => 'nonsense' ) ) ) );
+	}
+
+	public function test_block_category_and_tag_filters_use_the_indexed_term_ids(): void {
+		$result = $this->translator()->constraints(
+			$this->block_query(
+				array(
+					'categories' => 'tees,shoes',
+					'tags'       => 'Summer',
+				)
+			)
+		);
+
+		self::assertSame(
+			array(
+				FilterBuilder::in( 'tax_product_cat_ids', array( 51, 52 ) ),
+				FilterBuilder::in( 'tax_product_tag_ids', array( 61 ) ),
+			),
+			$result['filters']
+		);
+	}
+
+	public function test_block_taxonomy_slugs_are_looked_up_in_every_chosen_taxonomy_like_woocommerce(): void {
+		$result = $this->translator()->constraints(
+			$this->block_query(
+				array(
+					'categories' => 'tees',
+					'tags'       => 'sale',
+				)
+			)
+		);
+
+		// "sale" is also a category slug, and WooCommerce resolves all slugs against all chosen taxonomies.
+		self::assertSame(
+			array(
+				FilterBuilder::in( 'tax_product_cat_ids', array( 51, 53 ) ),
+				FilterBuilder::in( 'tax_product_tag_ids', array( 62 ) ),
+			),
+			$result['filters']
+		);
+	}
+
+	public function test_block_taxonomy_without_an_existing_term_is_dropped_when_another_one_matches(): void {
+		$result = $this->translator()->constraints(
+			$this->block_query(
+				array(
+					'categories' => 'tees,unknown',
+					'tags'       => 'unknown',
+				)
+			)
+		);
+
+		self::assertSame( array( FilterBuilder::in( 'tax_product_cat_ids', array( 51 ) ) ), $result['filters'] );
+	}
+
+	/**
+	 * @dataProvider untranslated_block_vars
+	 */
+	public function test_block_filter_that_cannot_be_reproduced_is_not_translated( array $vars ): void {
+		self::assertNull( $this->translator()->constraints( $this->block_query( $vars ) ) );
+	}
+
+	/**
+	 * @return array<string, array{0: array<string, mixed>}>
+	 */
+	public static function untranslated_block_vars(): array {
+		return array(
+			'no existing term at all'   => array( array( 'categories' => 'unknown' ) ),
+			'brand (not indexed)'       => array( array( 'brands' => 'acme' ) ),
+			'custom taxonomy'           => array( array( 'filter_collection' => 'spring' ) ),
+			'brand next to a category'  => array(
+				array(
+					'categories' => 'tees',
+					'brands'     => 'acme',
+				),
+			),
+			'slugs that sanitize away'  => array( array( 'categories' => '!!!' ) ),
+			// WooCommerce looks up an empty slug list, which get_terms() answers with every term.
+			'only separators'           => array( array( 'categories' => ',' ) ),
+			'separators and spaces'     => array( array( 'tags' => ' , ' ) ),
+			'array instead of a string' => array( array( 'categories' => array( 'tees' ) ) ),
+			'array of stock statuses'   => array( array( 'filter_stock_status' => array( 'instock' ) ) ),
+		);
+	}
+
+	public function test_empty_block_parameters_are_ignored(): void {
+		$result = $this->translator()->constraints(
+			$this->block_query(
+				array(
+					'filter_stock_status' => '',
+					'categories'          => '',
+					'tags'                => '  ',
+					'brands'              => '',
+					'filter_collection'   => '0',
+					'filter_category'     => 'news',
+				)
+			)
+		);
+
+		self::assertSame( array(), $result['filters'] );
+	}
+
+	public function test_block_parameters_are_read_only_for_the_main_product_query(): void {
+		$vars = array(
+			'filter_stock_status' => 'instock',
+			'brands'              => 'acme',
+		);
+
+		$secondary             = $this->block_query( $vars );
+		$secondary->main_query = false;
+		self::assertSame( array(), $this->translator()->constraints( $secondary )['filters'] );
+
+		$not_woocommerce = $this->block_query( array_merge( $vars, array( 'wc_query' => '' ) ) );
+		self::assertSame( array(), $this->translator()->constraints( $not_woocommerce )['filters'] );
 	}
 }

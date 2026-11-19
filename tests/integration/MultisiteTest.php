@@ -33,6 +33,13 @@ final class MultisiteTest extends TestCase {
 	 */
 	private array $created = array();
 
+	/**
+	 * Search key uids created by connected_site(), deleted in tear_down.
+	 *
+	 * @var list<string>
+	 */
+	private array $key_uids = array();
+
 	public function set_up(): void {
 		parent::set_up();
 		if ( ! is_multisite() ) {
@@ -47,6 +54,9 @@ final class MultisiteTest extends TestCase {
 				$client->delete_index( $uid );
 			}
 			$this->wait_for_tasks();
+		}
+		foreach ( $this->key_uids as $key_uid ) {
+			$this->meili( 'DELETE', '/keys/' . rawurlencode( $key_uid ) );
 		}
 		parent::tear_down();
 	}
@@ -247,5 +257,113 @@ final class MultisiteTest extends TestCase {
 		}
 
 		self::assertSame( 1, $attempts );
+	}
+
+	/**
+	 * Creates a site connected on its own prefix (content index and plugin-created search key in Meilisearch).
+	 *
+	 * @return array{id: int, uid: string, key_uid: string}
+	 */
+	private function connected_site( bool $delete_on_uninstall, string $suffix ): array {
+		$site_id              = (int) self::factory()->blog->create();
+		$connection           = array_merge(
+			(array) get_option( Options::CONNECTION, array() ),
+			array( 'delete_on_uninstall' => $delete_on_uninstall )
+		);
+		$connection['prefix'] = $connection['prefix'] . '_' . $suffix;
+
+		switch_to_blog( $site_id );
+		try {
+			$this->ensure_action_scheduler_tables();
+			update_option( Options::CONNECTION, $connection );
+			update_option( Options::ADMIN_KEY, self::test_key() );
+			update_option( Options::CONTENT, array_merge( Options::defaults()[ Options::CONTENT ], array( 'post_types' => array( 'post' ) ) ) );
+
+			$options  = new Options();
+			$names    = new IndexNames( $options );
+			$clients  = new ClientFactory( $options, new WpTransport() );
+			$settings = new SettingsBuilder( array( 'content' => new ContentSchema( $options ) ) );
+			( new IndexManager( $clients, $names, $settings, $options ) )->connect();
+			$site = array(
+				'id'      => $site_id,
+				'uid'     => $names->uid( 'content' ),
+				'key_uid' => $options->search_key_uid(),
+			);
+		} finally {
+			restore_current_blog();
+		}
+		self::assertNotSame( '', $site['key_uid'] );
+		$this->key_uids[] = $site['key_uid'];
+
+		return $site;
+	}
+
+	private function delete_site( int $site_id ): void {
+		require_once ABSPATH . 'wp-admin/includes/ms.php';
+		wpmu_delete_blog( $site_id, true );
+		self::assertNull( get_site( $site_id ), 'The site itself must be deleted.' );
+	}
+
+	private function key_exists( string $key_uid ): bool {
+		try {
+			$this->service( 'clients', ClientFactory::class )->client()->get_key( $key_uid );
+		} catch ( \Meilisearch\WordPress\Api\ApiError $error ) {
+			self::assertSame( 404, $error->http_status );
+			return false;
+		}
+
+		return true;
+	}
+
+	public function test_deleting_an_opted_in_site_removes_its_indexes_and_search_key(): void {
+		$site   = $this->connected_site( true, 'gone' );
+		$client = $this->service( 'clients', ClientFactory::class )->client();
+		self::assertTrue( $client->index_exists( $site['uid'] ) );
+
+		$this->delete_site( $site['id'] );
+		$this->wait_for_tasks();
+
+		self::assertFalse( $client->index_exists( $site['uid'] ) );
+		self::assertFalse( $this->key_exists( $site['key_uid'] ) );
+	}
+
+	public function test_deleting_a_site_without_the_opt_in_keeps_its_indexes_and_search_key(): void {
+		$site   = $this->connected_site( false, 'kept' );
+		$client = $this->service( 'clients', ClientFactory::class )->client();
+
+		$this->delete_site( $site['id'] );
+		$this->wait_for_tasks();
+
+		self::assertTrue( $client->index_exists( $site['uid'] ) );
+		self::assertTrue( $this->key_exists( $site['key_uid'] ) );
+	}
+
+	public function test_site_deletion_survives_an_unreachable_host_with_a_short_timeout(): void {
+		$first  = $this->connected_site( true, 'one' );
+		$second = $this->connected_site( true, 'two' );
+		$host   = self::test_host();
+
+		$timeouts = array();
+		$filter   = static function ( $pre, $args, $url ) use ( &$timeouts, $host ) {
+			if ( str_starts_with( (string) $url, $host ) ) {
+				$timeouts[] = (float) $args['timeout'];
+				return new \WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' );
+			}
+			return $pre;
+		};
+		add_filter( 'pre_http_request', $filter, 10, 3 );
+		try {
+			$this->delete_site( $first['id'] );
+			$this->delete_site( $second['id'] );
+		} finally {
+			remove_filter( 'pre_http_request', $filter, 10 );
+		}
+
+		self::assertCount( 1, $timeouts, 'An unreachable host is contacted once per request, across deleted sites.' );
+		self::assertLessThanOrEqual( 5.0, $timeouts[0] );
+		$messages = implode( "\n", array_column( ( new ErrorLog() )->all(), 'message' ) );
+		self::assertStringContainsString( $first['uid'], $messages );
+		self::assertStringContainsString( $second['uid'], $messages );
+		self::assertStringNotContainsString( self::test_key(), $messages );
 	}
 }

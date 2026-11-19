@@ -20,9 +20,13 @@
 
 	var i18n = config.i18n || {};
 	var POLL_INTERVAL = 3000;
+	var RETRY_MAX = 30000;
 	var pollTimer = null;
+	var retryDelay = POLL_INTERVAL;
 	var lastStatus = {};
 	var abandoned = {};
+	var running = {}; // index => a reindex was running when its status was last known.
+	var replaced = {}; // index => progress text a "could not refresh" message took the place of.
 
 	function format( template ) {
 		var args = Array.prototype.slice.call( arguments, 1 );
@@ -130,7 +134,32 @@
 		}
 		if ( text && state ) {
 			text.textContent = describe( state, index );
+		} else if ( text && undefined !== replaced[ index ] ) {
+			text.textContent = replaced[ index ];
 		}
+		delete replaced[ index ];
+	}
+
+	/**
+	 * Shows a message in place of the progress text of every index last seen running.
+	 */
+	function showRefreshProblem( message ) {
+		Object.keys( running ).forEach( function ( index ) {
+			var text = running[ index ] ? document.querySelector( '[data-meilisearch-progress="' + index + '"] .meilisearch-progress-text' ) : null;
+			if ( ! text ) {
+				return;
+			}
+			if ( undefined === replaced[ index ] ) {
+				replaced[ index ] = text.textContent;
+			}
+			text.textContent = message;
+		} );
+	}
+
+	function anyRunning() {
+		return Object.keys( running ).some( function ( index ) {
+			return running[ index ];
+		} );
 	}
 
 	function update( states, flags ) {
@@ -141,12 +170,15 @@
 				abandoned[ index ] = !! flags[ index ];
 			}
 			var status = state ? state.status + ':' + state.phase + ':' + ( abandoned[ index ] ? 'x' : '' ) : null;
+			// A "could not refresh" message was announced: the recovery must be too, even on an unchanged status.
+			var recovered = undefined !== replaced[ index ];
 			render( index, state );
-			if ( state && undefined !== lastStatus[ index ] && lastStatus[ index ] !== status ) {
+			if ( state && ( recovered || ( undefined !== lastStatus[ index ] && lastStatus[ index ] !== status ) ) ) {
 				announce( describe( state, index ) );
 			}
 			lastStatus[ index ] = status;
-			anyActive = anyActive || isActive( state, index );
+			running[ index ] = isActive( state, index );
+			anyActive = anyActive || running[ index ];
 		} );
 		return anyActive;
 	}
@@ -155,11 +187,28 @@
 		window.clearTimeout( pollTimer );
 		request( 'GET', 'reindex/status' ).then( function ( data ) {
 			var states = { content: data.content, products: data.products };
+			retryDelay = POLL_INTERVAL;
 			if ( update( states, data.abandoned || {} ) ) {
 				pollTimer = window.setTimeout( poll, POLL_INTERVAL );
 			}
 		} ).catch( function ( error ) {
-			announce( error.message );
+			if ( ! anyRunning() ) {
+				announce( error.message ); // Nothing to follow: no reason to keep asking.
+				return;
+			}
+			// A reindex was running: one failed request must not freeze the progress for good.
+			if ( 401 === error.status || 403 === error.status ) {
+				// Logged out or expired nonce: retrying cannot succeed.
+				showRefreshProblem( i18n.reload || error.message );
+				announce( i18n.reload || error.message );
+				return;
+			}
+			if ( POLL_INTERVAL === retryDelay ) {
+				announce( i18n.retrying || error.message ); // Once per outage, not on every retry.
+			}
+			showRefreshProblem( i18n.retrying || error.message );
+			pollTimer = window.setTimeout( poll, retryDelay );
+			retryDelay = Math.min( retryDelay * 2, RETRY_MAX );
 		} );
 	}
 
@@ -227,6 +276,11 @@
 	} );
 
 	if ( document.querySelector( '[data-meilisearch-progress]' ) ) {
+		// The server renders the bar of a running reindex visible: known before the first answer.
+		Array.prototype.forEach.call( document.querySelectorAll( '[data-meilisearch-progress]' ), function ( container ) {
+			var bar = container.querySelector( 'progress' );
+			running[ container.getAttribute( 'data-meilisearch-progress' ) ] = !! bar && ! bar.hidden;
+		} );
 		poll();
 	}
 }() );

@@ -79,4 +79,72 @@ final class LifecycleTest extends TestCase {
 		self::assertFalse( as_has_scheduled_action( Queue::SYNC_POSTS, null, Queue::GROUP ) );
 		self::assertTrue( as_has_scheduled_action( 'meilisearch_test_other_group', null, 'meilisearch-test-other' ) );
 	}
+
+	/**
+	 * Deactivation cancels queued changes and nothing is tracked while the plugin is inactive, so an index
+	 * that a full reindex had filled is flagged: after reactivation the admin is asked to reindex.
+	 */
+	public function test_deactivation_flags_populated_indexes_for_reindex(): void {
+		$options = new Options();
+		$options->set_populated( 'content', true );
+		$options->flag_reindex( 'content', false );
+		as_schedule_single_action(
+			time() + HOUR_IN_SECONDS,
+			Queue::SYNC_POSTS,
+			array(
+				array(
+					'index'   => 'content',
+					'ids'     => array( 1 ),
+					'attempt' => 1,
+				),
+			),
+			Queue::GROUP
+		);
+
+		Deactivator::deactivate( false );
+		Activator::activate( false );
+
+		self::assertFalse( as_has_scheduled_action( Queue::SYNC_POSTS, null, Queue::GROUP ) );
+		self::assertTrue( $options->needs_reindex( 'content' ), 'The cancelled change left no needs-reindex flag.' );
+		self::assertTrue( $options->is_populated( 'content' ), 'Search keeps using the index until the reindex runs.' );
+	}
+
+	public function test_deactivation_does_not_flag_an_index_that_was_never_populated(): void {
+		$options = new Options();
+		$options->clear_populated();
+		$options->flag_reindex( 'content', false );
+
+		Deactivator::deactivate( false );
+
+		self::assertFalse( $options->needs_reindex( 'content' ) );
+	}
+
+	public function test_network_deactivation_flags_the_populated_indexes_of_every_site(): void {
+		if ( ! is_multisite() ) {
+			self::markTestSkipped( 'Multisite only. Run with WP_MULTISITE=1.' );
+		}
+		$site_id = self::factory()->blog->create();
+		$prepare = static function (): void {
+			$options = new Options();
+			$options->set_populated( 'content', true );
+			$options->flag_reindex( 'content', false );
+		};
+		$prepare();
+		switch_to_blog( $site_id );
+		try {
+			$prepare();
+		} finally {
+			restore_current_blog();
+		}
+
+		Deactivator::deactivate( true );
+
+		self::assertTrue( ( new Options() )->needs_reindex( 'content' ) );
+		switch_to_blog( $site_id );
+		try {
+			self::assertTrue( ( new Options() )->needs_reindex( 'content' ) );
+		} finally {
+			restore_current_blog();
+		}
+	}
 }

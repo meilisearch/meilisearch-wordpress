@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { MEILI_KEY, syncUntilHits, wp } from './utils';
+import { CONTENT_INDEX, MEILI_KEY, syncUntilHits, wp } from './utils';
 
 test.use( { storageState: { cookies: [], origins: [] } } );
 
@@ -119,6 +119,166 @@ test.describe( 'autocomplete', () => {
 
 		await input.press( 'Enter' );
 		await page.waitForURL( /[?&]s=mountian/ );
+	} );
+
+	test( 'a response that arrives after the visitor left the field does not open the list', async ( { page } ) => {
+		// Slow Meilisearch down so the visitor can leave while the request is in flight.
+		await page.route( '**/multi-search', async ( route ) => {
+			await new Promise( ( resolve ) => setTimeout( resolve, 500 ) );
+			await route.continue().catch( () => undefined ); // Already aborted by the page.
+		} );
+		await page.goto( '/search-demo/' );
+		const input = searchInput( page );
+		const listbox = page.locator( `[id="${ await input.getAttribute( 'aria-controls' ) }"]` );
+
+		// Tab away while the request is in flight: it is aborted and nothing opens.
+		const sent = page.waitForRequest( '**/multi-search' );
+		const aborted = page.waitForEvent( 'requestfailed', ( request ) => request.url().endsWith( '/multi-search' ) );
+		await input.fill( 'mountian' );
+		await sent;
+		await input.press( 'Tab' );
+		await aborted;
+		await expect( input ).not.toBeFocused();
+		await page.waitForTimeout( 1_000 ); // Longer than the delayed response.
+		await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+		await expect( listbox ).toBeHidden();
+
+		// Tab away within the debounce delay: the search is never sent.
+		let requests = 0;
+		page.on( 'request', ( request ) => {
+			requests += request.url().endsWith( '/multi-search' ) ? 1 : 0;
+		} );
+		await input.fill( 'mountain' );
+		await input.press( 'Tab' );
+		await page.waitForTimeout( 1_000 );
+		expect( requests ).toBe( 0 );
+		await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+		await expect( listbox ).toBeHidden();
+	} );
+
+	test( 'the arrow keys only reopen suggestions that answer the current text', async ( { page } ) => {
+		await page.goto( '/search-demo/' );
+		const input = searchInput( page );
+		const listbox = page.locator( `[id="${ await input.getAttribute( 'aria-controls' ) }"]` );
+
+		// Same text: Escape then ArrowDown reopens the list.
+		await input.pressSequentially( 'mountian', { delay: 50 } );
+		await expect( listbox ).toBeVisible();
+		await input.press( 'Escape' );
+		await expect( listbox ).toBeHidden();
+		await input.press( 'ArrowDown' );
+		await expect( listbox ).toBeVisible();
+		await expect( input ).toHaveAttribute( 'aria-activedescendant', /-option-0$/ );
+
+		// Shortened below the minimum length: the old suggestions are gone for good.
+		await input.fill( 'm' );
+		await expect( listbox ).toBeHidden();
+		await input.press( 'ArrowDown' );
+		await input.press( 'ArrowUp' );
+		await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+		await expect( listbox ).toBeHidden();
+		await expect( listbox.getByRole( 'option', { includeHidden: true } ) ).toHaveCount( 0 );
+
+		// A failed request also drops the suggestions of the previous query.
+		await input.fill( 'mountian' );
+		await expect( listbox ).toBeVisible();
+		await page.route( '**/multi-search', ( route ) => route.fulfill( { status: 503, contentType: 'application/json', body: '{}' } ) );
+		const failed = page.waitForResponse( '**/multi-search' );
+		await input.fill( 'mountian tips' );
+		await failed;
+		await expect( listbox ).toBeHidden();
+		await input.press( 'ArrowDown' );
+		await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+		await expect( listbox ).toBeHidden();
+	} );
+
+	test( 'the classic search form keeps its label as the accessible name while suggestions are open', async ( { page } ) => {
+		// Core's HTML5 get_search_form() markup wraps the input in its <label>; the block form does not.
+		const muPlugin = '/var/www/html/wp-content/mu-plugins/e2e-classic-search.php';
+		const code = '<?php add_filter( "search_form_format", fn() => "html5" ); add_shortcode( "e2e_classic_search", fn() => get_search_form( array( "echo" => false ) ) );';
+		execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'sh', '-c', `mkdir -p "$(dirname ${ muPlugin })" && printf '%s' '${ code }' > ${ muPlugin }` ] );
+		const id = wp(
+			'post', 'create', '--post_type=page', '--post_status=publish', '--porcelain',
+			'--post_name=classic-search-demo', '--post_title=Classic search demo', '--post_content=[e2e_classic_search]'
+		);
+		try {
+			await page.goto( '/classic-search-demo/' );
+			const input = page.locator( 'main label input[name="s"]' ).first();
+			await expect( input ).toHaveRole( 'combobox' );
+			const label = page.locator( 'main label' ).filter( { has: page.locator( 'input[name="s"]' ) } ).first();
+			const name = ( await label.innerText() ).trim();
+			expect( name ).not.toBe( '' );
+			await expect( input ).toHaveAccessibleName( name );
+
+			await input.pressSequentially( 'mountian', { delay: 50 } );
+			const listbox = page.locator( `[id="${ await input.getAttribute( 'aria-controls' ) }"]` );
+			await expect( listbox ).toBeVisible();
+			await expect( listbox.getByRole( 'option', { name: /Mountain Photography Tips/ } ) ).toBeVisible();
+
+			// Neither the list nor the status region is label content, so the name is unchanged.
+			await expect( input ).toHaveAccessibleName( name );
+			await expect( label.locator( '.meilisearch-ac, .meilisearch-ac__status' ) ).toHaveCount( 0 );
+
+			// The list still opens right under the field.
+			const inputBox = await input.boundingBox();
+			const listBox = await listbox.boundingBox();
+			expect( inputBox ).not.toBeNull();
+			expect( listBox ).not.toBeNull();
+			expect( Math.abs( ( listBox?.x ?? 0 ) - ( inputBox?.x ?? 0 ) ) ).toBeLessThan( 4 );
+			const gap = ( listBox?.y ?? 0 ) - ( ( inputBox?.y ?? 0 ) + ( inputBox?.height ?? 0 ) );
+			expect( gap ).toBeGreaterThanOrEqual( 0 );
+			expect( gap ).toBeLessThan( 16 );
+		} finally {
+			wp( 'post', 'delete', id, '--force' );
+			execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'rm', '-f', muPlugin ] );
+		}
+	} );
+
+	test( 'an indexed post type that is excluded from the site search is not suggested', async ( { page } ) => {
+		const muPlugin = '/var/www/html/wp-content/mu-plugins/e2e-hidden-type.php';
+		const code = '<?php add_action( "init", fn() => register_post_type( "e2e_hidden", array( "public" => true, "exclude_from_search" => true ) ) );';
+		const postTypes = wp( 'option', 'pluck', 'meilisearch_content', 'post_types', '--format=json' );
+		execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'sh', '-c', `mkdir -p "$(dirname ${ muPlugin })" && printf '%s' '${ code }' > ${ muPlugin }` ] );
+		let id = '';
+		try {
+			wp( 'option', 'patch', 'update', 'meilisearch_content', 'post_types', '["post","page","e2e_hidden"]', '--format=json' );
+			id = wp(
+				'post', 'create', '--post_type=e2e_hidden', '--post_status=publish', '--porcelain',
+				'--post_title=Wombatlark hidden record', '--post_content=Indexed, but not part of the site search.'
+			);
+			await syncUntilHits( 'wombatlark', 1 ); // The document is in the content index.
+
+			await page.goto( '/search-demo/' );
+			const input = searchInput( page );
+			const listId = await input.getAttribute( 'aria-controls' );
+			const sent = page.waitForRequest( '**/multi-search' );
+			const answered = page.waitForResponse( '**/multi-search' );
+			await input.fill( 'wombatlark' );
+
+			const queries = ( ( await sent ).postDataJSON() as { queries: { indexUid: string; filter?: string }[] } ).queries;
+			const content = queries.find( ( query ) => query.indexUid === CONTENT_INDEX );
+			expect( content?.filter ).toMatch( /^post_type IN \[/ );
+			expect( content?.filter ).toContain( '"post"' );
+			expect( content?.filter ).not.toContain( 'e2e_hidden' );
+
+			await answered;
+			await expect( page.locator( `[id="${ listId?.replace( /-listbox$/, '-status' ) }"]` ) ).toHaveText( 'No suggestions found.' );
+			await expect( input ).toHaveAttribute( 'aria-expanded', 'false' );
+
+			// The results page agrees: it does not list the post either.
+			await input.press( 'Enter' );
+			await page.waitForURL( /[?&]s=wombatlark/ );
+			await expect( page.getByText( 'Wombatlark hidden record' ) ).toHaveCount( 0 );
+		} finally {
+			if ( id ) {
+				wp( 'post', 'delete', id, '--force' );
+				await syncUntilHits( 'wombatlark', 0 );
+			}
+			wp( 'option', 'patch', 'update', 'meilisearch_content', 'post_types', postTypes, '--format=json' );
+			execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'rm', '-f', muPlugin ] );
+			// Adding a post type hands content search back to the database until a full reindex completes.
+			wp( 'meilisearch', 'reindex' );
+		}
 	} );
 
 	test( 'a filtered subtitle field renders under the title', async ( { page } ) => {

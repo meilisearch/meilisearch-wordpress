@@ -11,6 +11,7 @@ use Meilisearch\WordPress\Sync\ErrorLog;
 use Meilisearch\WordPress\Sync\Queue;
 use Meilisearch\WordPress\Tests\Unit\TestCase;
 use Meilisearch\WordPress\WooCommerce\ProductRule;
+use Meilisearch\WordPress\WooCommerce\ProductSchema;
 use Meilisearch\WordPress\WooCommerce\ProductSync;
 
 final class ProductSyncTest extends TestCase {
@@ -81,6 +82,7 @@ final class ProductSyncTest extends TestCase {
 		$expected = array(
 			'woocommerce_new_product'                     => 'on_product',
 			'woocommerce_update_product'                  => 'on_product',
+			'woocommerce_updated_product_sales'           => 'on_product',
 			'woocommerce_new_product_variation'           => 'on_variation',
 			'woocommerce_update_product_variation'        => 'on_variation',
 			'woocommerce_before_delete_product_variation' => 'on_variation',
@@ -92,6 +94,7 @@ final class ProductSyncTest extends TestCase {
 			'woocommerce_attribute_added'                 => 'flag_products_reindex',
 			'woocommerce_attribute_updated'               => 'flag_products_reindex',
 			'woocommerce_attribute_deleted'               => 'flag_products_reindex',
+			'admin_init'                                  => 'flag_outdated_index',
 			'update_option_woocommerce_hide_out_of_stock_items' => 'on_store_option_updated',
 			'add_option_woocommerce_hide_out_of_stock_items' => 'flag_products_reindex',
 			'update_option_woocommerce_tax_display_shop'  => 'on_store_option_updated',
@@ -161,5 +164,39 @@ final class ProductSyncTest extends TestCase {
 		$this->sync->on_store_option_updated( 'yes', 'yes' );
 
 		self::assertFalse( ( new Options() )->needs_reindex( 'products' ) );
+	}
+
+	public function test_an_index_reindexed_by_an_older_document_version_is_flagged(): void {
+		$options = new Options();
+		$options->set_populated( 'products', true );
+		$this->sync->flag_outdated_index();
+		self::assertTrue( $options->needs_reindex( 'products' ), 'No build recorded: written before price_max.' );
+
+		$options->flag_reindex( 'products', false );
+		$options->set_state( 'products_build', array( 'version' => 1 ) );
+		$this->sync->flag_outdated_index();
+		self::assertTrue( $options->needs_reindex( 'products' ), 'Older version recorded.' );
+	}
+
+	public function test_a_current_unpopulated_or_reindexing_index_is_not_flagged(): void {
+		$options = new Options();
+		$this->sync->flag_outdated_index();
+		self::assertFalse( $options->needs_reindex( 'products' ), 'Not populated: search does not use it.' );
+
+		$options->set_populated( 'products', true );
+		$options->set_reindex_state( 'products', array( 'status' => 'running' ) );
+		$this->sync->flag_outdated_index();
+		self::assertFalse( $options->needs_reindex( 'products' ), 'The running reindex records the new version.' );
+
+		$options->set_reindex_state( 'products', array( 'status' => 'done' ) );
+		$options->set_state(
+			'products_build',
+			array(
+				'version'    => ProductSchema::DOCUMENT_VERSION,
+				'attributes' => array(),
+			)
+		);
+		$this->sync->flag_outdated_index();
+		self::assertFalse( $options->needs_reindex( 'products' ), 'Current version.' );
 	}
 }

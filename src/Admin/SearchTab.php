@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace Meilisearch\WordPress\Admin;
 
+use Meilisearch\WordPress\Frontend\Autocomplete;
 use Meilisearch\WordPress\Indexing\Indexability;
 use Meilisearch\WordPress\Settings\Options;
 
@@ -122,7 +123,7 @@ final class SearchTab implements Tab {
 
 		$this->checkbox_row( 'replace', __( 'Site search', 'meilisearch' ), __( 'Answer theme and WooCommerce searches with Meilisearch (falls back to WordPress search when Meilisearch is unavailable).', 'meilisearch' ), $search['replace'] );
 		$this->checkbox_row( 'highlight', __( 'Highlighting', 'meilisearch' ), __( 'Show matching words highlighted in search result excerpts.', 'meilisearch' ), $search['highlight'] );
-		$this->checkbox_row( 'autocomplete', __( 'Autocomplete', 'meilisearch' ), __( 'Show results as visitors type in search forms. Queries are sent from the visitor\'s browser to your Meilisearch host.', 'meilisearch' ), $search['autocomplete'] );
+		$this->checkbox_row( 'autocomplete', __( 'Autocomplete', 'meilisearch' ), __( 'Show results as visitors type in search forms. Queries are sent from the visitor\'s browser to your Meilisearch host.', 'meilisearch' ), $search['autocomplete'], Autocomplete::host_warning( $this->options ) );
 
 		echo '<tr><th scope="row"><label for="meilisearch-embedder">' . esc_html__( 'Embedder', 'meilisearch' ) . '</label></th><td>';
 		printf(
@@ -150,20 +151,22 @@ final class SearchTab implements Tab {
 	/**
 	 * One checkbox row.
 	 *
-	 * @param string $key         Option key.
-	 * @param string $label       Row label.
-	 * @param string $description Checkbox text.
-	 * @param bool   $checked     Current value.
+	 * @param string  $key         Option key.
+	 * @param string  $label       Row label.
+	 * @param string  $description Checkbox text.
+	 * @param bool    $checked     Current value.
+	 * @param ?string $warning     Warning shown under the checkbox, null for none.
 	 * @return void
 	 */
-	private function checkbox_row( string $key, string $label, string $description, bool $checked ): void {
+	private function checkbox_row( string $key, string $label, string $description, bool $checked, ?string $warning = null ): void {
 		printf(
-			'<tr><th scope="row">%1$s</th><td><label><input type="checkbox" name="%2$s[%3$s]" value="1"%4$s /> %5$s</label></td></tr>',
+			'<tr><th scope="row">%1$s</th><td><label><input type="checkbox" name="%2$s[%3$s]" value="1"%4$s /> %5$s</label>%6$s</td></tr>',
 			esc_html( $label ),
 			esc_attr( Options::SEARCH ),
 			esc_attr( $key ),
 			checked( $checked, true, false ),
-			esc_html( $description )
+			esc_html( $description ),
+			null === $warning ? '' : '<div class="notice notice-warning inline"><p>' . esc_html( $warning ) . '</p></div>'
 		);
 	}
 }

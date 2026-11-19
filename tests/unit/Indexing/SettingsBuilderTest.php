@@ -23,6 +23,9 @@ final class SettingsBuilderTest extends TestCase {
 			public function searchable(): array {
 				return array( 'title', 'tax_category', 'content' );
 			}
+			public function displayed(): array {
+				return array( 'id', 'title', 'content', 'tax_category' );
+			}
 		};
 	}
 
@@ -41,9 +44,53 @@ final class SettingsBuilderTest extends TestCase {
 				'searchableAttributes' => array( 'title', 'tax_category', 'content' ),
 				'filterableAttributes' => array( 'post_type', 'date', 'tax_category_ids' ),
 				'sortableAttributes'   => array( 'date', 'title' ),
+				'displayedAttributes'  => array( 'id', 'title', 'content', 'tax_category' ),
 			),
 			$this->builder()->initial( 'content' )
 		);
+	}
+
+	public function test_displayed_keeps_id_first_adds_the_subtitle_field_and_is_filterable(): void {
+		Filters\expectApplied( 'meilisearch_autocomplete_subtitle_field' )->with( null, 'content' )->andReturn( 'meta_subtitle' );
+		Filters\expectApplied( 'meilisearch_displayed_attributes' )
+			->with( array( 'id', 'title', 'content', 'tax_category', 'meta_subtitle' ), 'content' )
+			->andReturn( array( 'title', 'meta_isbn', 'bad name"', 'title' ) );
+
+		$this->assertSame( array( 'id', 'title', 'meta_isbn' ), $this->builder()->displayed( 'content' ) );
+	}
+
+	public function test_displayed_filter_can_display_every_attribute(): void {
+		Filters\expectApplied( 'meilisearch_displayed_attributes' )->andReturn( array( '*' ) );
+
+		$this->assertSame( array( '*' ), $this->builder()->initial( 'content' )['displayedAttributes'] );
+		$this->assertArrayNotHasKey( 'displayedAttributes', $this->builder()->patch( 'content', array( 'displayedAttributes' => array( 'id' ) ) ), 'A list is never widened to ["*"].' );
+	}
+
+	public function test_patch_appends_missing_displayed_attributes_to_a_list(): void {
+		$patch = $this->builder()->patch(
+			'content',
+			array(
+				'searchableAttributes' => array( '*' ),
+				'filterableAttributes' => array( 'post_type', 'date', 'tax_category_ids' ),
+				'sortableAttributes'   => array( 'date', 'title' ),
+				'displayedAttributes'  => array( 'id', 'title', 'cloud_field' ),
+			)
+		);
+
+		$this->assertSame( array( 'displayedAttributes' => array( 'id', 'title', 'cloud_field', 'content', 'tax_category' ) ), $patch );
+	}
+
+	public function test_patch_never_narrows_an_index_that_displays_every_attribute(): void {
+		$current = array(
+			'searchableAttributes' => array( '*' ),
+			'filterableAttributes' => array( 'post_type', 'date', 'tax_category_ids' ),
+			'sortableAttributes'   => array( 'date', 'title' ),
+		);
+
+		$this->assertSame( array(), $this->builder()->patch( 'content', $current + array( 'displayedAttributes' => array( '*' ) ) ) );
+		$this->assertSame( array(), $this->builder()->patch( 'content', $current ), 'Absent means the Meilisearch default, ["*"].' );
+		$this->assertTrue( SettingsBuilder::displays_everything( $current ) );
+		$this->assertFalse( SettingsBuilder::displays_everything( array( 'displayedAttributes' => array( 'id' ) ) ) );
 	}
 
 	public function test_unknown_logical_throws(): void {

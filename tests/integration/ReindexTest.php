@@ -114,6 +114,25 @@ final class ReindexTest extends TestCase {
 	}
 
 	/**
+	 * Starting a run does not wait for the index creation and settings tasks: the sweep, which filters
+	 * and sorts on id, holds until Meilisearch has applied them.
+	 */
+	public function test_reindex_of_a_missing_index_waits_for_its_settings_before_the_sweep(): void {
+		$this->meili( 'DELETE', '/indexes/' . $this->uid );
+		$this->wait_for_tasks();
+		$published = self::factory()->post->create_many( 3 );
+		sort( $published );
+
+		$state = $this->reindex();
+
+		$this->assertSame( 'done', $state['status'], (string) $state['error'] );
+		$this->assertArrayNotHasKey( 'settings_task', $state );
+		$this->assertSame( $published, $this->indexed_ids() );
+		$settings = $this->meili( 'GET', '/indexes/' . $this->uid . '/settings', null );
+		$this->assertContains( 'id', $settings['sortableAttributes'] );
+	}
+
+	/**
 	 * Synonyms, ranking rules and embedders configured in Meilisearch are untouched by a reindex.
 	 */
 	public function test_meilisearch_side_settings_survive(): void {
@@ -241,6 +260,88 @@ final class ReindexTest extends TestCase {
 		$this->assertSame( 1, $state['deleted'] );
 		sort( $ids );
 		$this->assertSame( $ids, $this->indexed_ids() );
+	}
+
+	/**
+	 * Makes the first query containing every given fragment fail in MySQL (unknown table), so the real
+	 * wpdb takes its error path: query() returns false and get_col() an empty array.
+	 *
+	 * @param list<string> $fragments SQL fragments identifying the query.
+	 * @param callable     $run       Code to run while the failure is armed.
+	 * @return int Number of queries that were made to fail (0 or 1).
+	 */
+	private function with_one_failed_query( array $fragments, callable $run ): int {
+		global $wpdb;
+		$failed = 0;
+		$break  = static function ( $query ) use ( &$failed, $fragments ) {
+			if ( 0 !== $failed || ! is_string( $query ) ) {
+				return $query;
+			}
+			foreach ( $fragments as $fragment ) {
+				if ( ! str_contains( $query, $fragment ) ) {
+					return $query;
+				}
+			}
+			++$failed;
+			return 'SELECT ID FROM meilisearch_table_that_does_not_exist';
+		};
+		add_filter( 'query', $break );
+		$suppress = $wpdb->suppress_errors( true );
+		try {
+			$run();
+		} finally {
+			$wpdb->suppress_errors( $suppress );
+			remove_filter( 'query', $break );
+		}
+		return $failed;
+	}
+
+	/**
+	 * A failed candidate query during the sweep must not be read as "these documents are stale".
+	 */
+	public function test_failed_sweep_query_does_not_delete_published_posts(): void {
+		$published = self::factory()->post->create_many( 3 );
+		sort( $published );
+		$state = $this->reindex();
+		$this->assertSame( 'done', $state['status'], (string) $state['error'] );
+		$this->assertSame( $published, $this->indexed_ids() );
+
+		$failed = $this->with_one_failed_query(
+			array( 'WHERE ID IN (', "post_password = ''" ),
+			function () use ( &$state ): void {
+				$state = $this->reindex();
+			}
+		);
+
+		$this->assertSame( 1, $failed, 'The sweep query was failed once.' );
+		$this->assertSame( 0, $state['deleted'] );
+		$this->assertSame( $published, $this->indexed_ids(), 'Published posts must still be indexed (status ' . $state['status'] . ').' );
+	}
+
+	/**
+	 * A failed scan query during the upsert phase must not be read as "no posts left".
+	 */
+	public function test_failed_scan_query_does_not_finish_done_with_missing_posts(): void {
+		$published = self::factory()->post->create_many( 3 );
+		sort( $published );
+		$state = array();
+
+		$failed = $this->with_one_failed_query(
+			array( 'ORDER BY ID ASC LIMIT', "post_password = ''" ),
+			function () use ( &$state ): void {
+				$state = $this->reindex();
+			}
+		);
+
+		$this->assertSame( 1, $failed, 'The scan query was failed once.' );
+		if ( 'done' === $state['status'] ) {
+			$this->assertSame( $published, $this->indexed_ids(), 'A done run holds every published post.' );
+		} else {
+			$this->assertSame( 'failed', $state['status'] );
+			$options = Plugin::instance()->get( 'options' );
+			assert( $options instanceof Options );
+			$this->assertTrue( $options->needs_reindex( 'content' ) );
+		}
 	}
 
 	/**
