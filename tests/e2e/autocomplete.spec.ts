@@ -205,7 +205,7 @@ test.describe( 'autocomplete', () => {
 			await page.goto( '/classic-search-demo/' );
 			const input = page.locator( 'main label input[name="s"]' ).first();
 			await expect( input ).toHaveRole( 'combobox' );
-			const label = page.locator( 'main label' ).filter( { has: input } );
+			const label = page.locator( 'main label' ).filter( { has: page.locator( 'input[name="s"]' ) } ).first();
 			const name = ( await label.innerText() ).trim();
 			expect( name ).not.toBe( '' );
 			await expect( input ).toHaveAccessibleName( name );
@@ -276,6 +276,8 @@ test.describe( 'autocomplete', () => {
 			}
 			wp( 'option', 'patch', 'update', 'meilisearch_content', 'post_types', postTypes, '--format=json' );
 			execFileSync( 'docker', [ 'compose', 'exec', '-T', '-u', 'root', 'wordpress', 'rm', '-f', muPlugin ] );
+			// Adding a post type hands content search back to the database until a full reindex completes.
+			wp( 'meilisearch', 'reindex' );
 		}
 	} );
 
