@@ -167,16 +167,15 @@ final class AuthorJob implements Registrable {
 		}
 		$ids = get_posts(
 			array(
-				'author'           => $author_id,
-				'post_type'        => $types,
-				'post_status'      => 'publish',
-				'fields'           => 'ids',
-				'posts_per_page'   => $limit,
-				'offset'           => $offset,
-				'orderby'          => 'ID',
-				'order'            => 'ASC',
-				'no_found_rows'    => true,
-				'suppress_filters' => true,
+				'author'         => $author_id,
+				'post_type'      => $types,
+				'post_status'    => 'publish',
+				'fields'         => 'ids',
+				'posts_per_page' => $limit,
+				'offset'         => $offset,
+				'orderby'        => 'ID',
+				'order'          => 'ASC',
+				'no_found_rows'  => true,
 			)
 		);
 		return array_values( array_map( 'intval', $ids ) );

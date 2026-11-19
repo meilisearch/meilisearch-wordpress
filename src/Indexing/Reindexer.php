@@ -241,7 +241,7 @@ final class Reindexer implements Registrable {
 				// Retry from the stored state: the failed step may have saved part of its work.
 				$current = $this->status( $logical );
 				if ( null === $current || ( $current['run'] ?? '' ) !== $run ) {
-					throw new \RuntimeException( self::SUPERSEDED );
+					throw new \RuntimeException( self::SUPERSEDED ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 				}
 				if ( ! self::is_active( $current ) ) {
 					return $current;
@@ -458,7 +458,7 @@ final class Reindexer implements Registrable {
 		}
 		if ( $this->options->connection_changed() ) {
 			// The run would fill the indexes of a connection whose key and state were never set up; connect() does that.
-			throw new \RuntimeException( self::connection_changed_message() );
+			throw new \RuntimeException( self::connection_changed_message() ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Message is data; escaped where displayed.
 		}
 
 		// No wait: a settings task still being processed is recorded and awaited before the sweep.
